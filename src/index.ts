@@ -1022,28 +1022,63 @@ export function apply(ctx: Context, config: Config) {
       // 不处理没有内容的消息
       if (!session.content) return next()
       
-      // 获取消息内容并规范化空格
-      const content = session.content.trim()
-      
       // 检查是否是命令开头，如果已经是命令就不处理
-      if (content.startsWith('.') || content.startsWith('/')) {
+      if (session.content.startsWith('.') || session.content.startsWith('/')) {
         return next()
       }
       
-      // 检查是否以配置的机器人昵称开头
-      const prefix = `@${config.botNickname}`
-      if (content.startsWith(prefix)) {
-        // 移除前缀，提取后面的指令部分
-        const command = content.substring(prefix.length).trim()
+      // 获取消息内容并规范化空格
+      const content = session.content.trim()
+      
+      // 提取机器人昵称，移除可能的@前缀
+      const botNickname = config.botNickname.replace(/^@/, '')
+      
+      // 尝试识别多种可能的模式，但只匹配mcid命令
+      let mcidCommand = null
+      
+      // 1. 检查消息元素中是否有@机器人元素
+      // @ts-ignore - 元素类型在不同平台可能不同
+      if (session.elements && Array.isArray(session.elements)) {
+        // 检查是否有at元素，后面紧跟mcid命令
+        // @ts-ignore
+        const atElements = session.elements.filter(el => el.type === 'at')
         
-        // 检查是否是mcid相关指令
-        if (command.startsWith('mcid')) {
-          // 记录日志
-          logger.info(`[前缀匹配] 检测到前缀触发: "${prefix}"，提取指令: "${command}"`)
-          
-          // 修改消息内容，使其能被指令系统识别
-          session.content = command
+        if (atElements.length > 0) {
+          // 仅匹配mcid命令开头的部分
+          const matches = content.match(/^(?:.*?\s+)?(mcid\s+.*)$/i)
+          if (matches && matches[1]) {
+            mcidCommand = matches[1].trim()
+          }
         }
+      }
+      
+      // 2. 文本前缀匹配 - @机器人
+      if (!mcidCommand) {
+        const atMatch = content.match(new RegExp(`^@${botNickname}\\s+(mcid\\s+.*)$`, 'i'))
+        if (atMatch && atMatch[1]) {
+          mcidCommand = atMatch[1].trim()
+        }
+      }
+      
+      // 3. 文本前缀匹配 - 机器人昵称
+      if (!mcidCommand) {
+        const nameMatch = content.match(new RegExp(`^${botNickname}\\s+(mcid\\s+.*)$`, 'i'))
+        if (nameMatch && nameMatch[1]) {
+          mcidCommand = nameMatch[1].trim()
+        }
+      }
+      
+      // 如果找到匹配的mcid命令，执行它
+      if (mcidCommand) {
+        logger.info(`[前缀匹配] 成功识别mcid命令，原始消息: "${content}"，执行命令: "${mcidCommand}"`)
+        
+        // 使用session.execute方法主动触发命令执行
+        session.execute(mcidCommand).catch(error => {
+          logger.error(`[前缀匹配] 执行命令"${mcidCommand}"失败: ${error.message}`)
+        })
+        
+        // 返回true终止后续中间件处理，避免重复处理
+        return 
       }
       
       return next()
@@ -1660,11 +1695,11 @@ export function apply(ctx: Context, config: Config) {
     const lockKey = `whitelist_${mcBind.qqId}_${server.id}`;
     
     return withLock(lockKey, async () => {
-      try {
-        if (!mcBind || !mcBind.mcUsername) {
-          logger.warn(`[白名单] 尝试为未绑定MC账号的用户添加白名单`)
-          return false
-        }
+    try {
+      if (!mcBind || !mcBind.mcUsername) {
+        logger.warn(`[白名单] 尝试为未绑定MC账号的用户添加白名单`)
+        return false
+      }
         
         // 重新获取最新的用户绑定信息，确保操作基于最新状态
         const freshBind = await getMcBindByQQId(mcBind.qqId);
@@ -1765,7 +1800,7 @@ export function apply(ctx: Context, config: Config) {
         if (isAlreadyInWhitelist) {
           logger.info(`[白名单] 玩家已在白名单中，服务器响应: ${response}`);
         } else {
-          logger.info(`[白名单] 添加白名单成功，服务器响应: ${response}`);
+        logger.info(`[白名单] 添加白名单成功，服务器响应: ${response}`);
         }
         
         // 重新获取最新状态进行更新，避免并发更新问题
@@ -1811,11 +1846,11 @@ export function apply(ctx: Context, config: Config) {
     const lockKey = `whitelist_${mcBind.qqId}_${server.id}`;
     
     return withLock(lockKey, async () => {
-      try {
-        if (!mcBind || !mcBind.mcUsername) {
-          logger.warn(`[白名单] 尝试为未绑定MC账号的用户移除白名单`)
-          return false
-        }
+    try {
+      if (!mcBind || !mcBind.mcUsername) {
+        logger.warn(`[白名单] 尝试为未绑定MC账号的用户移除白名单`)
+        return false
+      }
         
         // 重新获取最新的用户绑定信息，确保操作基于最新状态
         const freshBind = await getMcBindByQQId(mcBind.qqId);
@@ -1829,37 +1864,37 @@ export function apply(ctx: Context, config: Config) {
           logger.info(`[白名单] 用户QQ(${mcBind.qqId})不在服务器${server.name}的白名单中`);
           return true; // 不在白名单中，无需移除，视为成功
         }
-        
-        // 判断使用用户名还是UUID
-        let mcid: string
-        if (server.idType === 'uuid') {
+      
+      // 判断使用用户名还是UUID
+      let mcid: string
+      if (server.idType === 'uuid') {
           if (!freshBind.mcUuid) {
-            logger.warn(`[白名单] 用户缺少UUID信息，无法移除白名单`)
-            return false
-          }
-          // 提取UUID并确保无论输入格式如何，都能正确处理
-          const uuid = freshBind.mcUuid.trim();
-          
-          // 确保使用不带连字符的UUID (Minecraft RCON通常需要这种格式)
-          mcid = uuid.replace(/-/g, '')
-          
-          // 验证UUID的有效性 (应该是32位十六进制字符)
-          if (!/^[0-9a-f]{32}$/i.test(mcid)) {
-            logger.warn(`[白名单] UUID格式无效: ${mcid}，应为32位十六进制字符`)
-            return false
-          }
-        } else {
-          // 使用用户名，确保它已被Mojang API验证
-          mcid = freshBind.mcUsername
+          logger.warn(`[白名单] 用户缺少UUID信息，无法移除白名单`)
+          return false
         }
+        // 提取UUID并确保无论输入格式如何，都能正确处理
+          const uuid = freshBind.mcUuid.trim();
         
+        // 确保使用不带连字符的UUID (Minecraft RCON通常需要这种格式)
+        mcid = uuid.replace(/-/g, '')
+        
+        // 验证UUID的有效性 (应该是32位十六进制字符)
+        if (!/^[0-9a-f]{32}$/i.test(mcid)) {
+          logger.warn(`[白名单] UUID格式无效: ${mcid}，应为32位十六进制字符`)
+          return false
+        }
+      } else {
+        // 使用用户名，确保它已被Mojang API验证
+          mcid = freshBind.mcUsername
+      }
+      
         logger.info(`[白名单] 为用户QQ(${freshBind.qqId})移除白名单，使用${server.idType === 'uuid' ? 'UUID' : '用户名'}: ${mcid}`)
-        
-        // 替换命令模板中的${MCID}
-        const command = server.removeCommand.replace(/\${MCID}/g, mcid)
-        
-        // 执行RCON命令
-        const response = await executeRconCommand(server, command)
+      
+      // 替换命令模板中的${MCID}
+      const command = server.removeCommand.replace(/\${MCID}/g, mcid)
+      
+      // 执行RCON命令
+      const response = await executeRconCommand(server, command)
         
         // 记录完整命令和响应，用于调试
         logger.debug(`[白名单] 执行命令: ${command}, 响应: "${response}", 长度: ${response.length}字节`);
@@ -1890,20 +1925,20 @@ export function apply(ctx: Context, config: Config) {
             logger.warn(`[白名单] 收到空响应，根据配置视为失败。可以在配置中设置acceptEmptyResponse=true接受空响应`);
           }
         }
-        
-        // 检查是否移除成功
-        // 定义匹配成功的关键词和匹配失败的关键词
+      
+      // 检查是否移除成功
+      // 定义匹配成功的关键词和匹配失败的关键词
         const successKeywords = ['移除', '已完成', '成功', 'success', 'removed', 'okay', 'done', 'completed'];
         const failureKeywords = ['失败', '错误', 'error', 'failed', 'cannot', 'unable'];
         
         // 对于不存在的情况单独处理，不应被视为失败
         const notFoundKeywords = ['not found', '不存在'];
-        
-        // 检查响应是否包含成功关键词
-        const isSuccess = successKeywords.some(keyword => response.toLowerCase().includes(keyword.toLowerCase()));
-        
+      
+      // 检查响应是否包含成功关键词
+      const isSuccess = successKeywords.some(keyword => response.toLowerCase().includes(keyword.toLowerCase()));
+      
         // 检查响应是否包含失败关键词（排除不存在的情况）
-        const isFailure = failureKeywords.some(keyword => response.toLowerCase().includes(keyword.toLowerCase()));
+      const isFailure = failureKeywords.some(keyword => response.toLowerCase().includes(keyword.toLowerCase()));
         
         // 检查是否是"不存在"的情况
         const isNotExist = notFoundKeywords.some(keyword => response.toLowerCase().includes(keyword.toLowerCase()));
@@ -1912,8 +1947,8 @@ export function apply(ctx: Context, config: Config) {
         // 增加额外检查，看服务器是否通过颜色代码表示成功（很多服务器使用§a表示成功）
         // §a通常表示绿色，用于成功提示
         const hasSuccessColor = /§a/i.test(response) && !isFailure;
-        
-        // 判断结果
+      
+      // 判断结果
         if ((isSuccess && !isFailure) || (isNotExist && notInLocal) || hasSuccessColor) {
           // 明确检测到成功关键词且没有失败关键词，或远端本就不存在且本地也没有，或包含成功颜色代码
           let successMessage = '移除白名单成功';
@@ -1936,17 +1971,17 @@ export function apply(ctx: Context, config: Config) {
               whitelist: currentBind.whitelist
             });
             logger.info(`[白名单] 成功将QQ(${freshBind.qqId})从服务器${server.name}的白名单移除，更新数据库记录`);
-          }
-          
+        }
+        
           return true;
-        } else {
+      } else {
           logger.warn(`[白名单] 移除白名单失败，服务器响应: ${response}`);
           return false;
-        }
-      } catch (error) {
+      }
+    } catch (error) {
         logger.error(`[白名单] 移除白名单失败: ${error.message}`);
         return false;
-      }
+    }
     }, 15000); // 设置较长的超时时间，确保完整操作
   };
   
