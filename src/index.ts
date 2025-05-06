@@ -1064,6 +1064,7 @@ export function apply(ctx: Context, config: Config) {
       'dungeons',   // 地下城风格
       'facepalm',   // 捂脸
       'mojavatar',  // Mojave姿态
+      'head',   // 头部特写
     ]
     
     // 随机选择一个动作
