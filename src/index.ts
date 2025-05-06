@@ -28,6 +28,7 @@ export interface ServerConfig {
   allowSelfApply: boolean
   acceptEmptyResponse?: boolean // 新增：每个服务器单独配置
   displayAddress?: string // 新增：服务器展示地址
+  description?: string // 新增：服务器说明信息
 }
 
 // 创建配置Schema
@@ -53,6 +54,9 @@ export const Config: Schema<Config> = Schema.object({
       .required(),
     displayAddress: Schema.string()
       .description('服务器展示地址（显示给用户的连接地址）')
+      .default(''),
+    description: Schema.string()
+      .description('服务器说明信息（显示在列表中服务器地址下方）')
       .default(''),
     rconAddress: Schema.string()
       .description('RCON地址，格式为 IP:端口，例如 127.0.0.1:25575')
@@ -2330,6 +2334,11 @@ export function apply(ctx: Context, config: Config) {
           // 只有当设置了地址时才显示地址行
           if (server.displayAddress && server.displayAddress.trim()) {
             serverInfo += "\n   地址: " + server.displayAddress;
+          }
+          
+          // 只有当设置了说明信息时才显示说明行
+          if (server.description && server.description.trim()) {
+            serverInfo += "\n   说明: " + server.description;
           }
           
           return serverInfo;
