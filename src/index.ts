@@ -27,6 +27,7 @@ export interface ServerConfig {
   idType: 'username' | 'uuid'
   allowSelfApply: boolean
   acceptEmptyResponse?: boolean // 新增：每个服务器单独配置
+  displayAddress?: string // 新增：服务器展示地址
 }
 
 // 创建配置Schema
@@ -50,6 +51,9 @@ export const Config: Schema<Config> = Schema.object({
     name: Schema.string()
       .description('服务器名称（用于指令显示）')
       .required(),
+    displayAddress: Schema.string()
+      .description('服务器展示地址（显示给用户的连接地址）')
+      .default(''),
     rconAddress: Schema.string()
       .description('RCON地址，格式为 IP:端口，例如 127.0.0.1:25575')
       .required(),
@@ -117,9 +121,11 @@ class RconManager {
   private heartbeatCmd = 'list'; // 心跳命令，使用无害的list命令
   private heartbeatInterval = 20 * 60 * 1000; // 20分钟发送一次心跳
   private maxIdleTime = 60 * 60 * 1000; // 连接空闲1小时后关闭
+  private serverConfigs: ServerConfig[] = [];
   
-  constructor(logger: Logger) {
+  constructor(logger: Logger, serverConfigs: ServerConfig[]) {
     this.logger = logger;
+    this.serverConfigs = serverConfigs;
     
     // 每10分钟检查一次空闲连接
     setInterval(() => this.cleanIdleConnections(), 10 * 60 * 1000);
@@ -160,7 +166,7 @@ class RconManager {
     // 验证端口是有效数字
     const port = parseInt(portStr);
     if (isNaN(port) || port <= 0 || port > 65535) {
-      throw new Error(`RCON端口无效: ${portStr}, 端口应为1-65535之间的数字`);
+      throw new Error(`服务器${server.name}的RCON端口无效: ${portStr}, 端口应为1-65535之间的数字`);
     }
     
     const serverId = server.id;
@@ -233,23 +239,27 @@ class RconManager {
     const connectionInfo = this.connections.get(serverId);
     
     if (connectionInfo) {
+      this.logger.info(`[RCON管理器] 重置服务器 ${server.name} 的连接`);
+      
       // 标记为正在重连
       connectionInfo.reconnecting = true;
       
-      // 清除心跳定时器
+      // 清除心跳
       if (connectionInfo.heartbeatInterval) {
         clearInterval(connectionInfo.heartbeatInterval);
         connectionInfo.heartbeatInterval = null;
       }
       
-      // 尝试关闭连接
       try {
+        // 关闭旧连接
         await connectionInfo.rcon.end();
+        this.logger.debug(`[RCON管理器] 已关闭服务器 ${server.name} 的旧连接`);
       } catch (error) {
+        // 忽略关闭连接时的错误
         this.logger.debug(`[RCON管理器] 关闭服务器 ${server.name} 的连接时出错: ${error.message}`);
       }
       
-      // 从连接池中删除
+      // 从映射中移除
       this.connections.delete(serverId);
     }
   }
@@ -297,7 +307,7 @@ class RconManager {
       }
     }
     
-    // 这一行代码永远不会被执行，但TypeScript需要它
+    // 这里理论上不会执行到，但为了类型安全
     throw new Error('无法执行RCON命令');
   }
   
@@ -306,9 +316,13 @@ class RconManager {
     const now = Date.now();
     
     for (const [serverId, connectionInfo] of this.connections.entries()) {
+      // 获取服务器名称（用于日志）
+      const serverConfig = this.serverConfigs.find(server => server.id === serverId);
+      const serverName = serverConfig ? serverConfig.name : serverId;
+      
       // 如果连接空闲时间超过maxIdleTime，关闭它
       if (now - connectionInfo.lastUsed > this.maxIdleTime) {
-        this.logger.info(`[RCON管理器] 关闭服务器 ${serverId} 的空闲连接`);
+        this.logger.info(`[RCON管理器] 关闭服务器 ${serverName} 的空闲连接`);
         
         // 清除心跳定时器
         if (connectionInfo.heartbeatInterval) {
@@ -319,7 +333,7 @@ class RconManager {
         try {
           await connectionInfo.rcon.end();
         } catch (error) {
-          this.logger.debug(`[RCON管理器] 关闭空闲连接时出错: ${error.message}`);
+          this.logger.debug(`[RCON管理器] 关闭服务器 ${serverName} 的空闲连接时出错: ${error.message}`);
         }
         
         // 从连接池中删除
@@ -331,6 +345,10 @@ class RconManager {
   // 关闭所有连接
   async closeAll(): Promise<void> {
     for (const [serverId, connectionInfo] of this.connections.entries()) {
+      // 获取服务器名称（用于日志）
+      const serverConfig = this.serverConfigs.find(server => server.id === serverId);
+      const serverName = serverConfig ? serverConfig.name : serverId;
+      
       // 清除心跳定时器
       if (connectionInfo.heartbeatInterval) {
         clearInterval(connectionInfo.heartbeatInterval);
@@ -339,9 +357,9 @@ class RconManager {
       // 关闭连接
       try {
         await connectionInfo.rcon.end();
-        this.logger.info(`[RCON管理器] 已关闭服务器 ${serverId} 的连接`);
+        this.logger.info(`[RCON管理器] 已关闭服务器 ${serverName} 的连接`);
       } catch (error) {
-        this.logger.debug(`[RCON管理器] 关闭服务器 ${serverId} 的连接时出错: ${error.message}`);
+        this.logger.debug(`[RCON管理器] 关闭服务器 ${serverName} 的连接时出错: ${error.message}`);
       }
     }
     
@@ -397,7 +415,7 @@ export function apply(ctx: Context, config: Config) {
   const CACHE_DURATION = 12 * 60 * 60 * 1000
 
   // 创建RCON连接管理器
-  const rconManager = new RconManager(logger);
+  const rconManager = new RconManager(logger, config.servers || []);
   
   // 创建RCON限流器实例
   const rconRateLimiter = new RateLimiter(10, 3000); // 3秒内最多10个请求
@@ -915,7 +933,10 @@ export function apply(ctx: Context, config: Config) {
     try {
       logger.debug(`[Mojang API] 开始验证用户名: ${username}`)
       const response = await axios.get(`https://api.mojang.com/users/profiles/minecraft/${username}`, {
-        timeout: 10000 // 添加10秒超时
+        timeout: 10000, // 添加10秒超时
+        headers: {
+          'User-Agent': 'KoishiMCVerifier/1.0', // 添加User-Agent头
+        }
       })
       
       if (response.status === 200 && response.data) {
@@ -925,17 +946,66 @@ export function apply(ctx: Context, config: Config) {
           name: response.data.name // 使用Mojang返回的正确大小写
         }
       }
-      logger.warn(`[Mojang API] 用户名"${username}"验证失败，API返回状态码: ${response.status}`)
+     
       return null
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
         logger.warn(`[Mojang API] 用户名"${username}"不存在`)
       } else if (axios.isAxiosError(error) && error.code === 'ECONNABORTED') {
-        logger.error(`[Mojang API] 验证用户名"${username}"时请求超时`)
+        logger.error(`[Mojang API] 验证用户名"${username}"时请求超时: ${error.message}`)
       } else {
-        logger.error(`[Mojang API] 验证用户名"${username}"时发生错误: ${error.message}`)
+        // 记录更详细的错误信息
+        const errorMessage = axios.isAxiosError(error) 
+          ? `${error.message}，响应状态: ${error.response?.status || '未知'}\n响应数据: ${JSON.stringify(error.response?.data || '无数据')}`
+          : error.message || '未知错误';
+        logger.error(`[Mojang API] 验证用户名"${username}"时发生错误: ${errorMessage}`)
+        
+        // 如果是网络相关错误，尝试使用备用API检查
+        if (axios.isAxiosError(error) && (
+            error.code === 'ENOTFOUND' || 
+            error.code === 'ETIMEDOUT' || 
+            error.code === 'ECONNRESET' || 
+            error.code === 'ECONNREFUSED' || 
+            error.code === 'ECONNABORTED' || 
+            error.response?.status === 429)) { // 添加429 (Too Many Requests)
+          // 尝试使用playerdb.co作为备用API
+          logger.info(`[Mojang API] 遇到错误(${error.code || error.response?.status})，将尝试使用备用API`)
+          return tryBackupAPI(username);
+        }
       }
-      return null
+      return null;
+    }
+  }
+
+  // 使用备用API验证用户名
+  const tryBackupAPI = async (username: string): Promise<MojangProfile | null> => {
+    logger.info(`[备用API] 尝试使用备用API验证用户名"${username}"`)
+    try {
+      // 使用playerdb.co作为备用API
+      const backupResponse = await axios.get(`https://playerdb.co/api/player/minecraft/${username}`, { 
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'KoishiMCVerifier/1.0'
+        }
+      })
+      
+      if (backupResponse.status === 200 && backupResponse.data?.code === "player.found") {
+        const playerData = backupResponse.data.data.player;
+        const rawId = playerData.raw_id || playerData.id.replace(/-/g, ''); // 确保使用不带连字符的UUID
+        logger.info(`[备用API] 用户名"${username}"验证成功，UUID: ${rawId}，标准名称: ${playerData.username}`)
+        return {
+          id: rawId, // 确保使用不带连字符的UUID
+          name: playerData.username
+        }
+      }
+      logger.warn(`[备用API] 用户名"${username}"验证失败: ${JSON.stringify(backupResponse.data)}`)
+      return null;
+    } catch (backupError) {
+      const errorMsg = axios.isAxiosError(backupError) 
+        ? `${backupError.message}, 状态码: ${backupError.response?.status || '未知'}`
+        : backupError.message || '未知错误';
+      logger.error(`[备用API] 验证用户名"${username}"失败: ${errorMsg}`)
+      return null;
     }
   }
 
@@ -970,6 +1040,42 @@ export function apply(ctx: Context, config: Config) {
     }
     
     logger.debug(`[头像] 为UUID "${cleanUuid}" 生成新的头像URL并缓存`)
+    return url
+  }
+
+  // 使用Starlight SkinAPI获取皮肤渲染
+  const getStarlightSkinUrl = (username: string): string | null => {
+    if (!username) return null
+    
+    // 可用的动作列表 (共16种)
+    const poses = [
+      'default',    // 默认站立
+      'marching',   // 行军
+      'walking',    // 行走
+      'crouching',  // 下蹲
+      'crossed',    // 交叉手臂
+      'crisscross', // 交叉腿
+      'cheering',   // 欢呼
+      'relaxing',   // 放松
+      'trudging',   // 艰难行走
+      'cowering',   // 退缩
+      'pointing',   // 指向
+      'lunging',    // 前冲
+      'dungeons',   // 地下城风格
+      'facepalm',   // 捂脸
+      'mojavatar',  // Mojave姿态
+    ]
+    
+    // 随机选择一个动作
+    const randomPose = poses[Math.floor(Math.random() * poses.length)]
+    
+    // 视图类型（full为全身图）
+    const viewType = 'full'
+    
+    // 生成URL
+    const url = `https://starlightskins.lunareclipse.studio/render/${randomPose}/${username}/${viewType}`
+    
+    logger.debug(`[Starlight皮肤] 为用户名"${username}"生成动作"${randomPose}"的渲染URL`)
     return url
   }
 
@@ -1103,13 +1209,43 @@ export function apply(ctx: Context, config: Config) {
             return sendMessage(session, [h.text(`该用户尚未绑定MC账号`)])
           }
           
-          const formattedUuid = formatUuid(targetBind.mcUuid)
-          const avatarUrl = getCrafatarUrl(targetBind.mcUuid)
+          // 检查并更新用户名（如果变更）
+          const updatedBind = await checkAndUpdateUsername(targetBind);
           
-          logger.info(`[查询] QQ(${normalizedTargetId})的MC账号信息：用户名=${targetBind.mcUsername}, UUID=${targetBind.mcUuid}`)
+          const formattedUuid = formatUuid(updatedBind.mcUuid)
+          // 获取皮肤渲染URL
+          const skinUrl = getStarlightSkinUrl(updatedBind.mcUsername)
+          
+          // 添加获取白名单服务器信息
+          let whitelistInfo = '';
+          if (updatedBind.whitelist && updatedBind.whitelist.length > 0) {
+            // 圈数字映射（1-10），用于美化显示
+            const circledNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+            
+            const serverList = updatedBind.whitelist.map((serverId, index) => {
+              const server = getServerConfigById(serverId);
+              if (!server) return `${index < circledNumbers.length ? circledNumbers[index] : (index+1)} 未知服务器(ID: ${serverId})`;
+              
+              // 使用圈数字作为序号
+              const circledNumber = index < circledNumbers.length ? circledNumbers[index] : `${index+1}`;
+              let info = `${circledNumber} ${server.name}`;
+              
+              // 只有当设置了地址时才显示地址行
+              if (server.displayAddress && server.displayAddress.trim()) {
+                info += `\n   地址: ${server.displayAddress}`;
+              }
+              return info;
+            }).join('\n');
+            
+            whitelistInfo = `\n已加入以下服务器的白名单:\n${serverList}`;
+          } else {
+            whitelistInfo = '\n未加入任何服务器的白名单';
+          }
+          
+          logger.info(`[查询] QQ(${normalizedTargetId})的MC账号信息：用户名=${updatedBind.mcUsername}, UUID=${updatedBind.mcUuid}`)
           return sendMessage(session, [
-            h.text(`用户 ${normalizedTargetId} 的MC账号信息：\n用户名: ${targetBind.mcUsername}\nUUID: ${formattedUuid}`),
-            ...(avatarUrl ? [h.image(avatarUrl)] : [])
+            h.text(`用户 ${normalizedTargetId} 的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}`),
+            ...(skinUrl ? [h.image(skinUrl)] : [])
           ])
         }
         
@@ -1122,13 +1258,43 @@ export function apply(ctx: Context, config: Config) {
           return sendMessage(session, [h.text(`您尚未绑定MC账号，请使用 ` + formatCommand('mcid bind <用户名>') + ` 进行绑定`)])
         }
         
-        const formattedUuid = formatUuid(selfBind.mcUuid)
-        const avatarUrl = getCrafatarUrl(selfBind.mcUuid)
+        // 检查并更新用户名（如果变更）
+        const updatedBind = await checkAndUpdateUsername(selfBind);
         
-        logger.info(`[查询] QQ(${normalizedUserId})的MC账号信息：用户名=${selfBind.mcUsername}, UUID=${selfBind.mcUuid}`)
+        const formattedUuid = formatUuid(updatedBind.mcUuid)
+        // 获取皮肤渲染URL
+        const skinUrl = getStarlightSkinUrl(updatedBind.mcUsername)
+        
+        // 添加获取白名单服务器信息
+        let whitelistInfo = '';
+        if (updatedBind.whitelist && updatedBind.whitelist.length > 0) {
+          // 圈数字映射（1-10），用于美化显示
+          const circledNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+          
+          const serverList = updatedBind.whitelist.map((serverId, index) => {
+            const server = getServerConfigById(serverId);
+            if (!server) return `${index < circledNumbers.length ? circledNumbers[index] : (index+1)} 未知服务器(ID: ${serverId})`;
+            
+            // 使用圈数字作为序号
+            const circledNumber = index < circledNumbers.length ? circledNumbers[index] : `${index+1}`;
+            let info = `${circledNumber} ${server.name}`;
+            
+            // 只有当设置了地址时才显示地址行
+            if (server.displayAddress && server.displayAddress.trim()) {
+              info += `\n   地址: ${server.displayAddress}`;
+            }
+            return info;
+          }).join('\n');
+          
+          whitelistInfo = `\n已加入以下服务器的白名单:\n${serverList}`;
+        } else {
+          whitelistInfo = '\n未加入任何服务器的白名单';
+        }
+        
+        logger.info(`[查询] QQ(${normalizedUserId})的MC账号信息：用户名=${updatedBind.mcUsername}, UUID=${updatedBind.mcUuid}`)
         return sendMessage(session, [
-          h.text(`您的MC账号信息：\n用户名: ${selfBind.mcUsername}\nUUID: ${formattedUuid}`),
-          ...(avatarUrl ? [h.image(avatarUrl)] : [])
+          h.text(`您的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}`),
+          ...(skinUrl ? [h.image(skinUrl)] : [])
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -1195,13 +1361,13 @@ export function apply(ctx: Context, config: Config) {
           
           logger.info(`[绑定] 成功: 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})绑定MC账号: ${username}(${uuid})`)
           
-          // 生成Crafatar头像URL
-          const avatarUrl = getCrafatarUrl(uuid)
+          // 获取皮肤渲染URL
+          const skinUrl = getStarlightSkinUrl(username)
           const formattedUuid = formatUuid(uuid)
           
           return sendMessage(session, [
             h.text(`已成功为用户 ${normalizedTargetId} 绑定MC账号\n用户名: ${username}\nUUID: ${formattedUuid}`),
-            ...(avatarUrl ? [h.image(avatarUrl)] : [])
+            ...(skinUrl ? [h.image(skinUrl)] : [])
           ])
         }
         
@@ -1251,13 +1417,13 @@ export function apply(ctx: Context, config: Config) {
         
         logger.info(`[绑定] 成功: QQ(${normalizedUserId})绑定MC账号: ${username}(${uuid})`)
         
-        // 生成Crafatar头像URL
-        const avatarUrl = getCrafatarUrl(uuid)
+        // 获取皮肤渲染URL
+        const skinUrl = getStarlightSkinUrl(username)
         const formattedUuid = formatUuid(uuid)
         
         return sendMessage(session, [
           h.text(`已成功绑定MC账号\n用户名: ${username}\nUUID: ${formattedUuid}`),
-          ...(avatarUrl ? [h.image(avatarUrl)] : [])
+          ...(skinUrl ? [h.image(skinUrl)] : [])
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -1333,13 +1499,13 @@ export function apply(ctx: Context, config: Config) {
           
           logger.info(`[修改] 成功: 管理员QQ(${normalizedUserId})修改QQ(${normalizedTargetId})的MC账号: ${oldUsername} -> ${username}(${uuid})`)
           
-          // 生成Crafatar头像URL
-          const avatarUrl = getCrafatarUrl(uuid)
+          // 获取皮肤渲染URL
+          const skinUrl = getStarlightSkinUrl(username)
           const formattedUuid = formatUuid(uuid)
           
           return sendMessage(session, [
             h.text(`已成功将用户 ${normalizedTargetId} 的MC账号从 ${oldUsername} 修改为 ${username}\nUUID: ${formattedUuid}`),
-            ...(avatarUrl ? [h.image(avatarUrl)] : [])
+            ...(skinUrl ? [h.image(skinUrl)] : [])
           ])
         }
 
@@ -1389,13 +1555,13 @@ export function apply(ctx: Context, config: Config) {
         
         logger.info(`[修改] 成功: QQ(${normalizedUserId})修改MC账号: ${oldUsername} -> ${username}(${uuid})`)
         
-        // 生成Crafatar头像URL
-        const avatarUrl = getCrafatarUrl(uuid)
+        // 获取皮肤渲染URL
+        const skinUrl = getStarlightSkinUrl(username)
         const formattedUuid = formatUuid(uuid)
         
         return sendMessage(session, [
           h.text(`已成功将MC账号从 ${oldUsername} 修改为 ${username}\nUUID: ${formattedUuid}`),
-          ...(avatarUrl ? [h.image(avatarUrl)] : [])
+          ...(skinUrl ? [h.image(skinUrl)] : [])
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -1733,104 +1899,122 @@ export function apply(ctx: Context, config: Config) {
           return false
         }
       } else {
-        // 使用用户名，确保它已被Mojang API验证
-          mcid = freshBind.mcUsername
+        mcid = freshBind.mcUsername
       }
       
-        logger.info(`[白名单] 为用户QQ(${freshBind.qqId})添加白名单，使用${server.idType === 'uuid' ? 'UUID' : '用户名'}: ${mcid}`)
+      logger.info(`[白名单] 为用户QQ(${freshBind.qqId})添加白名单，使用${server.idType === 'uuid' ? 'UUID' : '用户名'}: ${mcid}`)
       
       // 替换命令模板中的${MCID}
       const command = server.addCommand.replace(/\${MCID}/g, mcid)
       
-      // 执行RCON命令
-      const response = await executeRconCommand(server, command)
+      let response = "";
+      let success = false;
+      let errorMessage = "";
       
-      // 记录完整命令和响应，用于调试
-      logger.debug(`[白名单] 执行命令: ${command}, 响应: "${response}", 长度: ${response.length}字节`);
-      
-      // 空响应处理
-      if (response.trim() === '') {
-        if (server.acceptEmptyResponse) {
-          logger.info(`[白名单] 收到空响应，根据配置将其视为成功`);
+      // 内部重试3次
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          // 执行RCON命令
+          response = await executeRconCommand(server, command);
           
-          // 重新获取最新状态进行更新，避免并发更新问题
-          const currentBind = await getMcBindByQQId(freshBind.qqId);
-          if (!currentBind) {
-            logger.warn(`[白名单] 无法获取用户QQ(${freshBind.qqId})的最新状态，数据库更新失败`);
-            return true; // 命令执行成功但数据库操作失败，仍返回成功
+          // 记录完整命令和响应，用于调试
+          logger.debug(`[白名单] 执行命令尝试#${attempt}: ${command}, 响应: "${response}", 长度: ${response.length}字节`);
+          
+          // 空响应处理
+          if (response.trim() === '') {
+            if (server.acceptEmptyResponse) {
+              logger.info(`[白名单] 收到空响应，根据配置将其视为成功`);
+              success = true;
+              break;
+            } else {
+              errorMessage = "服务器返回空响应";
+              if (attempt < 3) {
+                logger.warn(`[白名单] 尝试#${attempt}收到空响应，将在${500 * attempt}ms后重试...`);
+                await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+                continue;
+              }
+            }
           }
+      
+          // 检查是否添加成功
+          // 定义匹配成功的关键词和匹配失败的关键词
+          const successKeywords = ['已', '成功', 'success', 'added', 'okay', 'done', 'completed', 'added to', 'whitelist has', 'whitelisted'];
+          const failureKeywords = ['失败', 'error', 'failed', 'not found', '不存在', 'cannot', 'unable', 'failure', 'exception', 'denied'];
           
-          // 确保whitelist数组存在
-          if (!currentBind.whitelist) {
-            currentBind.whitelist = [];
-        }
-        
-        // 如果服务器ID不在白名单列表中，则添加
-          if (!currentBind.whitelist.includes(server.id)) {
-            currentBind.whitelist.push(server.id);
-            await ctx.database.set('mcidbind', { qqId: freshBind.qqId }, {
-              whitelist: currentBind.whitelist
-            });
-            logger.info(`[白名单] 成功将QQ(${freshBind.qqId})添加到服务器${server.name}的白名单，更新数据库记录`);
-        }
-        
-          return true;
-        } else {
-          logger.warn(`[白名单] 收到空响应，根据配置视为失败。可以在配置中设置acceptEmptyResponse=true接受空响应`);
+          // 检查响应是否包含失败关键词
+          const hasFailureKeyword = failureKeywords.some(keyword => 
+            response.toLowerCase().includes(keyword.toLowerCase())
+          );
+          
+          // 如果包含失败关键词，则表示失败
+          if (hasFailureKeyword) {
+            errorMessage = `命令执行失败: ${response}`;
+            if (attempt < 3) {
+              logger.warn(`[白名单] 尝试#${attempt}失败: ${errorMessage}，将在${500 * attempt}ms后重试...`);
+              await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+              continue;
+            }
+          } else {
+            // 检查是否包含成功关键词
+            const hasSuccessKeyword = successKeywords.some(keyword => 
+              response.toLowerCase().includes(keyword.toLowerCase())
+            );
+            
+            // 如果包含成功关键词或响应不包含失败关键词（且不为空），则表示成功
+            if (hasSuccessKeyword || !hasFailureKeyword) {
+              logger.info(`[白名单] 添加白名单成功，响应: ${response}`);
+              success = true;
+              break;
+            } else {
+              // 响应中既不包含成功关键词，也不包含失败关键词，视为需要人工判断
+              if (attempt < 3) {
+                logger.warn(`[白名单] 尝试#${attempt}状态不明确，响应: ${response}，将在${500 * attempt}ms后重试...`);
+                await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+                continue;
+              } else {
+                // 最后一次尝试，没有明确失败标识，尝试视为成功
+                logger.warn(`[白名单] 最终尝试#${attempt}状态不明确，响应: ${response}，将视为成功`);
+                success = true;
+                break;
+              }
+            }
+          }
+        } catch (error) {
+          // 命令执行出错
+          errorMessage = `执行命令出错: ${error.message}`;
+          logger.error(`[白名单] 尝试#${attempt}执行命令出错: ${error.message}`);
+          
+          if (attempt < 3) {
+            // 增加延迟，使用指数退避策略
+            const delayMs = 1000 * Math.pow(2, attempt - 1);
+            logger.warn(`[白名单] 将在${delayMs}ms后重试...`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+            continue;
+          }
         }
       }
       
-      // 检查是否添加成功
-      // 定义匹配成功的关键词和匹配失败的关键词
-      const successKeywords = ['已', '成功', 'success', 'added', 'okay', 'done', 'completed'];
-      const failureKeywords = ['失败', 'error', 'failed', 'not found', '不存在', 'cannot', 'unable'];
-      
-      // 检查响应是否包含成功关键词
-      const isSuccess = successKeywords.some(keyword => response.toLowerCase().includes(keyword.toLowerCase()));
-      
-      // 检查响应是否包含失败关键词
-      const isFailure = failureKeywords.some(keyword => response.toLowerCase().includes(keyword.toLowerCase()));
-      
-      // 新增：检查是否已在白名单中
-      const isAlreadyInWhitelist = /已在白名单|already (on|in) (the )?whitelist/i.test(response);
-      
-      // 判断结果
-      if (isSuccess && !isFailure) {
-        // 明确检测到成功关键词且没有失败关键词
-        if (isAlreadyInWhitelist) {
-          logger.info(`[白名单] 玩家已在白名单中，服务器响应: ${response}`);
-        } else {
-        logger.info(`[白名单] 添加白名单成功，服务器响应: ${response}`);
-        }
+      // 操作结果处理
+      if (success) {
+        logger.info(`[白名单] 成功将QQ(${freshBind.qqId})添加到服务器${server.name}的白名单`);
         
-        // 重新获取最新状态进行更新，避免并发更新问题
+        // 更新用户的白名单列表
         const currentBind = await getMcBindByQQId(freshBind.qqId);
-        if (!currentBind) {
-          logger.warn(`[白名单] 无法获取用户QQ(${freshBind.qqId})的最新状态，数据库更新失败`);
-          return true; // 命令执行成功但数据库操作失败，仍返回成功
-        }
-        
-        // 确保whitelist数组存在
-        if (!currentBind.whitelist) {
-          currentBind.whitelist = [];
-        }
-        
-        // 如果服务器ID不在白名单列表中，则添加
-        if (!currentBind.whitelist.includes(server.id)) {
-          currentBind.whitelist.push(server.id);
+        if (currentBind) {
+          // 避免重复添加
+          const whitelistSet = new Set(currentBind.whitelist || []);
+          whitelistSet.add(server.id);
+          
+          // 更新数据库
           await ctx.database.set('mcidbind', { qqId: freshBind.qqId }, {
-            whitelist: currentBind.whitelist
+            whitelist: Array.from(whitelistSet)
           });
-          if (isAlreadyInWhitelist) {
-            logger.info(`[白名单] 玩家已在服务器${server.name}的白名单中，仅更新数据库记录`);
-          } else {
-            logger.info(`[白名单] 成功将QQ(${freshBind.qqId})添加到服务器${server.name}的白名单，更新数据库记录`);
-          }
+          logger.info(`[白名单] 成功将QQ(${freshBind.qqId})添加到服务器${server.name}的白名单，更新数据库记录`);
         }
         
         return true;
       } else {
-        logger.warn(`[白名单] 添加白名单失败，服务器响应: ${response}`);
+        logger.warn(`[白名单] 添加白名单失败，最终错误: ${errorMessage}`);
         return false;
       }
     } catch (error) {
@@ -1928,11 +2112,11 @@ export function apply(ctx: Context, config: Config) {
       
       // 检查是否移除成功
       // 定义匹配成功的关键词和匹配失败的关键词
-        const successKeywords = ['移除', '已完成', '成功', 'success', 'removed', 'okay', 'done', 'completed'];
-        const failureKeywords = ['失败', '错误', 'error', 'failed', 'cannot', 'unable'];
-        
-        // 对于不存在的情况单独处理，不应被视为失败
-        const notFoundKeywords = ['not found', '不存在'];
+      const successKeywords = ['移除', '已完成', '成功', 'success', 'removed', 'okay', 'done', 'completed', 'removePlayer', 'took', 'off'];
+      const failureKeywords = ['失败', '错误', 'error', 'failed', 'cannot', 'unable', 'failure', 'exception', 'denied'];
+      
+      // 对于不存在的情况单独处理，不应被视为失败
+      const notFoundKeywords = ['not found', '不存在', 'no player was removed', 'is not whitelisted', 'not in'];
       
       // 检查响应是否包含成功关键词
       const isSuccess = successKeywords.some(keyword => response.toLowerCase().includes(keyword.toLowerCase()));
@@ -2007,16 +2191,94 @@ export function apply(ctx: Context, config: Config) {
         logger.info('[初始化] 表结构正常或已修复缺失字段')
       }
       
+      // 检查API可用性
+      logger.info('[初始化] 开始检查API连接状态...')
+      await checkApiStatus()
+      
       // 检查RCON连接
       if (config.servers && config.servers.length > 0) {
         logger.info('[初始化] 开始检查RCON连接...')
         await checkRconConnections()
       }
     } catch (error) {
-      logger.error(`[初始化] 表结构检查或重建失败: ${error.message}`)
+      logger.error(`[初始化] 表结构检查或初始化失败: ${error.message}`)
     }
   })
   
+  // 检查API连接状态
+  const checkApiStatus = async (): Promise<void> => {
+    const testUsername = 'Notch' // 使用一个确定存在的用户名进行测试
+    
+    logger.info('[API检查] 开始测试Mojang API和备用API连接状态')
+    
+    // 记录API测试的状态
+    let mojangApiStatus = false
+    let backupApiStatus = false
+    
+    // 测试Mojang API
+    try {
+      const startTime = Date.now()
+      const response = await axios.get(`https://api.mojang.com/users/profiles/minecraft/${testUsername}`, {
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'KoishiMCVerifier/1.0',
+        }
+      })
+      
+      const mojangTime = Date.now() - startTime
+      
+      if (response.status === 200 && response.data) {
+        logger.info(`[API检查] Mojang API连接正常 (${mojangTime}ms)，已验证用户: ${response.data.name}, UUID: ${response.data.id}`)
+        mojangApiStatus = true
+      } else {
+        logger.warn(`[API检查] Mojang API返回异常状态码: ${response.status}, 响应: ${JSON.stringify(response.data || '无数据')}`)
+      }
+    } catch (error) {
+      const errorMessage = axios.isAxiosError(error) 
+        ? `${error.message}，错误代码: ${error.code || '未知'}，响应状态: ${error.response?.status || '未知'}`
+        : error.message || '未知错误'
+      logger.error(`[API检查] Mojang API连接失败: ${errorMessage}`)
+    }
+    
+    // 测试备用API
+    try {
+      const startTime = Date.now()
+      const response = await axios.get(`https://playerdb.co/api/player/minecraft/${testUsername}`, {
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'KoishiMCVerifier/1.0',
+        }
+      })
+      
+      const backupTime = Date.now() - startTime
+      
+      if (response.status === 200 && response.data?.code === "player.found") {
+        const playerData = response.data.data.player;
+        const rawId = playerData.raw_id || playerData.id.replace(/-/g, '');
+        logger.info(`[API检查] 备用API连接正常 (${backupTime}ms)，已验证用户: ${playerData.username}, UUID: ${rawId}`)
+        backupApiStatus = true
+      } else {
+        logger.warn(`[API检查] 备用API返回异常数据: 状态码: ${response.status}, 响应代码: ${response.data?.code || '未知'}`)
+      }
+    } catch (error) {
+      const errorMessage = axios.isAxiosError(error) 
+        ? `${error.message}，错误代码: ${error.code || '未知'}，响应状态: ${error.response?.status || '未知'}`
+        : error.message || '未知错误'
+      logger.error(`[API检查] 备用API连接失败: ${errorMessage}`)
+    }
+    
+    // 总结API检查结果
+    if (mojangApiStatus && backupApiStatus) {
+      logger.info('[API检查] 所有API连接正常!')
+    } else if (mojangApiStatus) {
+      logger.warn('[API检查] Mojang API连接正常，但备用API连接失败')
+    } else if (backupApiStatus) {
+      logger.warn('[API检查] Mojang API连接失败，但备用API连接正常，将使用备用API')
+    } else {
+      logger.error('[API检查] 所有API连接均失败，验证功能可能无法正常工作!')
+    }
+  }
+
   // =========== 白名单命令组 ===========
   const whitelistCmd = cmd.subcommand('.whitelist', '白名单管理')
 
@@ -2032,30 +2294,50 @@ export function apply(ctx: Context, config: Config) {
           return sendMessage(session, [h.text('当前未配置任何服务器')])
         }
         
-        // 查询用户的绑定信息，用于显示白名单状态
+        // 检查用户是否绑定了MC账号
         const userBind = await getMcBindByQQId(normalizedUserId);
+        if (!userBind || !userBind.mcUsername) {
+          logger.warn(`[白名单] QQ(${normalizedUserId})未绑定MC账号，无法显示白名单状态`)
+          return sendMessage(session, [h.text(`您尚未绑定MC账号，请先使用 ${formatCommand('mcid bind <用户名>')} 命令绑定账号，然后再查看服务器列表。`)])
+        }
+        
+        // 圈数字映射（1-20）
+        const circledNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', 
+                                '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳'];
         
         // 格式化服务器列表
         const serverList = config.servers.map((server, index) => {
           // 获取此用户是否已加入该服务器的白名单
           const hasWhitelist = userBind ? isInServerWhitelist(userBind, server.id) : false;
           
+          // 使用圈数字作为序号
+          const circledNumber = index < circledNumbers.length ? circledNumbers[index] : `${index + 1}.`;
+          
           // 构建服务器信息显示文本
-          let serverInfo = `${index + 1}. ${server.name}`;
+          let serverInfo = `${circledNumber} ${server.name}`;
           
           // 添加状态标记
           if (hasWhitelist) {
             serverInfo += ' [✓ 已加入]';
+          } else {
+            serverInfo += ' [未加入]';
           }
           
           // 添加申请权限信息
-          serverInfo += server.allowSelfApply ? ' - 允许自助申请' : ' - 仅管理员可操作';
+          serverInfo += "\n   权限: " + (server.allowSelfApply ? '允许自助申请' : '仅管理员可操作');
+          
+          // 只有当设置了地址时才显示地址行
+          if (server.displayAddress && server.displayAddress.trim()) {
+            serverInfo += "\n   地址: " + server.displayAddress;
+          }
           
           return serverInfo;
-        }).join('\n')
+        }).join('\n');
         
         logger.info(`[白名单] 成功: QQ(${normalizedUserId})获取了服务器列表，共${config.servers.length}个服务器`)
-        return sendMessage(session, [h.text(`可用的服务器列表:\n${serverList}\n\n使用 mcid whitelist add <服务器名称> 申请白名单`)])
+        return sendMessage(session, [
+          h.text(`${userBind.mcUsername} 的可用服务器列表:\n\n${serverList}\n\n使用 ${formatCommand('mcid whitelist add <服务器名称>')} 申请白名单`)
+        ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
         logger.error(`[白名单] QQ(${normalizedUserId})查询服务器列表失败: ${error.message}`)
@@ -2063,43 +2345,6 @@ export function apply(ctx: Context, config: Config) {
       }
     })
 
-  // 列出自己的白名单
-  whitelistCmd.subcommand('.list', '列出自己已加入的白名单服务器')
-    .action(async ({ session }) => {
-      try {
-        const normalizedUserId = normalizeQQId(session.userId)
-        logger.info(`[白名单] QQ(${normalizedUserId})查询自己的白名单状态`)
-        
-        // 使用锁确保在查询时没有并发修改
-        await withLock(`whitelist_query_${normalizedUserId}`, async () => {
-        const mcBind = await getMcBindByQQId(normalizedUserId)
-        
-        if (!mcBind || !mcBind.mcUsername) {
-          logger.warn(`[白名单] QQ(${normalizedUserId})未绑定MC账号`)
-          return sendMessage(session, [h.text('您尚未绑定MC账号，请先使用 ' + formatCommand('mcid bind <用户名>') + ' 进行绑定')])
-        }
-        
-        if (!mcBind.whitelist || mcBind.whitelist.length === 0) {
-          logger.info(`[白名单] QQ(${normalizedUserId})未加入任何白名单`)
-          return sendMessage(session, [h.text('您目前未加入任何服务器的白名单\n使用 mcid whitelist servers 查看可用服务器列表\n使用 mcid whitelist add <服务器名称> 申请白名单')])
-        }
-        
-        // 生成已加入的白名单列表
-        const serverList = mcBind.whitelist.map(serverId => {
-          const server = getServerConfigById(serverId)
-          return server ? `- ${server.name}` : `- 未知服务器(ID: ${serverId})`
-        }).join('\n')
-        
-        logger.info(`[白名单] 成功: QQ(${normalizedUserId})查询了白名单状态，已加入${mcBind.whitelist.length}个服务器`)
-        return sendMessage(session, [h.text(`您已加入以下服务器的白名单:\n${serverList}\n\n共 ${mcBind.whitelist.length} 个服务器`)])
-        }, 5000);
-      } catch (error) {
-        const normalizedUserId = normalizeQQId(session.userId)
-        logger.error(`[白名单] QQ(${normalizedUserId})查询白名单状态失败: ${error.message}`)
-        return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
-      }
-    })
-  
   // 添加白名单
   whitelistCmd.subcommand('.add <serverName:string> [target:user]', '申请/添加服务器白名单')
     .action(async ({ session }, serverName, target) => {
@@ -2323,4 +2568,116 @@ export function apply(ctx: Context, config: Config) {
       logger.warn(`[RCON检查] 以下服务器连接失败，白名单功能可能无法正常工作: ${failedServers}`)
     }
   }
+
+  // 使用Mojang API通过UUID查询用户名
+  const getUsernameByUuid = async (uuid: string): Promise<string | null> => {
+    try {
+      // 确保UUID格式正确（去除连字符）
+      const cleanUuid = uuid.replace(/-/g, '');
+      
+      logger.debug(`[Mojang API] 通过UUID "${cleanUuid}" 查询用户名`);
+      const response = await axios.get(`https://api.mojang.com/user/profile/${cleanUuid}`, {
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'KoishiMCVerifier/1.0',
+        }
+      });
+      
+      if (response.status === 200 && response.data) {
+        // 从返回数据中提取用户名
+        const username = response.data.name;
+        logger.debug(`[Mojang API] UUID "${cleanUuid}" 当前用户名: ${username}`);
+        return username;
+      }
+      
+      logger.warn(`[Mojang API] UUID "${cleanUuid}" 查询不到用户名`);
+      return null;
+    } catch (error) {
+      // 如果是网络相关错误，尝试使用备用API
+      if (axios.isAxiosError(error) && (
+        error.code === 'ENOTFOUND' || 
+        error.code === 'ETIMEDOUT' || 
+        error.code === 'ECONNRESET' || 
+        error.code === 'ECONNREFUSED' || 
+        error.code === 'ECONNABORTED' || 
+        error.response?.status === 429)) {
+        
+        logger.info(`[Mojang API] 通过UUID查询用户名时遇到错误(${error.code || error.response?.status})，将尝试使用备用API`);
+        return getUsernameByUuidBackupAPI(uuid);
+      }
+      
+      const errorMessage = axios.isAxiosError(error) 
+        ? `${error.message}，响应状态: ${error.response?.status || '未知'}\n响应数据: ${JSON.stringify(error.response?.data || '无数据')}`
+        : error.message || '未知错误';
+      logger.error(`[Mojang API] 通过UUID "${uuid}" 查询用户名失败: ${errorMessage}`);
+      return null;
+    }
+  };
+
+  // 使用备用API通过UUID查询用户名
+  const getUsernameByUuidBackupAPI = async (uuid: string): Promise<string | null> => {
+    try {
+      // 确保UUID格式正确，备用API支持带连字符的UUID
+      const formattedUuid = uuid.includes('-') ? uuid : formatUuid(uuid);
+      
+      logger.debug(`[备用API] 通过UUID "${formattedUuid}" 查询用户名`);
+      const response = await axios.get(`https://playerdb.co/api/player/minecraft/${formattedUuid}`, {
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'KoishiMCVerifier/1.0',
+        }
+      });
+      
+      if (response.status === 200 && response.data?.code === "player.found") {
+        const playerData = response.data.data.player;
+        logger.debug(`[备用API] UUID "${formattedUuid}" 当前用户名: ${playerData.username}`);
+        return playerData.username;
+      }
+      
+      logger.warn(`[备用API] UUID "${formattedUuid}" 查询不到用户名: ${JSON.stringify(response.data)}`);
+      return null;
+    } catch (error) {
+      const errorMessage = axios.isAxiosError(error) 
+        ? `${error.message}，响应状态: ${error.response?.status || '未知'}\n响应数据: ${JSON.stringify(error.response?.data || '无数据')}`
+        : error.message || '未知错误';
+      logger.error(`[备用API] 通过UUID "${uuid}" 查询用户名失败: ${errorMessage}`);
+      return null;
+    }
+  };
+
+  // 检查并更新用户名（如果与当前数据库中的不同）
+  const checkAndUpdateUsername = async (bind: MCIDBIND): Promise<MCIDBIND> => {
+    try {
+      if (!bind || !bind.mcUuid) {
+        logger.warn(`[用户名更新] 无法检查用户名更新: 空绑定或空UUID`);
+        return bind;
+      }
+      
+      // 通过UUID查询最新用户名
+      const latestUsername = await getUsernameByUuid(bind.mcUuid);
+      
+      if (!latestUsername) {
+        logger.warn(`[用户名更新] 无法获取UUID "${bind.mcUuid}" 的最新用户名`);
+        return bind;
+      }
+      
+      // 如果用户名与数据库中的不同，更新数据库
+      if (latestUsername !== bind.mcUsername) {
+        logger.info(`[用户名更新] 用户 QQ(${bind.qqId}) 的Minecraft用户名已变更: ${bind.mcUsername} -> ${latestUsername}`);
+        
+        // 更新数据库中的用户名
+        await ctx.database.set('mcidbind', { qqId: bind.qqId }, {
+          mcUsername: latestUsername
+        });
+        
+        // 更新返回的绑定对象
+        bind.mcUsername = latestUsername;
+      }
+      
+      return bind;
+    } catch (error) {
+      logger.error(`[用户名更新] 检查和更新用户名失败: ${error.message}`);
+      return bind;
+    }
+  };
 }
