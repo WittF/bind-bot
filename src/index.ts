@@ -1141,42 +1141,17 @@ export function apply(ctx: Context, config: Config) {
       // 获取消息内容并规范化空格
       const content = session.content.trim()
       
-      // 提取机器人昵称，移除可能的@前缀
-      const botNickname = config.botNickname.replace(/^@/, '')
+      // 使用完整的机器人昵称（包括可能的@前缀）
+      const botNickname = config.botNickname
       
-      // 尝试识别多种可能的模式，但只匹配mcid命令
+      // 尝试识别以机器人昵称开头的mcid命令
       let mcidCommand = null
       
-      // 1. 检查消息元素中是否有@机器人元素
-      // @ts-ignore - 元素类型在不同平台可能不同
-      if (session.elements && Array.isArray(session.elements)) {
-        // 检查是否有at元素，后面紧跟mcid命令
-        // @ts-ignore
-        const atElements = session.elements.filter(el => el.type === 'at')
-        
-        if (atElements.length > 0) {
-          // 仅匹配mcid命令开头的部分
-          const matches = content.match(/^(?:.*?\s+)?(mcid\s+.*)$/i)
-          if (matches && matches[1]) {
-            mcidCommand = matches[1].trim()
-          }
-        }
-      }
-      
-      // 2. 文本前缀匹配 - @机器人
-      if (!mcidCommand) {
-        const atMatch = content.match(new RegExp(`^@${botNickname}\\s+(mcid\\s+.*)$`, 'i'))
-        if (atMatch && atMatch[1]) {
-          mcidCommand = atMatch[1].trim()
-        }
-      }
-      
-      // 3. 文本前缀匹配 - 机器人昵称
-      if (!mcidCommand) {
-        const nameMatch = content.match(new RegExp(`^${botNickname}\\s+(mcid\\s+.*)$`, 'i'))
-        if (nameMatch && nameMatch[1]) {
-          mcidCommand = nameMatch[1].trim()
-        }
+      // 严格匹配 "配置的昵称 mcid xxx" 格式
+      const nicknamePrefixRegex = new RegExp(`^${botNickname}\\s+(mcid\\s+.*)$`, 'i')
+      const nicknameMatch = content.match(nicknamePrefixRegex)
+      if (nicknameMatch && nicknameMatch[1]) {
+        mcidCommand = nicknameMatch[1].trim()
       }
       
       // 如果找到匹配的mcid命令，执行它
@@ -1188,7 +1163,7 @@ export function apply(ctx: Context, config: Config) {
           logger.error(`[前缀匹配] 执行命令"${mcidCommand}"失败: ${error.message}`)
         })
         
-        // 返回true终止后续中间件处理，避免重复处理
+        // 返回终止后续中间件处理，避免重复处理
         return 
       }
       
@@ -1904,10 +1879,10 @@ export function apply(ctx: Context, config: Config) {
           return false
         }
       } else {
-        mcid = freshBind.mcUsername
+          mcid = freshBind.mcUsername
       }
       
-      logger.info(`[白名单] 为用户QQ(${freshBind.qqId})添加白名单，使用${server.idType === 'uuid' ? 'UUID' : '用户名'}: ${mcid}`)
+        logger.info(`[白名单] 为用户QQ(${freshBind.qqId})添加白名单，使用${server.idType === 'uuid' ? 'UUID' : '用户名'}: ${mcid}`)
       
       // 替换命令模板中的${MCID}
       const command = server.addCommand.replace(/\${MCID}/g, mcid)
@@ -1919,16 +1894,16 @@ export function apply(ctx: Context, config: Config) {
       // 内部重试3次
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          // 执行RCON命令
+      // 执行RCON命令
           response = await executeRconCommand(server, command);
-          
-          // 记录完整命令和响应，用于调试
+      
+      // 记录完整命令和响应，用于调试
           logger.debug(`[白名单] 执行命令尝试#${attempt}: ${command}, 响应: "${response}", 长度: ${response.length}字节`);
-          
-          // 空响应处理
-          if (response.trim() === '') {
-            if (server.acceptEmptyResponse) {
-              logger.info(`[白名单] 收到空响应，根据配置将其视为成功`);
+      
+      // 空响应处理
+      if (response.trim() === '') {
+        if (server.acceptEmptyResponse) {
+          logger.info(`[白名单] 收到空响应，根据配置将其视为成功`);
               success = true;
               break;
             } else {
@@ -1938,19 +1913,19 @@ export function apply(ctx: Context, config: Config) {
                 await new Promise(resolve => setTimeout(resolve, 500 * attempt));
                 continue;
               }
-            }
-          }
+        }
+      }
       
-          // 检查是否添加成功
-          // 定义匹配成功的关键词和匹配失败的关键词
+      // 检查是否添加成功
+      // 定义匹配成功的关键词和匹配失败的关键词
           const successKeywords = ['已', '成功', 'success', 'added', 'okay', 'done', 'completed', 'added to', 'whitelist has', 'whitelisted'];
           const failureKeywords = ['失败', 'error', 'failed', 'not found', '不存在', 'cannot', 'unable', 'failure', 'exception', 'denied'];
-          
-          // 检查响应是否包含失败关键词
+      
+      // 检查响应是否包含失败关键词
           const hasFailureKeyword = failureKeywords.some(keyword => 
             response.toLowerCase().includes(keyword.toLowerCase())
           );
-          
+      
           // 如果包含失败关键词，则表示失败
           if (hasFailureKeyword) {
             errorMessage = `命令执行失败: ${response}`;
@@ -1970,7 +1945,7 @@ export function apply(ctx: Context, config: Config) {
               logger.info(`[白名单] 添加白名单成功，响应: ${response}`);
               success = true;
               break;
-            } else {
+        } else {
               // 响应中既不包含成功关键词，也不包含失败关键词，视为需要人工判断
               if (attempt < 3) {
                 logger.warn(`[白名单] 尝试#${attempt}状态不明确，响应: ${response}，将在${500 * attempt}ms后重试...`);
@@ -2014,7 +1989,7 @@ export function apply(ctx: Context, config: Config) {
           await ctx.database.set('mcidbind', { qqId: freshBind.qqId }, {
             whitelist: Array.from(whitelistSet)
           });
-          logger.info(`[白名单] 成功将QQ(${freshBind.qqId})添加到服务器${server.name}的白名单，更新数据库记录`);
+            logger.info(`[白名单] 成功将QQ(${freshBind.qqId})添加到服务器${server.name}的白名单，更新数据库记录`);
         }
         
         return true;
@@ -2119,8 +2094,8 @@ export function apply(ctx: Context, config: Config) {
       // 定义匹配成功的关键词和匹配失败的关键词
       const successKeywords = ['移除', '已完成', '成功', 'success', 'removed', 'okay', 'done', 'completed', 'removePlayer', 'took', 'off'];
       const failureKeywords = ['失败', '错误', 'error', 'failed', 'cannot', 'unable', 'failure', 'exception', 'denied'];
-      
-      // 对于不存在的情况单独处理，不应被视为失败
+        
+        // 对于不存在的情况单独处理，不应被视为失败
       const notFoundKeywords = ['not found', '不存在', 'no player was removed', 'is not whitelisted', 'not in'];
       
       // 检查响应是否包含成功关键词
@@ -2283,7 +2258,7 @@ export function apply(ctx: Context, config: Config) {
       logger.error('[API检查] 所有API连接均失败，验证功能可能无法正常工作!')
     }
   }
-
+  
   // =========== 白名单命令组 ===========
   const whitelistCmd = cmd.subcommand('.whitelist', '白名单管理')
 
@@ -2354,7 +2329,7 @@ export function apply(ctx: Context, config: Config) {
         return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
       }
     })
-
+  
   // 添加白名单
   whitelistCmd.subcommand('.add <serverName:string> [target:user]', '申请/添加服务器白名单')
     .action(async ({ session }, serverName, target) => {
