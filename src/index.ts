@@ -14,6 +14,7 @@ export interface Config {
   servers: ServerConfig[]
   allowTextPrefix: boolean
   botNickname: string
+  autoRecallTime: number
 }
 
 // 服务器配置接口
@@ -45,6 +46,9 @@ export const Config: Schema<Config> = Schema.object({
   botNickname: Schema.string()
     .description('机器人昵称，用于文本前缀匹配，如"@WittF-NBot"')
     .default(''),
+  autoRecallTime: Schema.number()
+    .description('机器人消息自动撤回时间(秒)，设置为0表示不自动撤回')
+    .default(0),
   servers: Schema.array(Schema.object({
     id: Schema.string()
       .description('服务器唯一ID（不允许重复）')
@@ -427,7 +431,11 @@ export function apply(ctx: Context, config: Config) {
   // 根据配置获取命令前缀
   const getCommandPrefix = (): string => {
     if (config.allowTextPrefix && config.botNickname) {
-      return `@${config.botNickname} `;
+      // 检查botNickname是否已经包含@符号，避免重复添加
+      const nickname = config.botNickname.startsWith('@') ? 
+        config.botNickname :
+        `@${config.botNickname}`;
+      return `${nickname} `;
     }
     return '';
   };
@@ -729,9 +737,43 @@ export function apply(ctx: Context, config: Config) {
         ? [h.quote(session.messageId), ...content]
         : [h.quote(session.messageId), h.at(session.userId), '\n', ...content]
 
-      await session.send(promptMessage)
+      // 发送消息并获取返回的消息ID
+      const messageResult = await session.send(promptMessage)
       const normalizedQQId = normalizeQQId(session.userId)
       logger.debug(`[消息] 成功向QQ(${normalizedQQId})发送消息，频道: ${session.channelId}`)
+      
+      // 处理自动撤回
+      if (config.autoRecallTime > 0 && messageResult && session.bot) {
+        // 获取消息ID
+        let messageId: string | undefined
+        
+        if (typeof messageResult === 'string') {
+          messageId = messageResult
+        } else if (Array.isArray(messageResult) && messageResult.length > 0) {
+          messageId = messageResult[0]
+        } else if (messageResult && typeof messageResult === 'object') {
+          // 尝试提取各种可能的消息ID格式
+          messageId = (messageResult as any).messageId || 
+                   (messageResult as any).id || 
+                   (messageResult as any).message_id
+        }
+        
+        if (messageId) {
+          // 设置定时器延迟撤回
+          setTimeout(async () => {
+            try {
+              await session.bot.deleteMessage(session.channelId, messageId)
+              logger.debug(`[消息] 成功撤回消息 ${messageId}`)
+            } catch (recallError) {
+              logger.error(`[消息] 撤回消息 ${messageId} 失败: ${recallError.message}`)
+            }
+          }, config.autoRecallTime * 1000)
+          
+          logger.debug(`[消息] 已设置 ${config.autoRecallTime} 秒后自动撤回消息 ${messageId}`)
+        } else {
+          logger.warn(`[消息] 无法获取消息ID，自动撤回功能无法生效`)
+        }
+      }
     } catch (error) {
       const normalizedUserId = normalizeQQId(session.userId)
       logger.error(`[消息] 向QQ(${normalizedUserId})发送消息失败: ${error.message}`)
@@ -1141,17 +1183,28 @@ export function apply(ctx: Context, config: Config) {
       // 获取消息内容并规范化空格
       const content = session.content.trim()
       
-      // 使用完整的机器人昵称（包括可能的@前缀）
+      // 使用机器人昵称，支持多种匹配方式
       const botNickname = config.botNickname
       
       // 尝试识别以机器人昵称开头的mcid命令
       let mcidCommand = null
       
-      // 严格匹配 "配置的昵称 mcid xxx" 格式
-      const nicknamePrefixRegex = new RegExp(`^${botNickname}\\s+(mcid\\s+.*)$`, 'i')
-      const nicknameMatch = content.match(nicknamePrefixRegex)
-      if (nicknameMatch && nicknameMatch[1]) {
-        mcidCommand = nicknameMatch[1].trim()
+      // 1. 尝试匹配原始的botNickname格式
+      const regularPrefixRegex = new RegExp(`^${escapeRegExp(botNickname)}\\s+(mcid\\s+.*)$`, 'i')
+      const regularMatch = content.match(regularPrefixRegex)
+      
+      // 2. 如果botNickname不包含@，也尝试匹配带@的版本
+      const atPrefixRegex = !botNickname.startsWith('@') ? 
+        new RegExp(`^@${escapeRegExp(botNickname)}\\s+(mcid\\s+.*)$`, 'i') : 
+        null
+      
+      if (regularMatch && regularMatch[1]) {
+        mcidCommand = regularMatch[1].trim()
+      } else if (atPrefixRegex) {
+        const atMatch = content.match(atPrefixRegex)
+        if (atMatch && atMatch[1]) {
+          mcidCommand = atMatch[1].trim()
+        }
       }
       
       // 如果找到匹配的mcid命令，执行它
@@ -1169,6 +1222,11 @@ export function apply(ctx: Context, config: Config) {
       
       return next()
     })
+  }
+
+  // 帮助函数：转义正则表达式中的特殊字符
+  const escapeRegExp = (string: string): string => {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   }
 
   // 查询MC账号命令
@@ -2508,6 +2566,64 @@ export function apply(ctx: Context, config: Config) {
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
         logger.error(`[白名单] QQ(${normalizedUserId})移除白名单失败: ${error.message}`)
+        return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
+      }
+    })
+    
+  // 重置服务器所有白名单记录
+  whitelistCmd.subcommand('.reset <serverName:string>', '[主人]重置服务器所有白名单记录')
+    .action(async ({ session }, serverName) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        
+        // 检查是否为主人
+        if (!isMaster(session.userId)) {
+          logger.warn(`[重置白名单] 权限不足: QQ(${normalizedUserId})不是主人，无法重置白名单数据库`)
+          return sendMessage(session, [h.text('只有主人才能重置服务器白名单数据库')])
+        }
+        
+        // 检查服务器名称
+        if (!serverName) {
+          logger.warn(`[重置白名单] QQ(${normalizedUserId})未提供服务器名称`)
+          return sendMessage(session, [h.text('请提供服务器名称\n使用 mcid whitelist servers 查看可用服务器列表')])
+        }
+        
+        // 获取服务器配置
+        const server = getServerConfigByName(serverName)
+        if (!server) {
+          logger.warn(`[重置白名单] QQ(${normalizedUserId})提供的服务器名称"${serverName}"无效`)
+          return sendMessage(session, [h.text(`未找到名为"${serverName}"的服务器\n使用 mcid whitelist servers 查看可用服务器列表`)])
+        }
+        
+        // 查询所有用户绑定记录
+        const allBinds = await ctx.database.get('mcidbind', {})
+        logger.info(`[重置白名单] 主人QQ(${normalizedUserId})正在重置服务器"${server.name}"的白名单数据库，共有${allBinds.length}条记录需要检查`)
+        
+        // 统计信息
+        let processedCount = 0
+        let updatedCount = 0
+        
+        // 处理每条记录
+        for (const bind of allBinds) {
+          processedCount++
+          
+          // 检查该用户是否有此服务器的白名单
+          if (bind.whitelist && bind.whitelist.includes(server.id)) {
+            // 更新记录，移除该服务器的白名单
+            const newWhitelist = bind.whitelist.filter(id => id !== server.id)
+            await ctx.database.set('mcidbind', { qqId: bind.qqId }, {
+              whitelist: newWhitelist
+            })
+            updatedCount++
+            logger.info(`[重置白名单] 已从QQ(${bind.qqId})的白名单记录中移除服务器"${server.name}"`)
+          }
+        }
+        
+        logger.info(`[重置白名单] 成功: 主人QQ(${normalizedUserId})重置了服务器"${server.name}"的白名单数据库，共处理${processedCount}条记录，更新${updatedCount}条记录`)
+        return sendMessage(session, [h.text(`已成功重置服务器"${server.name}"的白名单数据库记录\n共处理${processedCount}条记录，更新${updatedCount}条记录\n\n注意：此操作仅清除数据库记录，如需同时清除服务器上的白名单，请使用RCON命令手动操作`)])
+      } catch (error) {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logger.error(`[重置白名单] QQ(${normalizedUserId})重置白名单数据库失败: ${error.message}`)
         return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
       }
     })

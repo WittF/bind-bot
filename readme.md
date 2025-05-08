@@ -20,10 +20,45 @@
 - `mcid admin <目标用户>` 将用户设为管理员
 - `mcid unadmin <目标用户>` 撤销用户的管理员权限
 - `mcid adminlist` 列出所有管理员
+- `mcid whitelist reset <服务器名称>` 重置指定服务器的所有白名单数据库记录
+
+## 配置项说明
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|-------|-----|-------|------|
+| cooldownDays | number | 15 | 修改绑定的冷却时间(天) |
+| masterId | string | '' | 主人QQ号，拥有管理员管理权限 |
+| allowTextPrefix | boolean | false | 是否允许通过文本前缀触发指令 |
+| botNickname | string | '' | 机器人昵称，用于文本前缀匹配 |
+| autoRecallTime | number | 0 | 机器人消息自动撤回时间(秒)，0表示不自动撤回 |
+| servers | array | [] | Minecraft服务器配置列表 |
+
+### 服务器配置项
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|-------|-----|-------|------|
+| id | string | (必填) | 服务器唯一ID |
+| name | string | (必填) | 服务器名称 |
+| displayAddress | string | '' | 服务器展示地址 |
+| description | string | '' | 服务器说明信息 |
+| rconAddress | string | (必填) | RCON地址，格式为IP:端口 |
+| rconPassword | string | '' | RCON密码 |
+| addCommand | string | 'whitelist add ${MCID}' | 添加白名单命令模板 |
+| removeCommand | string | 'whitelist remove ${MCID}' | 移除白名单命令模板 |
+| idType | string | 'username' | 白名单添加时使用的ID类型(username或uuid) |
+| allowSelfApply | boolean | false | 是否允许用户自行申请白名单 |
+| acceptEmptyResponse | boolean | false | 是否将命令的空响应视为成功 |
 
 ## 版本历史
 
-### v1.2.0 (最新)
+### v1.3.0 (最新)
+- 添加消息自动撤回功能：新增`autoRecallTime`配置，可设置机器人消息自动撤回时间
+- 添加主人专用重置命令：`mcid whitelist reset <服务器名称>`可清除所有用户的指定服务器白名单记录
+- 优化@前缀匹配：修复了包含特殊字符的昵称无法正确匹配的问题
+- 增强正则表达式安全性：对特殊字符进行转义，防止注入攻击
+- 改进前缀匹配逻辑：同时支持带@和不带@的昵称格式，增强用户体验
+
+### v1.2.0
 - 文本前缀匹配优化：修复了前缀匹配逻辑，现在严格匹配配置中的完整机器人昵称
 - 安全性增强：解决了可能导致非预期命令执行的问题
 - 用户体验优化：改进了命令触发方式，与Koishi框架标准行为保持一致
