@@ -2210,7 +2210,7 @@ export function apply(ctx: Context, config: Config) {
       
       // 操作结果处理
       if (success) {
-        logger.info(`[白名单] 成功将QQ(${freshBind.qqId})添加到服务器${server.name}的白名单`);
+        logger.debug(`[白名单] 成功执行服务器"${server.name}"的添加白名单命令`);
         
         // 更新用户的白名单列表
         const currentBind = await getMcBindByQQId(freshBind.qqId);
@@ -2223,7 +2223,7 @@ export function apply(ctx: Context, config: Config) {
           await ctx.database.set('mcidbind', { qqId: freshBind.qqId }, {
             whitelist: Array.from(whitelistSet)
           });
-            logger.info(`[白名单] 成功将QQ(${freshBind.qqId})添加到服务器${server.name}的白名单，更新数据库记录`);
+          logger.info(`[白名单] 成功将QQ(${freshBind.qqId})添加到服务器${server.name}的白名单`);
         }
         
         return true;
@@ -2865,6 +2865,9 @@ export function apply(ctx: Context, config: Config) {
         let failCount = 0
         let skipCount = 0
         
+        // 记录最后一次通知的进度百分比
+        let lastNotifiedProgress = 0
+        
         // 限制并发数量，避免RCON连接过载
         // 根据记录数量动态调整并发数
         const MAX_CONCURRENT = validBinds.length > 100 ? 2 : (validBinds.length > 50 ? 3 : 5);
@@ -2901,7 +2904,7 @@ export function apply(ctx: Context, config: Config) {
               
               if (result) {
                 successCount++
-                logger.info(`[批量白名单] 成功添加用户QQ(${bind.qqId})的MC账号(${bind.mcUsername})到服务器"${server.name}"的白名单`)
+                logger.debug(`[批量白名单] 成功添加用户QQ(${bind.qqId})的MC账号(${bind.mcUsername})到服务器"${server.name}"的白名单`)
               } else {
                 failCount++
                 logger.error(`[批量白名单] 添加用户QQ(${bind.qqId})的MC账号(${bind.mcUsername})到服务器"${server.name}"的白名单失败`)
@@ -2927,14 +2930,15 @@ export function apply(ctx: Context, config: Config) {
           // 如果操作因高失败率而中止，跳出循环
           if (i >= chunks.length) break;
           
-          // 每处理一组用户就发送一次进度通知
-          if (i < chunks.length - 1) {
-            // 计算实际已处理的用户数（考虑最后一组可能不满）
-            const processedCount = (i + 1) * MAX_CONCURRENT > validBinds.length ? 
-                                   validBinds.length : (i + 1) * MAX_CONCURRENT;
-            const progress = Math.floor((processedCount / validBinds.length) * 100);
-            
-            await sendMessage(session, [h.text(`批量添加白名单进度: ${progress}%，已处理${processedCount}/${validBinds.length}个用户\n成功: ${successCount} | 失败: ${failCount} | 跳过: ${skipCount}`)])
+          // 计算实际已处理的用户数（考虑最后一组可能不满）
+          const processedCount = (i + 1) * MAX_CONCURRENT > validBinds.length ? 
+                               validBinds.length : (i + 1) * MAX_CONCURRENT;
+          const progress = Math.floor((processedCount / validBinds.length) * 100);
+          
+          // 只有当进度增加了20%或以上，或者是首次或最后一次才发送通知
+          if (i === 0 || progress - lastNotifiedProgress >= 20 || i === chunks.length - 1) {
+            await sendMessage(session, [h.text(`批量添加白名单进度: ${progress}%，已处理${processedCount}/${validBinds.length}个用户\n成功: ${successCount} | 失败: ${failCount} | 跳过: ${skipCount}`)]);
+            lastNotifiedProgress = progress;
           }
         }
         
