@@ -30,6 +30,7 @@ export interface ServerConfig {
   acceptEmptyResponse?: boolean // 新增：每个服务器单独配置
   displayAddress?: string // 新增：服务器展示地址
   description?: string // 新增：服务器说明信息
+  enabled?: boolean // 新增：服务器启用状态
 }
 
 // 创建配置Schema
@@ -56,6 +57,9 @@ export const Config: Schema<Config> = Schema.object({
     name: Schema.string()
       .description('服务器名称（用于指令显示）')
       .required(),
+    enabled: Schema.boolean()
+      .description('服务器是否启用')
+      .default(true),
     displayAddress: Schema.string()
       .description('服务器展示地址（显示给用户的连接地址）')
       .default(''),
@@ -1806,22 +1810,25 @@ export function apply(ctx: Context, config: Config) {
   // 根据服务器ID获取服务器配置
   const getServerConfigById = (serverId: string): ServerConfig | null => {
     if (!config.servers || !Array.isArray(config.servers)) return null
-    return config.servers.find(server => server.id === serverId) || null
+    return config.servers.find(server => server.id === serverId && (server.enabled !== false)) || null
   }
   
   // 根据服务器名称获取服务器配置
   const getServerConfigByName = (serverName: string): ServerConfig | null => {
     if (!config.servers || !Array.isArray(config.servers)) return null
     
+    // 过滤出启用的服务器
+    const enabledServers = config.servers.filter(server => server.enabled !== false)
+    
     // 尝试精确匹配
-    let server = config.servers.find(server => server.name === serverName)
+    let server = enabledServers.find(server => server.name === serverName)
     
     // 如果精确匹配失败，尝试模糊匹配
     if (!server) {
       const lowerServerName = serverName.toLowerCase().trim();
       
       // 首先尝试包含关系匹配（A包含于B，或B包含于A）
-      const containsMatches = config.servers.filter(server => 
+      const containsMatches = enabledServers.filter(server => 
         server.name.toLowerCase().includes(lowerServerName) || 
         lowerServerName.includes(server.name.toLowerCase())
       );
@@ -2327,9 +2334,12 @@ export function apply(ctx: Context, config: Config) {
         const normalizedUserId = normalizeQQId(session.userId)
         logger.info(`[白名单] QQ(${normalizedUserId})查询可用服务器列表`)
         
-        if (!config.servers || config.servers.length === 0) {
-          logger.info(`[白名单] 未配置任何服务器`)
-          return sendMessage(session, [h.text('当前未配置任何服务器')])
+        // 获取启用的服务器
+        const enabledServers = config.servers?.filter(server => server.enabled !== false) || []
+        
+        if (!enabledServers || enabledServers.length === 0) {
+          logger.info(`[白名单] 未配置或启用任何服务器`)
+          return sendMessage(session, [h.text('当前未配置或启用任何服务器')])
         }
         
         // 检查用户是否绑定了MC账号
@@ -2344,7 +2354,7 @@ export function apply(ctx: Context, config: Config) {
                                 '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳'];
         
         // 格式化服务器列表
-        const serverList = config.servers.map((server, index) => {
+        const serverList = enabledServers.map((server, index) => {
           // 获取此用户是否已加入该服务器的白名单
           const hasWhitelist = userBind ? isInServerWhitelist(userBind, server.id) : false;
           
@@ -2360,6 +2370,9 @@ export function apply(ctx: Context, config: Config) {
           } else {
             serverInfo += ' [未加入]';
           }
+          
+          // 添加服务器状态信息
+          serverInfo += "\n   状态: " + (server.enabled === false ? '已停用' : '已启用');
           
           // 添加申请权限信息
           serverInfo += "\n   权限: " + (server.allowSelfApply ? '允许自助申请' : '仅管理员可操作');
@@ -2377,7 +2390,7 @@ export function apply(ctx: Context, config: Config) {
           return serverInfo;
         }).join('\n');
         
-        logger.info(`[白名单] 成功: QQ(${normalizedUserId})获取了服务器列表，共${config.servers.length}个服务器`)
+        logger.info(`[白名单] 成功: QQ(${normalizedUserId})获取了服务器列表，共${enabledServers.length}个服务器`)
         return sendMessage(session, [
           h.text(`${userBind.mcUsername} 的可用服务器列表:\n\n${serverList}\n\n使用 ${formatCommand('mcid whitelist add <服务器名称>')} 申请白名单`)
         ])
