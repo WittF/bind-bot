@@ -131,16 +131,17 @@ class RconManager {
   }> = new Map();
   private logger: Logger;
   private heartbeatCmd = 'list'; // 心跳命令，使用无害的list命令
-  private heartbeatInterval = 20 * 60 * 1000; // 20分钟发送一次心跳
-  private maxIdleTime = 60 * 60 * 1000; // 连接空闲1小时后关闭
+  private heartbeatInterval = 5 * 60 * 1000; // 5分钟发送一次心跳
+  private maxIdleTime = 30 * 60 * 1000; // 连接空闲30分钟后关闭
+  private maxConnections = 20; // 最大同时连接数，防止资源耗尽
   private serverConfigs: ServerConfig[] = [];
   
   constructor(logger: Logger, serverConfigs: ServerConfig[]) {
     this.logger = logger;
     this.serverConfigs = serverConfigs;
     
-    // 每10分钟检查一次空闲连接
-    setInterval(() => this.cleanIdleConnections(), 10 * 60 * 1000);
+    // 每5分钟检查一次空闲连接
+    setInterval(() => this.cleanIdleConnections(), 5 * 60 * 1000);
   }
   
   // 获取RCON连接
@@ -148,15 +149,19 @@ class RconManager {
     const serverId = server.id;
     const connectionInfo = this.connections.get(serverId);
     
-    // 如果已有连接且仍然活跃，直接返回
+    // 如果已有连接且仍然活跃，检查连接状态
     if (connectionInfo && connectionInfo.rcon && !connectionInfo.reconnecting) {
       try {
+        // 测试连接是否仍然有效
+        await connectionInfo.rcon.send('ping');
+        
         // 更新最后使用时间
         connectionInfo.lastUsed = Date.now();
         return connectionInfo.rcon;
       } catch (error) {
         // 连接可能已关闭，需要重新建立
-        this.logger.warn(`[RCON管理器] 服务器 ${server.name} 的连接已失效，将重新连接`);
+        this.logger.warn(`[RCON管理器] 服务器 ${server.name} 的连接已失效，将重新连接: ${error.message}`);
+        await this.resetConnection(server);
       }
     }
     
@@ -183,6 +188,12 @@ class RconManager {
     
     const serverId = server.id;
     
+    // 检查连接池大小，如果超过最大限制，尝试关闭最久未使用的连接
+    if (this.connections.size >= this.maxConnections) {
+      this.logger.warn(`[RCON管理器] 连接数量达到上限(${this.maxConnections})，尝试关闭最久未使用的连接`);
+      this.pruneOldestConnection();
+    }
+
     // 标记为正在重连
     if (this.connections.has(serverId)) {
       const connectionInfo = this.connections.get(serverId);
@@ -204,7 +215,7 @@ class RconManager {
         host,
         port,
         password: server.rconPassword,
-        timeout: 10000 // 10秒连接超时
+        timeout: 3000 // 3秒连接超时
       });
       
       // 设置心跳定时器，保持连接活跃
@@ -245,6 +256,48 @@ class RconManager {
     }
   }
   
+  // 关闭最久未使用的连接
+  private pruneOldestConnection(): boolean {
+    let oldestId: string | null = null;
+    let oldestTime = Infinity;
+    
+    // 找出最久未使用的连接
+    for (const [serverId, connectionInfo] of this.connections.entries()) {
+      // 跳过正在重连的连接
+      if (connectionInfo.reconnecting) continue;
+      
+      if (connectionInfo.lastUsed < oldestTime) {
+        oldestTime = connectionInfo.lastUsed;
+        oldestId = serverId;
+      }
+    }
+    
+    // 如果找到了可以关闭的连接
+    if (oldestId) {
+      const connectionInfo = this.connections.get(oldestId);
+      if (connectionInfo) {
+        // 清除心跳定时器
+        if (connectionInfo.heartbeatInterval) {
+          clearInterval(connectionInfo.heartbeatInterval);
+        }
+        
+        // 尝试关闭连接
+        try {
+          connectionInfo.rcon.end();
+          this.logger.info(`[RCON管理器] 由于连接池满，关闭了最久未使用的连接: ${oldestId}`);
+        } catch (error) {
+          this.logger.debug(`[RCON管理器] 关闭最久未使用的连接出错: ${error.message}`);
+        }
+        
+        // 从连接池中移除
+        this.connections.delete(oldestId);
+        return true;
+      }
+    }
+    
+    return false;
+  }
+  
   // 重置连接
   private async resetConnection(server: ServerConfig): Promise<void> {
     const serverId = server.id;
@@ -278,49 +331,45 @@ class RconManager {
   
   // 执行RCON命令
   async executeCommand(server: ServerConfig, command: string): Promise<string> {
-    let retryCount = 0;
-    const MAX_RETRIES = 2;
-    
-    while (retryCount <= MAX_RETRIES) {
-      try {
-        // 获取或创建连接
-        const rcon = await this.getConnection(server);
-        
-        // 记录完整的命令，但隐藏可能的敏感信息
-        let safeCommand = command;
-        // 如果命令包含"op"或"password"等敏感词，则隐藏部分内容
-        if (safeCommand.includes('password') || safeCommand.startsWith('op ')) {
-          safeCommand = safeCommand.split(' ')[0] + ' [内容已隐藏]';
-        }
-        this.logger.info(`[RCON管理器] 服务器 ${server.name} 执行命令: ${safeCommand}`);
-        
-        const response = await rcon.send(command);
-        
-        // 记录完整响应内容
-        this.logger.info(`[RCON管理器] 服务器 ${server.name} 收到响应: ${response.length > 0 ? response : '(空响应)'} (${response.length}字节)`);
-        
-        // 返回结果
-        return response;
-      } catch (error) {
-        retryCount++;
-        this.logger.error(`[RCON管理器] 服务器 ${server.name} 执行命令失败 (第${retryCount}次尝试): ${error.message}`);
-        
-        // 重置连接
-        await this.resetConnection(server);
-        
-        // 如果达到最大重试次数，抛出异常
-        if (retryCount > MAX_RETRIES) {
-          throw new Error(`RCON命令执行失败: ${error.message} (已重试${MAX_RETRIES}次)`);
-        }
-        
-        // 等待一段时间后重试（指数退避策略）
-        const delay = Math.pow(2, retryCount - 1) * 1000;
-        await new Promise(resolve => setTimeout(resolve, delay));
+    // 移除重试机制，改为单次尝试
+    try {
+      // 获取或创建连接
+      const rcon = await this.getConnection(server);
+      
+      // 记录完整的命令，但隐藏可能的敏感信息
+      let safeCommand = command;
+      // 如果命令包含"op"或"password"等敏感词，则隐藏部分内容
+      if (safeCommand.includes('password') || safeCommand.startsWith('op ')) {
+        safeCommand = safeCommand.split(' ')[0] + ' [内容已隐藏]';
+      }
+      this.logger.info(`[RCON管理器] 服务器 ${server.name} 执行命令: ${safeCommand}`);
+      
+      const response = await rcon.send(command);
+      
+      // 记录完整响应内容
+      this.logger.info(`[RCON管理器] 服务器 ${server.name} 收到响应: ${response.length > 0 ? response : '(空响应)'} (${response.length}字节)`);
+      
+      // 返回结果
+      return response;
+    } catch (error) {
+      // 根据错误类型进行不同处理
+      if (error.message.includes('ECONNREFUSED') || 
+          error.message.includes('ETIMEDOUT') || 
+          error.message.includes('ECONNRESET') || 
+          error.message.includes('socket')) {
+        // 网络连接类错误
+        this.logger.error(`[RCON管理器] 服务器 ${server.name} 网络连接错误: ${error.message}`);
+        throw new Error(`无法连接到服务器 ${server.name}: ${error.message}`);
+      } else if (error.message.includes('authentication')) {
+        // 认证错误
+        this.logger.error(`[RCON管理器] 服务器 ${server.name} 认证失败，请检查密码: ${error.message}`);
+        throw new Error(`连接服务器 ${server.name} 失败: 认证错误，请联系管理员检查RCON密码`);
+      } else {
+        // 其他错误
+        this.logger.error(`[RCON管理器] 服务器 ${server.name} 执行命令失败: ${error.message}`);
+        throw new Error(`执行命令失败: ${error.message}`);
       }
     }
-    
-    // 这里理论上不会执行到，但为了类型安全
-    throw new Error('无法执行RCON命令');
   }
   
   // 清理空闲连接
@@ -706,6 +755,24 @@ export function apply(ctx: Context, config: Config) {
   const getFriendlyErrorMessage = (error: Error | string): string => {
     const errorMsg = error instanceof Error ? error.message : error
     
+    // 拆分错误信息
+    const userError = getUserFacingErrorMessage(errorMsg);
+    
+    // 将警告级别错误标记出来
+    if (isWarningError(userError)) {
+      return `⚠️ ${userError}`;
+    }
+    
+    // 将严重错误标记出来
+    if (isCriticalError(userError)) {
+      return `❌ ${userError}`;
+    }
+    
+    return userError;
+  }
+
+  // 提取用户友好的错误信息
+  const getUserFacingErrorMessage = (errorMsg: string): string => {
     // Mojang API相关错误
     if (errorMsg.includes('ECONNABORTED') || errorMsg.includes('timeout')) {
       return '无法连接到Mojang服务器，请稍后再试'
@@ -724,8 +791,63 @@ export function apply(ctx: Context, config: Config) {
       return '该Minecraft用户名已被其他用户绑定'
     }
     
+    // RCON相关错误
+    if (errorMsg.includes('RCON') || errorMsg.includes('服务器')) {
+      if (errorMsg.includes('authentication') || errorMsg.includes('auth') || errorMsg.includes('认证')) {
+        return 'RCON认证失败，服务器拒绝访问，请联系管理员检查密码'
+      }
+      if (errorMsg.includes('ECONNREFUSED') || errorMsg.includes('ETIMEDOUT') || errorMsg.includes('无法连接')) {
+        return '无法连接到游戏服务器，请确认服务器是否在线或联系管理员'
+      }
+      if (errorMsg.includes('command') || errorMsg.includes('执行命令')) {
+        return '服务器命令执行失败，请稍后再试'
+      }
+      return '与游戏服务器通信失败，请稍后再试'
+    }
+    
+    // 用户名相关错误
+    if (errorMsg.includes('用户名') || errorMsg.includes('username')) {
+      if (errorMsg.includes('不存在')) {
+        return '该Minecraft用户名不存在，请检查拼写'
+      }
+      if (errorMsg.includes('已被')) {
+        return '该Minecraft用户名已被其他用户绑定，请使用其他用户名'
+      }
+      if (errorMsg.includes('格式')) {
+        return 'Minecraft用户名格式不正确，应为3-16位字母、数字和下划线'
+      }
+      return '用户名验证失败，请检查用户名并重试'
+    }
+    
     // 默认错误信息
-    return '操作失败，请稍后再试或联系管理员'
+    return '操作失败，请稍后再试'
+  }
+
+  // 判断是否为警告级别错误（用户可能输入有误）
+  const isWarningError = (errorMsg: string): boolean => {
+    const warningPatterns = [
+      '用户名不存在',
+      '格式不正确',
+      '已被其他用户绑定',
+      '已在白名单中',
+      '不在白名单中',
+      '未绑定MC账号',
+      '冷却期内'
+    ];
+    
+    return warningPatterns.some(pattern => errorMsg.includes(pattern));
+  }
+
+  // 判断是否为严重错误（系统问题）
+  const isCriticalError = (errorMsg: string): boolean => {
+    const criticalPatterns = [
+      '无法连接',
+      'RCON认证失败',
+      '服务器通信失败',
+      '数据库操作出错'
+    ];
+    
+    return criticalPatterns.some(pattern => errorMsg.includes(pattern));
   }
 
   // 封装发送消息的函数，处理私聊和群聊的不同格式
@@ -1827,6 +1949,9 @@ export function apply(ctx: Context, config: Config) {
     if (!server) {
       const lowerServerName = serverName.toLowerCase().trim();
       
+      // 最小相似度阈值，低于此值的匹配结果将被忽略
+      const MIN_SIMILARITY = 0.6; // 60%的相似度
+      
       // 首先尝试包含关系匹配（A包含于B，或B包含于A）
       const containsMatches = enabledServers.filter(server => 
         server.name.toLowerCase().includes(lowerServerName) || 
@@ -1834,22 +1959,34 @@ export function apply(ctx: Context, config: Config) {
       );
       
       if (containsMatches.length === 1) {
-        // 如果只有一个匹配，直接返回
-        server = containsMatches[0];
+        // 如果只有一个匹配，验证相似度是否达到阈值
+        const similarity = similarityScore(containsMatches[0].name.toLowerCase(), lowerServerName);
+        if (similarity >= MIN_SIMILARITY) {
+          // 相似度达到阈值，返回匹配结果
+          server = containsMatches[0];
+        }
       } else if (containsMatches.length > 1) {
-        // 如果有多个匹配，选择最接近的一个
-        server = containsMatches.reduce((best, current) => {
-          const bestSimilarity = similarityScore(best.name.toLowerCase(), lowerServerName);
-          const currentSimilarity = similarityScore(current.name.toLowerCase(), lowerServerName);
-          return currentSimilarity > bestSimilarity ? current : best;
-        }, containsMatches[0]);
+        // 如果有多个匹配，计算相似度并选择最接近的一个
+        let bestServer = null;
+        let bestSimilarity = 0;
+        
+        for (const candidate of containsMatches) {
+          const similarity = similarityScore(candidate.name.toLowerCase(), lowerServerName);
+          // 记录最佳匹配（相似度最高且达到阈值）
+          if (similarity > bestSimilarity && similarity >= MIN_SIMILARITY) {
+            bestSimilarity = similarity;
+            bestServer = candidate;
+          }
+        }
+        
+        server = bestServer;
       }
     }
     
     return server || null
   }
   
-  // 计算两个字符串的相似度（简化的Levenshtein距离的相似度比例）
+  // 计算两个字符串的相似度（改进版）
   const similarityScore = (a: string, b: string): number => {
     // 如果两个字符串相同，直接返回1
     if (a === b) return 1;
@@ -1857,17 +1994,49 @@ export function apply(ctx: Context, config: Config) {
     // 如果长度为0，返回0
     if (a.length === 0 || b.length === 0) return 0;
     
-    // 计算最大可能的编辑距离
-    const maxLength = Math.max(a.length, b.length);
-    
-    // 统计相同字符的数量
-    let sameChars = 0;
-    for (let i = 0; i < Math.min(a.length, b.length); i++) {
-      if (a[i] === b[i]) sameChars++;
+    // 如果一个字符串完全包含另一个字符串，计算其占比
+    if (a.includes(b)) {
+      return b.length / a.length;
+    }
+    if (b.includes(a)) {
+      return a.length / b.length;
     }
     
-    // 返回相似度得分（0到1之间，1表示完全匹配）
-    return sameChars / maxLength;
+    // 否则计算Levenshtein距离的相似度
+    const maxLength = Math.max(a.length, b.length);
+    const editDistance = levenshteinDistance(a, b);
+    
+    return 1 - (editDistance / maxLength);
+  }
+  
+  // 计算Levenshtein距离
+  const levenshteinDistance = (a: string, b: string): number => {
+    const matrix = [];
+    
+    // 初始化矩阵
+    for (let i = 0; i <= b.length; i++) {
+      matrix[i] = [i];
+    }
+    for (let j = 0; j <= a.length; j++) {
+      matrix[0][j] = j;
+    }
+    
+    // 填充矩阵
+    for (let i = 1; i <= b.length; i++) {
+      for (let j = 1; j <= a.length; j++) {
+        if (b.charAt(i - 1) === a.charAt(j - 1)) {
+          matrix[i][j] = matrix[i - 1][j - 1];
+        } else {
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j - 1] + 1, // 替换
+            matrix[i][j - 1] + 1,     // 插入
+            matrix[i - 1][j] + 1      // 删除
+          );
+        }
+      }
+    }
+    
+    return matrix[b.length][a.length];
   }
   
   // 使用RCON执行Minecraft命令
@@ -1949,8 +2118,8 @@ export function apply(ctx: Context, config: Config) {
       
         logger.info(`[白名单] 为用户QQ(${freshBind.qqId})添加白名单，使用${server.idType === 'uuid' ? 'UUID' : '用户名'}: ${mcid}`)
       
-      // 替换命令模板中的${MCID}
-      const command = server.addCommand.replace(/\${MCID}/g, mcid)
+      // 使用安全替换函数，避免命令注入
+      const command = safeCommandReplace(server.addCommand, mcid);
       
       let response = "";
       let success = false;
@@ -1959,34 +2128,34 @@ export function apply(ctx: Context, config: Config) {
       // 内部重试3次
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-      // 执行RCON命令
+          // 执行RCON命令
           response = await executeRconCommand(server, command);
-      
-      // 记录完整命令和响应，用于调试
+          
+          // 记录完整命令和响应，用于调试
           logger.debug(`[白名单] 执行命令尝试#${attempt}: ${command}, 响应: "${response}", 长度: ${response.length}字节`);
-      
-      // 空响应处理
-      if (response.trim() === '') {
-        if (server.acceptEmptyResponse) {
-          logger.info(`[白名单] 收到空响应，根据配置将其视为成功`);
-              success = true;
-              break;
-            } else {
-              errorMessage = "服务器返回空响应";
-              if (attempt < 3) {
-                logger.warn(`[白名单] 尝试#${attempt}收到空响应，将在${500 * attempt}ms后重试...`);
-                await new Promise(resolve => setTimeout(resolve, 500 * attempt));
-                continue;
-              }
-        }
-      }
-      
-      // 检查是否添加成功
-      // 定义匹配成功的关键词和匹配失败的关键词
+          
+          // 空响应处理
+          if (response.trim() === '') {
+            if (server.acceptEmptyResponse) {
+              logger.info(`[白名单] 收到空响应，根据配置将其视为成功`);
+                  success = true;
+                  break;
+                } else {
+                  errorMessage = "服务器返回空响应";
+                  if (attempt < 3) {
+                    logger.warn(`[白名单] 尝试#${attempt}收到空响应，将在${1000 * attempt}ms后重试...`);
+                    await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+                    continue;
+                  }
+            }
+          }
+          
+          // 检查是否添加成功
+          // 定义匹配成功的关键词和匹配失败的关键词
           const successKeywords = ['已', '成功', 'success', 'added', 'okay', 'done', 'completed', 'added to', 'whitelist has', 'whitelisted'];
           const failureKeywords = ['失败', 'error', 'failed', 'not found', '不存在', 'cannot', 'unable', 'failure', 'exception', 'denied'];
       
-      // 检查响应是否包含失败关键词
+          // 检查响应是否包含失败关键词
           const hasFailureKeyword = failureKeywords.some(keyword => 
             response.toLowerCase().includes(keyword.toLowerCase())
           );
@@ -1995,8 +2164,8 @@ export function apply(ctx: Context, config: Config) {
           if (hasFailureKeyword) {
             errorMessage = `命令执行失败: ${response}`;
             if (attempt < 3) {
-              logger.warn(`[白名单] 尝试#${attempt}失败: ${errorMessage}，将在${500 * attempt}ms后重试...`);
-              await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+              logger.warn(`[白名单] 尝试#${attempt}失败: ${errorMessage}，将在${1000 * attempt}ms后重试...`);
+              await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
               continue;
             }
           } else {
@@ -2013,8 +2182,8 @@ export function apply(ctx: Context, config: Config) {
         } else {
               // 响应中既不包含成功关键词，也不包含失败关键词，视为需要人工判断
               if (attempt < 3) {
-                logger.warn(`[白名单] 尝试#${attempt}状态不明确，响应: ${response}，将在${500 * attempt}ms后重试...`);
-                await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+                logger.warn(`[白名单] 尝试#${attempt}状态不明确，响应: ${response}，将在${1000 * attempt}ms后重试...`);
+                await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
                 continue;
               } else {
                 // 最后一次尝试，没有明确失败标识，尝试视为成功
@@ -2031,7 +2200,7 @@ export function apply(ctx: Context, config: Config) {
           
           if (attempt < 3) {
             // 增加延迟，使用指数退避策略
-            const delayMs = 1000 * Math.pow(2, attempt - 1);
+            const delayMs = 1500 * Math.pow(2, attempt - 1);
             logger.warn(`[白名单] 将在${delayMs}ms后重试...`);
             await new Promise(resolve => setTimeout(resolve, delayMs));
             continue;
@@ -2119,8 +2288,8 @@ export function apply(ctx: Context, config: Config) {
       
         logger.info(`[白名单] 为用户QQ(${freshBind.qqId})移除白名单，使用${server.idType === 'uuid' ? 'UUID' : '用户名'}: ${mcid}`)
       
-      // 替换命令模板中的${MCID}
-      const command = server.removeCommand.replace(/\${MCID}/g, mcid)
+      // 使用安全替换函数，避免命令注入
+      const command = safeCommandReplace(server.removeCommand, mcid);
       
       // 执行RCON命令
       const response = await executeRconCommand(server, command)
@@ -2640,6 +2809,143 @@ export function apply(ctx: Context, config: Config) {
         return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
       }
     })
+    
+  // 批量将所有用户添加到服务器白名单
+  whitelistCmd.subcommand('.addall <serverName:string>', '[管理员]将所有用户添加到指定服务器白名单')
+    .action(async ({ session }, serverName) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        
+        // 检查是否为管理员
+        if (!await isAdmin(session.userId)) {
+          logger.warn(`[批量白名单] 权限不足: QQ(${normalizedUserId})不是管理员，无法执行批量添加白名单操作`)
+          return sendMessage(session, [h.text('只有管理员才能执行批量添加白名单操作')])
+        }
+        
+        // 检查服务器名称
+        if (!serverName) {
+          logger.warn(`[批量白名单] QQ(${normalizedUserId})未提供服务器名称`)
+          return sendMessage(session, [h.text('请提供服务器名称\n使用 mcid whitelist servers 查看可用服务器列表')])
+        }
+        
+        // 获取服务器配置
+        const server = getServerConfigByName(serverName)
+        if (!server) {
+          logger.warn(`[批量白名单] QQ(${normalizedUserId})提供的服务器名称"${serverName}"无效`)
+          return sendMessage(session, [h.text(`未找到名为"${serverName}"的服务器\n使用 mcid whitelist servers 查看可用服务器列表`)])
+        }
+        
+        // 检查服务器是否启用
+        if (server.enabled === false) {
+          logger.warn(`[批量白名单] QQ(${normalizedUserId})尝试为已停用的服务器"${server.name}"批量添加白名单`)
+          return sendMessage(session, [h.text(`服务器"${server.name}"已停用，无法添加白名单`)])
+        }
+        
+        // 发送开始执行的通知
+        await sendMessage(session, [h.text(`开始批量添加白名单到服务器"${server.name}"，请稍候...`)])
+        
+        // 查询所有已绑定MC账号的用户
+        const allBinds = await ctx.database.get('mcidbind', {
+          $or: [
+            { mcUsername: { $ne: '' } },
+            { mcUuid: { $ne: '' } }
+          ]
+        })
+        
+        // 过滤掉无效的绑定：没有用户名或UUID的记录
+        const validBinds = allBinds.filter(bind => 
+          (bind.mcUsername && bind.mcUsername.trim() !== '' && !bind.mcUsername.startsWith('_temp_')) || 
+          (bind.mcUuid && bind.mcUuid.trim() !== '')
+        );
+        
+        logger.info(`[批量白名单] 管理员QQ(${normalizedUserId})正在批量添加服务器"${server.name}"的白名单，共有${validBinds.length}条有效记录需要处理`)
+        
+        // 统计信息
+        let successCount = 0
+        let failCount = 0
+        let skipCount = 0
+        
+        // 限制并发数量，避免RCON连接过载
+        // 根据记录数量动态调整并发数
+        const MAX_CONCURRENT = validBinds.length > 100 ? 2 : (validBinds.length > 50 ? 3 : 5);
+        const chunks = []
+        
+        // 将用户分组，每组最多MAX_CONCURRENT个用户
+        for (let i = 0; i < validBinds.length; i += MAX_CONCURRENT) {
+          chunks.push(validBinds.slice(i, i + MAX_CONCURRENT))
+        }
+        
+        // 逐组处理用户
+        for (let i = 0; i < chunks.length; i++) {
+          const chunk = chunks[i]
+          
+          // 并发处理当前组的用户
+          await Promise.all(chunk.map(async (bind) => {
+            try {
+              // 跳过已经在白名单中的用户
+              if (isInServerWhitelist(bind, server.id)) {
+                skipCount++
+                logger.debug(`[批量白名单] 跳过已在白名单中的用户QQ(${bind.qqId})的MC账号(${bind.mcUsername})`)
+                return
+              }
+              
+              // 添加错误阈值检查
+              const currentFailRate = failCount / (successCount + failCount + 1);
+              if (currentFailRate > 0.5 && (successCount + failCount) >= 5) {
+                logger.error(`[批量白名单] 失败率过高(${Math.round(currentFailRate * 100)}%)，中止操作`);
+                throw new Error(`失败率过高，操作已中止`);
+              }
+              
+              // 执行添加白名单操作
+              const result = await addServerWhitelist(bind, server)
+              
+              if (result) {
+                successCount++
+                logger.info(`[批量白名单] 成功添加用户QQ(${bind.qqId})的MC账号(${bind.mcUsername})到服务器"${server.name}"的白名单`)
+              } else {
+                failCount++
+                logger.error(`[批量白名单] 添加用户QQ(${bind.qqId})的MC账号(${bind.mcUsername})到服务器"${server.name}"的白名单失败`)
+              }
+            } catch (error) {
+              failCount++
+              logger.error(`[批量白名单] 处理用户QQ(${bind.qqId})时出错: ${error.message}`)
+              
+              // 如果错误指示操作已中止，向外传播错误
+              if (error.message.includes('失败率过高')) {
+                throw error;
+              }
+            }
+          })).catch(error => {
+            // 捕获并处理Promise.all中的错误
+            if (error.message.includes('失败率过高')) {
+              // 设置一个标志，指示下面的循环应该退出
+              i = chunks.length; // 强制退出循环
+              sendMessage(session, [h.text(`⚠️ 批量添加白名单操作已中止: 失败率过高(${Math.round((failCount / (successCount + failCount)) * 100)}%)，请检查服务器连接`)]);
+            }
+          });
+          
+          // 如果操作因高失败率而中止，跳出循环
+          if (i >= chunks.length) break;
+          
+          // 每处理一组用户就发送一次进度通知
+          if (i < chunks.length - 1) {
+            // 计算实际已处理的用户数（考虑最后一组可能不满）
+            const processedCount = (i + 1) * MAX_CONCURRENT > validBinds.length ? 
+                                   validBinds.length : (i + 1) * MAX_CONCURRENT;
+            const progress = Math.floor((processedCount / validBinds.length) * 100);
+            
+            await sendMessage(session, [h.text(`批量添加白名单进度: ${progress}%，已处理${processedCount}/${validBinds.length}个用户\n成功: ${successCount} | 失败: ${failCount} | 跳过: ${skipCount}`)])
+          }
+        }
+        
+        logger.info(`[批量白名单] 成功: 管理员QQ(${normalizedUserId})批量添加了服务器"${server.name}"的白名单，成功: ${successCount}，失败: ${failCount}，跳过: ${skipCount}`)
+        return sendMessage(session, [h.text(`批量添加服务器"${server.name}"白名单完成\n共处理${validBinds.length}个有效用户\n✅ 成功: ${successCount} 个\n❌ 失败: ${failCount} 个\n⏭️ 跳过(已在白名单): ${skipCount} 个\n\n如需查看详细日志，请查看服务器日志文件`)])
+      } catch (error) {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logger.error(`[批量白名单] QQ(${normalizedUserId})批量添加白名单失败: ${error.message}`)
+        return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
+      }
+    })
 
   // 检查所有服务器的RCON连接
   const checkRconConnections = async (): Promise<void> => {
@@ -2793,5 +3099,18 @@ export function apply(ctx: Context, config: Config) {
       logger.error(`[用户名更新] 检查和更新用户名失败: ${error.message}`);
       return bind;
     }
+  };
+
+  // 安全地替换命令模板
+  const safeCommandReplace = (template: string, mcid: string): string => {
+    // 过滤可能导致命令注入的字符
+    const sanitizedMcid = mcid.replace(/[;&|"`'$\\]/g, '');
+    
+    // 如果经过过滤后的mcid与原始mcid不同，记录警告
+    if (sanitizedMcid !== mcid) {
+      logger.warn(`[安全] 检测到潜在危险字符，已自动过滤: '${mcid}' -> '${sanitizedMcid}'`);
+    }
+    
+    return template.replace(/\${MCID}/g, sanitizedMcid);
   };
 }
