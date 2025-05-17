@@ -15,6 +15,8 @@ export interface Config {
   allowTextPrefix: boolean
   botNickname: string
   autoRecallTime: number
+  recallUserMessage: boolean
+  debugMode: boolean
 }
 
 // 服务器配置接口
@@ -48,8 +50,14 @@ export const Config: Schema<Config> = Schema.object({
     .description('机器人昵称，用于文本前缀匹配，如"@WittF-NBot"')
     .default(''),
   autoRecallTime: Schema.number()
-    .description('机器人消息自动撤回时间(秒)，设置为0表示不自动撤回')
+    .description('消息自动撤回时间(秒)，同时控制机器人和用户消息，设置为0表示不自动撤回')
     .default(0),
+  recallUserMessage: Schema.boolean()
+    .description('是否撤回用户发送的指令消息')
+    .default(false),
+  debugMode: Schema.boolean()
+    .description('调试模式，启用详细日志输出')
+    .default(false),
   servers: Schema.array(Schema.object({
     id: Schema.string()
       .description('服务器唯一ID（不允许重复）')
@@ -130,18 +138,39 @@ class RconManager {
     reconnecting: boolean
   }> = new Map();
   private logger: Logger;
+  private debugMode: boolean;
   private heartbeatCmd = 'list'; // 心跳命令，使用无害的list命令
   private heartbeatInterval = 5 * 60 * 1000; // 5分钟发送一次心跳
   private maxIdleTime = 30 * 60 * 1000; // 连接空闲30分钟后关闭
   private maxConnections = 20; // 最大同时连接数，防止资源耗尽
   private serverConfigs: ServerConfig[] = [];
   
-  constructor(logger: Logger, serverConfigs: ServerConfig[]) {
+  constructor(logger: Logger, serverConfigs: ServerConfig[], debugMode: boolean = false) {
     this.logger = logger;
     this.serverConfigs = serverConfigs;
+    this.debugMode = debugMode;
     
     // 每5分钟检查一次空闲连接
     setInterval(() => this.cleanIdleConnections(), 5 * 60 * 1000);
+  }
+  
+  // 日志辅助方法
+  private logDebug(message: string): void {
+    if (this.debugMode) {
+      this.logger.debug(`[RCON管理器] ${message}`);
+    }
+  }
+  
+  private logInfo(message: string): void {
+    this.logger.info(`[RCON管理器] ${message}`);
+  }
+  
+  private logWarn(message: string): void {
+    this.logger.warn(`[RCON管理器] ${message}`);
+  }
+  
+  private logError(message: string): void {
+    this.logger.error(`[RCON管理器] ${message}`);
   }
   
   // 获取RCON连接
@@ -160,7 +189,7 @@ class RconManager {
         return connectionInfo.rcon;
       } catch (error) {
         // 连接可能已关闭，需要重新建立
-        this.logger.warn(`[RCON管理器] 服务器 ${server.name} 的连接已失效，将重新连接: ${error.message}`);
+        this.logError(`[RCON管理器] 服务器 ${server.name} 的连接已失效，将重新连接: ${error.message}`);
         await this.resetConnection(server);
       }
     }
@@ -190,7 +219,7 @@ class RconManager {
     
     // 检查连接池大小，如果超过最大限制，尝试关闭最久未使用的连接
     if (this.connections.size >= this.maxConnections) {
-      this.logger.warn(`[RCON管理器] 连接数量达到上限(${this.maxConnections})，尝试关闭最久未使用的连接`);
+      this.logWarn(`[RCON管理器] 连接数量达到上限(${this.maxConnections})，尝试关闭最久未使用的连接`);
       this.pruneOldestConnection();
     }
 
@@ -210,7 +239,7 @@ class RconManager {
     
     try {
       // 创建新连接
-      this.logger.info(`[RCON管理器] 正在连接到服务器 ${server.name} (${server.rconAddress})`);
+      this.logInfo(`[RCON管理器] 正在连接到服务器 ${server.name} (${server.rconAddress})`);
       const rcon = await Rcon.connect({
         host,
         port,
@@ -221,10 +250,10 @@ class RconManager {
       // 设置心跳定时器，保持连接活跃
       const heartbeatInterval = setInterval(async () => {
         try {
-          this.logger.debug(`[RCON管理器] 向服务器 ${server.name} 发送心跳命令`);
+          this.logDebug(`[RCON管理器] 向服务器 ${server.name} 发送心跳命令`);
           await rcon.send(this.heartbeatCmd);
         } catch (error) {
-          this.logger.error(`[RCON管理器] 服务器 ${server.name} 心跳失败: ${error.message}`);
+          this.logError(`[RCON管理器] 服务器 ${server.name} 心跳失败: ${error.message}`);
           
           // 心跳失败，重置连接
           this.resetConnection(server);
@@ -239,10 +268,10 @@ class RconManager {
         reconnecting: false
       });
       
-      this.logger.info(`[RCON管理器] 成功连接到服务器 ${server.name}`);
+      this.logInfo(`[RCON管理器] 成功连接到服务器 ${server.name}`);
       return rcon;
     } catch (error) {
-      this.logger.error(`[RCON管理器] 连接服务器 ${server.name} 失败: ${error.message}`);
+      this.logError(`[RCON管理器] 连接服务器 ${server.name} 失败: ${error.message}`);
       
       // 重置连接状态
       if (this.connections.has(serverId)) {
@@ -284,9 +313,9 @@ class RconManager {
         // 尝试关闭连接
         try {
           connectionInfo.rcon.end();
-          this.logger.info(`[RCON管理器] 由于连接池满，关闭了最久未使用的连接: ${oldestId}`);
+          this.logInfo(`[RCON管理器] 由于连接池满，关闭了最久未使用的连接: ${oldestId}`);
         } catch (error) {
-          this.logger.debug(`[RCON管理器] 关闭最久未使用的连接出错: ${error.message}`);
+          this.logDebug(`[RCON管理器] 关闭最久未使用的连接出错: ${error.message}`);
         }
         
         // 从连接池中移除
@@ -304,7 +333,7 @@ class RconManager {
     const connectionInfo = this.connections.get(serverId);
     
     if (connectionInfo) {
-      this.logger.info(`[RCON管理器] 重置服务器 ${server.name} 的连接`);
+      this.logInfo(`[RCON管理器] 重置服务器 ${server.name} 的连接`);
       
       // 标记为正在重连
       connectionInfo.reconnecting = true;
@@ -318,10 +347,10 @@ class RconManager {
       try {
         // 关闭旧连接
         await connectionInfo.rcon.end();
-        this.logger.debug(`[RCON管理器] 已关闭服务器 ${server.name} 的旧连接`);
+        this.logDebug(`[RCON管理器] 已关闭服务器 ${server.name} 的旧连接`);
       } catch (error) {
         // 忽略关闭连接时的错误
-        this.logger.debug(`[RCON管理器] 关闭服务器 ${server.name} 的连接时出错: ${error.message}`);
+        this.logDebug(`[RCON管理器] 关闭服务器 ${server.name} 的连接时出错: ${error.message}`);
       }
       
       // 从映射中移除
@@ -342,12 +371,12 @@ class RconManager {
       if (safeCommand.includes('password') || safeCommand.startsWith('op ')) {
         safeCommand = safeCommand.split(' ')[0] + ' [内容已隐藏]';
       }
-      this.logger.info(`[RCON管理器] 服务器 ${server.name} 执行命令: ${safeCommand}`);
+      this.logInfo(`[RCON管理器] 服务器 ${server.name} 执行命令: ${safeCommand}`);
       
       const response = await rcon.send(command);
       
       // 记录完整响应内容
-      this.logger.info(`[RCON管理器] 服务器 ${server.name} 收到响应: ${response.length > 0 ? response : '(空响应)'} (${response.length}字节)`);
+      this.logInfo(`[RCON管理器] 服务器 ${server.name} 收到响应: ${response.length > 0 ? response : '(空响应)'} (${response.length}字节)`);
       
       // 返回结果
       return response;
@@ -358,15 +387,15 @@ class RconManager {
           error.message.includes('ECONNRESET') || 
           error.message.includes('socket')) {
         // 网络连接类错误
-        this.logger.error(`[RCON管理器] 服务器 ${server.name} 网络连接错误: ${error.message}`);
+        this.logError(`[RCON管理器] 服务器 ${server.name} 网络连接错误: ${error.message}`);
         throw new Error(`无法连接到服务器 ${server.name}: ${error.message}`);
       } else if (error.message.includes('authentication')) {
         // 认证错误
-        this.logger.error(`[RCON管理器] 服务器 ${server.name} 认证失败，请检查密码: ${error.message}`);
+        this.logError(`[RCON管理器] 服务器 ${server.name} 认证失败，请检查密码: ${error.message}`);
         throw new Error(`连接服务器 ${server.name} 失败: 认证错误，请联系管理员检查RCON密码`);
       } else {
         // 其他错误
-        this.logger.error(`[RCON管理器] 服务器 ${server.name} 执行命令失败: ${error.message}`);
+        this.logError(`[RCON管理器] 服务器 ${server.name} 执行命令失败: ${error.message}`);
         throw new Error(`执行命令失败: ${error.message}`);
       }
     }
@@ -383,7 +412,7 @@ class RconManager {
       
       // 如果连接空闲时间超过maxIdleTime，关闭它
       if (now - connectionInfo.lastUsed > this.maxIdleTime) {
-        this.logger.info(`[RCON管理器] 关闭服务器 ${serverName} 的空闲连接`);
+        this.logInfo(`[RCON管理器] 关闭服务器 ${serverName} 的空闲连接`);
         
         // 清除心跳定时器
         if (connectionInfo.heartbeatInterval) {
@@ -394,7 +423,7 @@ class RconManager {
         try {
           await connectionInfo.rcon.end();
         } catch (error) {
-          this.logger.debug(`[RCON管理器] 关闭服务器 ${serverName} 的空闲连接时出错: ${error.message}`);
+          this.logDebug(`[RCON管理器] 关闭服务器 ${serverName} 的空闲连接时出错: ${error.message}`);
         }
         
         // 从连接池中删除
@@ -418,9 +447,9 @@ class RconManager {
       // 关闭连接
       try {
         await connectionInfo.rcon.end();
-        this.logger.info(`[RCON管理器] 已关闭服务器 ${serverName} 的连接`);
+        this.logInfo(`[RCON管理器] 已关闭服务器 ${serverName} 的连接`);
       } catch (error) {
-        this.logger.debug(`[RCON管理器] 关闭服务器 ${serverName} 的连接时出错: ${error.message}`);
+        this.logDebug(`[RCON管理器] 关闭服务器 ${serverName} 的连接时出错: ${error.message}`);
       }
     }
     
@@ -469,6 +498,47 @@ export function apply(ctx: Context, config: Config) {
   // 创建日志记录器
   const logger = new Logger('bind-mcid')
   
+  // 日志辅助函数，根据debugMode控制输出
+  const logDebug = (context: string, message: string): void => {
+    if (config.debugMode) {
+      logger.debug(`[${context}] ${message}`)
+    }
+  }
+  
+  const logInfo = (context: string, message: string, forceOutput: boolean = false): void => {
+    // 只有在debugMode开启或forceOutput=true时才输出普通信息
+    if (config.debugMode || forceOutput) {
+      logger.info(`[${context}] ${message}`)
+    }
+  }
+  
+  const logWarn = (context: string, message: string): void => {
+    // 警告总是输出
+    logger.warn(`[${context}] ${message}`)
+  }
+  
+  const logError = (context: string, userId: string, error: Error | string): void => {
+    // 错误总是输出
+    const errorMessage = error instanceof Error ? error.message : error
+    const normalizedQQId = normalizeQQId(userId)
+    logger.error(`[${context}] QQ(${normalizedQQId})操作失败: ${errorMessage}`)
+  }
+  
+  // 操作记录函数 - 用于记录主要操作状态，减少日志量
+  const logOperation = (operation: string, userId: string, success: boolean, details: string = ''): void => {
+    const normalizedQQId = normalizeQQId(userId)
+    const status = success ? '成功' : '失败'
+    const message = `QQ(${normalizedQQId}) ${operation} ${status}${details ? ': ' + details : ''}`
+    
+    if (success) {
+      // 成功的操作，只在debug模式下输出详情
+      logInfo('操作', message, !config.debugMode && operation.includes('绑定'))
+    } else {
+      // 失败的操作总是输出
+      logWarn('操作', message)
+    }
+  }
+  
   // 创建头像缓存对象
   const avatarCache: Record<string, AvatarCache> = {}
   
@@ -476,7 +546,7 @@ export function apply(ctx: Context, config: Config) {
   const CACHE_DURATION = 12 * 60 * 60 * 1000
 
   // 创建RCON连接管理器
-  const rconManager = new RconManager(logger, config.servers || []);
+  const rconManager = new RconManager(logger, config.servers || [], config.debugMode);
   
   // 创建RCON限流器实例
   const rconRateLimiter = new RateLimiter(10, 3000); // 3秒内最多10个请求
@@ -744,13 +814,6 @@ export function apply(ctx: Context, config: Config) {
     return userId
   }
 
-  // 封装错误日志记录
-  const logError = (context: string, userId: string, error: Error | string): void => {
-    const errorMessage = error instanceof Error ? error.message : error
-    const normalizedQQId = normalizeQQId(userId)
-    logger.error(`[${context}] QQ(${normalizedQQId})操作失败: ${errorMessage}`)
-  }
-
   // 获取用户友好的错误信息
   const getFriendlyErrorMessage = (error: Error | string): string => {
     const errorMsg = error instanceof Error ? error.message : error
@@ -854,9 +917,13 @@ export function apply(ctx: Context, config: Config) {
   const sendMessage = async (session: Session, content: any[]): Promise<void> => {
     try {
       if (!session) {
-        logger.error(`[消息] 无效的会话对象`)
+        logError('消息', 'system', '无效的会话对象')
         return
       }
+      
+      // 检查是否为群聊消息
+      const isGroupMessage = session.channelId && !session.channelId.startsWith('private:');
+      const normalizedQQId = normalizeQQId(session.userId)
       
       // 处理私聊和群聊的消息格式
       const promptMessage = session.channelId?.startsWith('private:')
@@ -865,44 +932,73 @@ export function apply(ctx: Context, config: Config) {
 
       // 发送消息并获取返回的消息ID
       const messageResult = await session.send(promptMessage)
-      const normalizedQQId = normalizeQQId(session.userId)
-      logger.debug(`[消息] 成功向QQ(${normalizedQQId})发送消息，频道: ${session.channelId}`)
       
-      // 处理自动撤回
-      if (config.autoRecallTime > 0 && messageResult && session.bot) {
-        // 获取消息ID
-        let messageId: string | undefined
-        
-        if (typeof messageResult === 'string') {
-          messageId = messageResult
-        } else if (Array.isArray(messageResult) && messageResult.length > 0) {
-          messageId = messageResult[0]
-        } else if (messageResult && typeof messageResult === 'object') {
-          // 尝试提取各种可能的消息ID格式
-          messageId = (messageResult as any).messageId || 
-                   (messageResult as any).id || 
-                   (messageResult as any).message_id
-        }
-        
-        if (messageId) {
-          // 设置定时器延迟撤回
+      if (config.debugMode) {
+        logDebug('消息', `成功向QQ(${normalizedQQId})发送消息，频道: ${session.channelId}`)
+      }
+      
+      // 只在自动撤回时间大于0和存在bot对象时处理撤回
+      if (config.autoRecallTime > 0 && session.bot) {
+        // 处理撤回用户消息 - 只在群聊中且开启了用户消息撤回时
+        if (config.recallUserMessage && isGroupMessage && session.messageId) {
           setTimeout(async () => {
             try {
-              await session.bot.deleteMessage(session.channelId, messageId)
-              logger.debug(`[消息] 成功撤回消息 ${messageId}`)
-            } catch (recallError) {
-              logger.error(`[消息] 撤回消息 ${messageId} 失败: ${recallError.message}`)
+              await session.bot.deleteMessage(session.channelId, session.messageId)
+              if (config.debugMode) {
+                logDebug('消息', `成功撤回用户QQ(${normalizedQQId})的指令消息 ${session.messageId}`)
+              }
+            } catch (userRecallError) {
+              logError('消息', normalizedQQId, `撤回用户指令消息 ${session.messageId} 失败: ${userRecallError.message}`)
             }
           }, config.autoRecallTime * 1000)
           
-          logger.debug(`[消息] 已设置 ${config.autoRecallTime} 秒后自动撤回消息 ${messageId}`)
-        } else {
-          logger.warn(`[消息] 无法获取消息ID，自动撤回功能无法生效`)
+          if (config.debugMode) {
+            logDebug('消息', `已设置 ${config.autoRecallTime} 秒后自动撤回用户QQ(${normalizedQQId})的群聊指令消息 ${session.messageId}`)
+          }
+        }
+        
+        // 处理撤回机器人消息 - 只在群聊中撤回机器人自己的消息
+        if (isGroupMessage && messageResult) {
+          // 获取消息ID
+          let messageId: string | undefined
+          
+          if (typeof messageResult === 'string') {
+            messageId = messageResult
+          } else if (Array.isArray(messageResult) && messageResult.length > 0) {
+            messageId = messageResult[0]
+          } else if (messageResult && typeof messageResult === 'object') {
+            // 尝试提取各种可能的消息ID格式
+            messageId = (messageResult as any).messageId || 
+                     (messageResult as any).id || 
+                     (messageResult as any).message_id
+          }
+          
+          if (messageId) {
+            // 设置定时器延迟撤回
+            setTimeout(async () => {
+              try {
+                await session.bot.deleteMessage(session.channelId, messageId)
+                if (config.debugMode) {
+                  logDebug('消息', `成功撤回机器人消息 ${messageId}`)
+                }
+              } catch (recallError) {
+                logError('消息', normalizedQQId, `撤回机器人消息 ${messageId} 失败: ${recallError.message}`)
+              }
+            }, config.autoRecallTime * 1000)
+            
+            if (config.debugMode) {
+              logDebug('消息', `已设置 ${config.autoRecallTime} 秒后自动撤回机器人消息 ${messageId}`)
+            }
+          } else if (config.debugMode) {
+            logWarn('消息', `无法获取消息ID，自动撤回功能无法生效`)
+          }
+        } else if (config.debugMode) {
+          logDebug('消息', `检测到私聊消息，不撤回机器人回复`)
         }
       }
     } catch (error) {
       const normalizedUserId = normalizeQQId(session.userId)
-      logger.error(`[消息] 向QQ(${normalizedUserId})发送消息失败: ${error.message}`)
+      logError('消息', normalizedUserId, `向QQ(${normalizedUserId})发送消息失败: ${error.message}`)
     }
   }
 
@@ -1388,7 +1484,16 @@ export function apply(ctx: Context, config: Config) {
             
             const serverList = updatedBind.whitelist.map((serverId, index) => {
               const server = getServerConfigById(serverId);
-              if (!server) return `${index < circledNumbers.length ? circledNumbers[index] : (index+1)} 未知服务器(ID: ${serverId})`;
+              
+              // 检查服务器是否存在且启用
+              if (!server) {
+                // 尝试获取服务器配置（不考虑启用状态）
+                const disabledServer = config.servers?.find(s => s.id === serverId);
+                if (disabledServer && disabledServer.enabled === false) {
+                  return `${index < circledNumbers.length ? circledNumbers[index] : (index+1)} ${disabledServer.name} [已停用]`;
+                }
+                return `${index < circledNumbers.length ? circledNumbers[index] : (index+1)} 未知服务器(ID: ${serverId})`;
+              }
               
               // 使用圈数字作为序号
               const circledNumber = index < circledNumbers.length ? circledNumbers[index] : `${index+1}`;
@@ -1437,7 +1542,16 @@ export function apply(ctx: Context, config: Config) {
           
           const serverList = updatedBind.whitelist.map((serverId, index) => {
             const server = getServerConfigById(serverId);
-            if (!server) return `${index < circledNumbers.length ? circledNumbers[index] : (index+1)} 未知服务器(ID: ${serverId})`;
+            
+            // 检查服务器是否存在且启用
+            if (!server) {
+              // 尝试获取服务器配置（不考虑启用状态）
+              const disabledServer = config.servers?.find(s => s.id === serverId);
+              if (disabledServer && disabledServer.enabled === false) {
+                return `${index < circledNumbers.length ? circledNumbers[index] : (index+1)} ${disabledServer.name} [已停用]`;
+              }
+              return `${index < circledNumbers.length ? circledNumbers[index] : (index+1)} 未知服务器(ID: ${serverId})`;
+            }
             
             // 使用圈数字作为序号
             const circledNumber = index < circledNumbers.length ? circledNumbers[index] : `${index+1}`;
@@ -1467,6 +1581,71 @@ export function apply(ctx: Context, config: Config) {
       }
     })
 
+  // 通过MC用户名查询绑定QQ账号命令
+  cmd.subcommand('.finduser <username:string>', '[管理员]通过MC用户名查询绑定的QQ账号')
+    .action(async ({ session }, username) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        
+        // 检查权限，只允许管理员使用
+        if (!await isAdmin(session.userId)) {
+          logger.warn(`[反向查询] 权限不足: QQ(${normalizedUserId})不是管理员，无法使用反向查询`)
+          return sendMessage(session, [h.text('只有管理员才能使用此命令')])
+        }
+        
+        if (!username) {
+          logger.warn(`[反向查询] QQ(${normalizedUserId})未提供MC用户名`)
+          return sendMessage(session, [h.text('请提供要查询的MC用户名')])
+        }
+        
+        logger.info(`[反向查询] QQ(${normalizedUserId})尝试通过MC用户名"${username}"查询绑定的QQ账号`)
+        
+        // 查询用户名绑定信息
+        const bind = await getMcBindByUsername(username)
+        
+        if (!bind || !bind.qqId) {
+          logger.info(`[反向查询] MC用户名"${username}"未被任何QQ账号绑定`)
+          return sendMessage(session, [h.text(`未找到绑定MC用户名"${username}"的QQ账号`)])
+        }
+        
+        // 获取绑定用户的头像
+        const avatarUrl = bind.mcUuid ? getCrafatarUrl(bind.mcUuid) : null
+        // 获取皮肤渲染URL
+        const skinUrl = getStarlightSkinUrl(bind.mcUsername)
+        // 格式化UUID
+        const formattedUuid = formatUuid(bind.mcUuid)
+        
+        // 为Admin添加更多信息
+        let adminInfo = ''
+        if (await isAdmin(session.userId)) {
+          // 添加获取白名单服务器信息
+          if (bind.whitelist && bind.whitelist.length > 0) {
+            const serverList = bind.whitelist.map(serverId => {
+              const server = getServerConfigById(serverId)
+              return server ? server.name : `未知服务器(${serverId})`
+            }).join('\n- ')
+            
+            adminInfo = `\n\n白名单服务器:\n- ${serverList}`
+          } else {
+            adminInfo = '\n\n未加入任何服务器白名单'
+          }
+          
+          adminInfo += `\n绑定时间: ${bind.lastModified ? new Date(bind.lastModified).toLocaleString() : '未知'}`
+          adminInfo += `\n管理员权限: ${bind.isAdmin ? '是' : '否'}`
+        }
+        
+        logger.info(`[反向查询] 成功: MC用户名"${username}"被QQ(${bind.qqId})绑定`)
+        return sendMessage(session, [
+          h.text(`MC用户名"${bind.mcUsername}"绑定信息:\nQQ号: ${bind.qqId}\nUUID: ${formattedUuid}${adminInfo}`),
+          ...(skinUrl ? [h.image(skinUrl)] : [])
+        ])
+      } catch (error) {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logger.error(`[反向查询] QQ(${normalizedUserId})通过MC用户名"${username}"查询失败: ${error.message}`)
+        return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
+      }
+    })
+
   // 绑定MC账号命令
   cmd.subcommand('.bind <username:string> [target:user]', '绑定MC账号')
     .action(async ({ session }, username, target) => {
@@ -1475,14 +1654,14 @@ export function apply(ctx: Context, config: Config) {
         
         // 检查用户名格式
         if (!username || !/^[a-zA-Z0-9_]{3,16}$/.test(username)) {
-          logger.warn(`[绑定] QQ(${normalizedUserId})提供的用户名"${username}"格式无效`)
+          logWarn('绑定', `QQ(${normalizedUserId})提供的用户名"${username}"格式无效`)
           return sendMessage(session, [h.text('请提供有效的Minecraft用户名（3-16位字母、数字、下划线）')])
         }
 
         // 验证用户名是否存在
         const profile = await validateUsername(username)
         if (!profile) {
-          logger.warn(`[绑定] QQ(${normalizedUserId})提供的用户名"${username}"不存在`)
+          logWarn('绑定', `QQ(${normalizedUserId})提供的用户名"${username}"不存在`)
           return sendMessage(session, [h.text(`无法验证用户名: ${username}，该用户可能不存在`)])
         }
 
@@ -1493,17 +1672,17 @@ export function apply(ctx: Context, config: Config) {
         // 如果指定了目标用户（管理员功能）
         if (target) {
           const normalizedTargetId = normalizeQQId(target)
-          logger.info(`[绑定] QQ(${normalizedUserId})尝试为QQ(${normalizedTargetId})绑定MC账号: ${username}(${uuid})`)
+          logDebug('绑定', `QQ(${normalizedUserId})尝试为QQ(${normalizedTargetId})绑定MC账号: ${username}(${uuid})`)
           
           // 检查权限
           if (!await isAdmin(session.userId)) {
-            logger.warn(`[绑定] 权限不足: QQ(${normalizedUserId})不是管理员，无法为QQ(${normalizedTargetId})绑定MC账号`)
+            logWarn('绑定', `权限不足: QQ(${normalizedUserId})不是管理员，无法为QQ(${normalizedTargetId})绑定MC账号`)
             return sendMessage(session, [h.text('只有管理员才能为其他用户绑定MC账号')])
           }
 
           // 检查用户名是否已被除目标用户以外的其他用户绑定
           if (await checkUsernameExists(username, target)) {
-            logger.warn(`[绑定] MC用户名"${username}"已被其他QQ号绑定`)
+            logWarn('绑定', `MC用户名"${username}"已被其他QQ号绑定`)
             return sendMessage(session, [h.text(`用户名 ${username} 已被其他用户绑定`)])
           }
 
@@ -1511,7 +1690,7 @@ export function apply(ctx: Context, config: Config) {
           const targetBind = await getMcBindByQQId(normalizedTargetId)
           
           if (targetBind && targetBind.mcUsername) {
-            logger.info(`[绑定] QQ(${normalizedTargetId})已绑定MC账号"${targetBind.mcUsername}"，将被覆盖为"${username}"`)
+            logDebug('绑定', `QQ(${normalizedTargetId})已绑定MC账号"${targetBind.mcUsername}"，将被覆盖为"${username}"`)
           }
           
           // 创建或更新绑定记录
@@ -1519,11 +1698,11 @@ export function apply(ctx: Context, config: Config) {
           
           // 检查绑定结果
           if (!bindResult) {
-            logger.error(`[绑定] 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})绑定MC账号"${username}"失败: 数据库操作失败`)
+            logError('绑定', normalizedUserId, `管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})绑定MC账号"${username}"失败: 数据库操作失败`)
             return sendMessage(session, [h.text(`为用户 ${normalizedTargetId} 绑定MC账号失败: 数据库操作出错，请联系管理员`)])
           }
           
-          logger.info(`[绑定] 成功: 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})绑定MC账号: ${username}(${uuid})`)
+          logOperation('为他人绑定MC账号', normalizedUserId, true, `为QQ(${normalizedTargetId})绑定MC账号: ${username}(${uuid})`)
           
           // 获取皮肤渲染URL
           const skinUrl = getStarlightSkinUrl(username)
@@ -1536,7 +1715,7 @@ export function apply(ctx: Context, config: Config) {
         }
         
         // 为自己绑定MC账号
-        logger.info(`[绑定] QQ(${normalizedUserId})尝试绑定MC账号: ${username}(${uuid})`)
+        logDebug('绑定', `QQ(${normalizedUserId})尝试绑定MC账号: ${username}(${uuid})`)
         
         // 检查用户是否已绑定
         const selfBind = await getMcBindByQQId(normalizedUserId)
@@ -1553,20 +1732,20 @@ export function apply(ctx: Context, config: Config) {
               const passedDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
               const remainingDays = days - passedDays
               
-              logger.warn(`[绑定] QQ(${normalizedUserId})已绑定MC账号"${selfBind.mcUsername}"，且在冷却期内，还需${remainingDays}天`)
+              logWarn('绑定', `QQ(${normalizedUserId})已绑定MC账号"${selfBind.mcUsername}"，且在冷却期内，还需${remainingDays}天`)
               return sendMessage(session, [h.text(`您已绑定MC账号: ${selfBind.mcUsername}，如需修改，请在冷却期结束后(还需${remainingDays}天)使用 ` + formatCommand('mcid change') + ` 命令或联系管理员。`)])
             }
-            logger.info(`[绑定] QQ(${normalizedUserId})已绑定MC账号"${selfBind.mcUsername}"，建议使用change命令`)
+            logDebug('绑定', `QQ(${normalizedUserId})已绑定MC账号"${selfBind.mcUsername}"，建议使用change命令`)
             return sendMessage(session, [h.text(`您已绑定MC账号: ${selfBind.mcUsername}，如需修改请使用 ` + formatCommand('mcid change') + ` 命令。`)])
           } else {
             // 临时用户名，允许直接绑定，记录日志
-            logger.info(`[绑定] QQ(${normalizedUserId})之前绑定的是临时用户名"${selfBind.mcUsername}"，允许直接使用bind命令`)
+            logDebug('绑定', `QQ(${normalizedUserId})之前绑定的是临时用户名"${selfBind.mcUsername}"，允许直接使用bind命令`)
           }
         }
 
         // 检查用户名是否已被绑定
         if (await checkUsernameExists(username)) {
-          logger.warn(`[绑定] MC用户名"${username}"已被其他QQ号绑定`)
+          logWarn('绑定', `MC用户名"${username}"已被其他QQ号绑定`)
           return sendMessage(session, [h.text(`用户名 ${username} 已被其他用户绑定`)])
         }
 
@@ -1575,11 +1754,11 @@ export function apply(ctx: Context, config: Config) {
         
         // 检查绑定结果
         if (!bindResult) {
-          logger.error(`[绑定] QQ(${normalizedUserId})绑定MC账号"${username}"失败: 数据库操作失败`)
+          logError('绑定', normalizedUserId, `QQ(${normalizedUserId})绑定MC账号"${username}"失败: 数据库操作失败`)
           return sendMessage(session, [h.text('绑定失败，数据库操作出错，请联系管理员')])
         }
         
-        logger.info(`[绑定] 成功: QQ(${normalizedUserId})绑定MC账号: ${username}(${uuid})`)
+        logOperation('绑定MC账号', normalizedUserId, true, `绑定MC账号: ${username}(${uuid})`)
         
         // 获取皮肤渲染URL
         const skinUrl = getStarlightSkinUrl(username)
@@ -1591,7 +1770,7 @@ export function apply(ctx: Context, config: Config) {
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
-        logger.error(`[绑定] QQ(${normalizedUserId})绑定MC账号"${username}"失败: ${error.message}`)
+        logError('绑定', normalizedUserId, `QQ(${normalizedUserId})绑定MC账号"${username}"失败: ${error.message}`)
         return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
       }
     })
@@ -2540,6 +2719,9 @@ export function apply(ctx: Context, config: Config) {
             serverInfo += ' [未加入]';
           }
           
+          // 添加服务器ID信息
+          serverInfo += `\n   ID: ${server.id}`; 
+          
           // 添加服务器状态信息
           serverInfo += "\n   状态: " + (server.enabled === false ? '已停用' : '已启用');
           
@@ -2557,11 +2739,11 @@ export function apply(ctx: Context, config: Config) {
           }
           
           return serverInfo;
-        }).join('\n');
+        }).join('\n\n');  // 使用双换行分隔不同服务器，增强可读性
         
         logger.info(`[白名单] 成功: QQ(${normalizedUserId})获取了服务器列表，共${enabledServers.length}个服务器`)
         return sendMessage(session, [
-          h.text(`${userBind.mcUsername} 的可用服务器列表:\n\n${serverList}\n\n使用 ${formatCommand('mcid whitelist add <服务器名称>')} 申请白名单`)
+          h.text(`${userBind.mcUsername} 的可用服务器列表:\n\n${serverList}\n\n使用 ${formatCommand('mcid whitelist add <服务器名称或ID>')} 申请白名单`)
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -2571,22 +2753,22 @@ export function apply(ctx: Context, config: Config) {
     })
   
   // 添加白名单
-  whitelistCmd.subcommand('.add <serverName:string> [target:user]', '申请/添加服务器白名单')
-    .action(async ({ session }, serverName, target) => {
+  whitelistCmd.subcommand('.add <serverIdOrName:string> [target:user]', '申请/添加服务器白名单')
+    .action(async ({ session }, serverIdOrName, target) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
         
-        // 检查服务器名称
-        if (!serverName) {
-          logger.warn(`[白名单] QQ(${normalizedUserId})未提供服务器名称`)
-          return sendMessage(session, [h.text('请提供服务器名称\n使用 mcid whitelist servers 查看可用服务器列表')])
+        // 检查服务器名称或ID
+        if (!serverIdOrName) {
+          logger.warn(`[白名单] QQ(${normalizedUserId})未提供服务器名称或ID`)
+          return sendMessage(session, [h.text('请提供服务器名称或ID\n使用 mcid whitelist servers 查看可用服务器列表')])
         }
         
         // 获取服务器配置
-        const server = getServerConfigByName(serverName)
+        const server = getServerConfigByIdOrName(serverIdOrName)
         if (!server) {
-          logger.warn(`[白名单] QQ(${normalizedUserId})提供的服务器名称"${serverName}"无效`)
-          return sendMessage(session, [h.text(`未找到名为"${serverName}"的服务器\n使用 mcid whitelist servers 查看可用服务器列表`)])
+          logger.warn(`[白名单] QQ(${normalizedUserId})提供的服务器名称或ID"${serverIdOrName}"无效`)
+          return sendMessage(session, [h.text(`未找到名称或ID为"${serverIdOrName}"的服务器\n使用 mcid whitelist servers 查看可用服务器列表`)])
         }
         
         // 如果指定了目标用户（管理员功能）
@@ -2665,8 +2847,8 @@ export function apply(ctx: Context, config: Config) {
     })
   
   // 移除白名单
-  whitelistCmd.subcommand('.remove <serverName:string> [target:user]', '[管理员]移除服务器白名单')
-    .action(async ({ session }, serverName, target) => {
+  whitelistCmd.subcommand('.remove <serverIdOrName:string> [target:user]', '[管理员]移除服务器白名单')
+    .action(async ({ session }, serverIdOrName, target) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
         
@@ -2676,17 +2858,17 @@ export function apply(ctx: Context, config: Config) {
           return sendMessage(session, [h.text('只有管理员才能移除白名单')])
         }
         
-        // 检查服务器名称
-        if (!serverName) {
-          logger.warn(`[白名单] QQ(${normalizedUserId})未提供服务器名称`)
-          return sendMessage(session, [h.text('请提供服务器名称\n使用 mcid whitelist servers 查看可用服务器列表')])
+        // 检查服务器名称或ID
+        if (!serverIdOrName) {
+          logger.warn(`[白名单] QQ(${normalizedUserId})未提供服务器名称或ID`)
+          return sendMessage(session, [h.text('请提供服务器名称或ID\n使用 mcid whitelist servers 查看可用服务器列表')])
         }
         
         // 获取服务器配置
-        const server = getServerConfigByName(serverName)
+        const server = getServerConfigByIdOrName(serverIdOrName)
         if (!server) {
-          logger.warn(`[白名单] QQ(${normalizedUserId})提供的服务器名称"${serverName}"无效`)
-          return sendMessage(session, [h.text(`未找到名为"${serverName}"的服务器\n使用 mcid whitelist servers 查看可用服务器列表`)])
+          logger.warn(`[白名单] QQ(${normalizedUserId})提供的服务器名称或ID"${serverIdOrName}"无效`)
+          return sendMessage(session, [h.text(`未找到名称或ID为"${serverIdOrName}"的服务器\n使用 mcid whitelist servers 查看可用服务器列表`)])
         }
         
         // 如果指定了目标用户
@@ -2753,8 +2935,8 @@ export function apply(ctx: Context, config: Config) {
     })
     
   // 重置服务器所有白名单记录
-  whitelistCmd.subcommand('.reset <serverName:string>', '[主人]重置服务器所有白名单记录')
-    .action(async ({ session }, serverName) => {
+  whitelistCmd.subcommand('.reset <serverIdOrName:string>', '[主人]重置服务器所有白名单记录')
+    .action(async ({ session }, serverIdOrName) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
         
@@ -2764,22 +2946,22 @@ export function apply(ctx: Context, config: Config) {
           return sendMessage(session, [h.text('只有主人才能重置服务器白名单数据库')])
         }
         
-        // 检查服务器名称
-        if (!serverName) {
-          logger.warn(`[重置白名单] QQ(${normalizedUserId})未提供服务器名称`)
-          return sendMessage(session, [h.text('请提供服务器名称\n使用 mcid whitelist servers 查看可用服务器列表')])
+        // 检查服务器ID或名称
+        if (!serverIdOrName) {
+          logger.warn(`[重置白名单] QQ(${normalizedUserId})未提供服务器ID或名称`)
+          return sendMessage(session, [h.text('请提供服务器ID或名称\n使用 mcid whitelist servers 查看可用服务器列表')])
         }
         
-        // 获取服务器配置
-        const server = getServerConfigByName(serverName)
+        // 获取服务器配置（先通过ID查找，再通过名称查找）
+        const server = getServerConfigByIdOrName(serverIdOrName)
         if (!server) {
-          logger.warn(`[重置白名单] QQ(${normalizedUserId})提供的服务器名称"${serverName}"无效`)
-          return sendMessage(session, [h.text(`未找到名为"${serverName}"的服务器\n使用 mcid whitelist servers 查看可用服务器列表`)])
+          logger.warn(`[重置白名单] QQ(${normalizedUserId})提供的服务器ID或名称"${serverIdOrName}"无效`)
+          return sendMessage(session, [h.text(`未找到ID或名称为"${serverIdOrName}"的服务器\n使用 mcid whitelist servers 查看可用服务器列表`)])
         }
         
         // 查询所有用户绑定记录
         const allBinds = await ctx.database.get('mcidbind', {})
-        logger.info(`[重置白名单] 主人QQ(${normalizedUserId})正在重置服务器"${server.name}"的白名单数据库，共有${allBinds.length}条记录需要检查`)
+        logger.info(`[重置白名单] 主人QQ(${normalizedUserId})正在重置服务器"${server.name}"(ID:${server.id})的白名单数据库，共有${allBinds.length}条记录需要检查`)
         
         // 统计信息
         let processedCount = 0
@@ -2797,12 +2979,12 @@ export function apply(ctx: Context, config: Config) {
               whitelist: newWhitelist
             })
             updatedCount++
-            logger.info(`[重置白名单] 已从QQ(${bind.qqId})的白名单记录中移除服务器"${server.name}"`)
+            logger.info(`[重置白名单] 已从QQ(${bind.qqId})的白名单记录中移除服务器"${server.name}"(ID:${server.id})`)
           }
         }
         
-        logger.info(`[重置白名单] 成功: 主人QQ(${normalizedUserId})重置了服务器"${server.name}"的白名单数据库，共处理${processedCount}条记录，更新${updatedCount}条记录`)
-        return sendMessage(session, [h.text(`已成功重置服务器"${server.name}"的白名单数据库记录\n共处理${processedCount}条记录，更新${updatedCount}条记录\n\n注意：此操作仅清除数据库记录，如需同时清除服务器上的白名单，请使用RCON命令手动操作`)])
+        logger.info(`[重置白名单] 成功: 主人QQ(${normalizedUserId})重置了服务器"${server.name}"(ID:${server.id})的白名单数据库，共处理${processedCount}条记录，更新${updatedCount}条记录`)
+        return sendMessage(session, [h.text(`已成功重置服务器"${server.name}"(ID:${server.id})的白名单数据库记录\n共处理${processedCount}条记录，更新${updatedCount}条记录\n\n注意：此操作仅清除数据库记录，如需同时清除服务器上的白名单，请使用RCON命令手动操作`)])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
         logger.error(`[重置白名单] QQ(${normalizedUserId})重置白名单数据库失败: ${error.message}`)
@@ -2811,8 +2993,8 @@ export function apply(ctx: Context, config: Config) {
     })
     
   // 批量将所有用户添加到服务器白名单
-  whitelistCmd.subcommand('.addall <serverName:string>', '[管理员]将所有用户添加到指定服务器白名单')
-    .action(async ({ session }, serverName) => {
+  whitelistCmd.subcommand('.addall <serverIdOrName:string>', '[管理员]将所有用户添加到指定服务器白名单')
+    .action(async ({ session }, serverIdOrName) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
         
@@ -2822,17 +3004,17 @@ export function apply(ctx: Context, config: Config) {
           return sendMessage(session, [h.text('只有管理员才能执行批量添加白名单操作')])
         }
         
-        // 检查服务器名称
-        if (!serverName) {
-          logger.warn(`[批量白名单] QQ(${normalizedUserId})未提供服务器名称`)
-          return sendMessage(session, [h.text('请提供服务器名称\n使用 mcid whitelist servers 查看可用服务器列表')])
+        // 检查服务器名称或ID
+        if (!serverIdOrName) {
+          logger.warn(`[批量白名单] QQ(${normalizedUserId})未提供服务器名称或ID`)
+          return sendMessage(session, [h.text('请提供服务器名称或ID\n使用 mcid whitelist servers 查看可用服务器列表')])
         }
         
         // 获取服务器配置
-        const server = getServerConfigByName(serverName)
+        const server = getServerConfigByIdOrName(serverIdOrName)
         if (!server) {
-          logger.warn(`[批量白名单] QQ(${normalizedUserId})提供的服务器名称"${serverName}"无效`)
-          return sendMessage(session, [h.text(`未找到名为"${serverName}"的服务器\n使用 mcid whitelist servers 查看可用服务器列表`)])
+          logger.warn(`[批量白名单] QQ(${normalizedUserId})提供的服务器名称或ID"${serverIdOrName}"无效`)
+          return sendMessage(session, [h.text(`未找到名称或ID为"${serverIdOrName}"的服务器\n使用 mcid whitelist servers 查看可用服务器列表`)])
         }
         
         // 检查服务器是否启用
@@ -2869,8 +3051,8 @@ export function apply(ctx: Context, config: Config) {
         let lastNotifiedProgress = 0
         
         // 限制并发数量，避免RCON连接过载
-        // 根据记录数量动态调整并发数
-        const MAX_CONCURRENT = validBinds.length > 100 ? 2 : (validBinds.length > 50 ? 3 : 5);
+        // 修改为固定最多每秒2个请求的限制
+        const MAX_CONCURRENT = 2;  // 固定为2个并发
         const chunks = []
         
         // 将用户分组，每组最多MAX_CONCURRENT个用户
@@ -2940,6 +3122,9 @@ export function apply(ctx: Context, config: Config) {
             await sendMessage(session, [h.text(`批量添加白名单进度: ${progress}%，已处理${processedCount}/${validBinds.length}个用户\n成功: ${successCount} | 失败: ${failCount} | 跳过: ${skipCount}`)]);
             lastNotifiedProgress = progress;
           }
+          
+          // 添加延迟确保每秒最多处理2个请求（1秒 / 2 = 500毫秒）
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
         
         logger.info(`[批量白名单] 成功: 管理员QQ(${normalizedUserId})批量添加了服务器"${server.name}"的白名单，成功: ${successCount}，失败: ${failCount}，跳过: ${skipCount}`)
@@ -3117,4 +3302,16 @@ export function apply(ctx: Context, config: Config) {
     
     return template.replace(/\${MCID}/g, sanitizedMcid);
   };
+
+  // 根据服务器ID或名称获取服务器配置
+  const getServerConfigByIdOrName = (serverIdOrName: string): ServerConfig | null => {
+    if (!config.servers || !Array.isArray(config.servers)) return null
+    
+    // 先尝试通过ID精确匹配
+    const serverById = getServerConfigById(serverIdOrName)
+    if (serverById) return serverById
+    
+    // 如果ID未匹配到，尝试通过名称匹配
+    return getServerConfigByName(serverIdOrName)
+  }
 }
