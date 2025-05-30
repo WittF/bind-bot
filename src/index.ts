@@ -2,7 +2,7 @@ import { Context, Schema, h, Session, Logger } from 'koishi'
 import axios from 'axios'
 import * as RconClient from 'rcon-client'
 
-export const name = 'bind-mcid'
+export const name = 'mcid-bot'
 
 // 声明插件依赖
 export const inject = ['database']
