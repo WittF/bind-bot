@@ -828,6 +828,12 @@ export function apply(ctx: Context, config: Config) {
       return ''
     }
     
+    // 处理 <at id="..."/> 格式的@用户字符串
+    const atMatch = userId.match(/<at id="(\d+)"\s*\/>/)
+    if (atMatch) {
+      return atMatch[1]
+    }
+    
     // 如果包含冒号，说明有平台前缀(如 onebot:123456)
     const colonIndex = userId.indexOf(':')
     if (colonIndex !== -1) {
