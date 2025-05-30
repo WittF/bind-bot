@@ -1,6 +1,6 @@
 import { Context, Schema, h, Session, Logger } from 'koishi'
 import axios from 'axios'
-import { Rcon } from 'rcon-client'
+import * as RconClient from 'rcon-client'
 
 export const name = 'bind-mcid'
 
@@ -133,7 +133,7 @@ interface MojangProfile {
 // RconManager类，用于管理RCON连接
 class RconManager {
   private connections: Map<string, { 
-    rcon: Rcon, 
+    rcon: RconClient.Rcon, 
     lastUsed: number,
     heartbeatInterval: NodeJS.Timeout | null,
     reconnecting: boolean
@@ -175,7 +175,7 @@ class RconManager {
   }
   
   // 获取RCON连接
-  async getConnection(server: ServerConfig): Promise<Rcon> {
+  async getConnection(server: ServerConfig): Promise<RconClient.Rcon> {
     const serverId = server.id;
     const connectionInfo = this.connections.get(serverId);
     
@@ -200,7 +200,7 @@ class RconManager {
   }
   
   // 创建新RCON连接
-  private async createConnection(server: ServerConfig): Promise<Rcon> {
+  private async createConnection(server: ServerConfig): Promise<RconClient.Rcon> {
     // 解析RCON地址和端口
     const addressParts = server.rconAddress.split(':');
     if (addressParts.length !== 2) {
@@ -241,13 +241,16 @@ class RconManager {
     try {
       // 创建新连接
       this.logInfo(`[RCON管理器] 正在连接到服务器 ${server.name} (${server.rconAddress})`);
-      const rcon = await Rcon.connect({
+      const rcon = new RconClient.Rcon({
         host,
         port,
         password: server.rconPassword,
         timeout: 3000 // 3秒连接超时
       });
       
+      // 连接到服务器
+      await rcon.connect();
+        
       // 设置心跳定时器，保持连接活跃
       const heartbeatInterval = setInterval(async () => {
         try {
@@ -262,8 +265,8 @@ class RconManager {
       }, this.heartbeatInterval);
       
       // 存储连接信息
-      this.connections.set(serverId, {
-        rcon,
+      this.connections.set(serverId, { 
+        rcon, 
         lastUsed: Date.now(),
         heartbeatInterval,
         reconnecting: false
