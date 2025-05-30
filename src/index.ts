@@ -107,6 +107,7 @@ export interface MCIDBIND {
   lastModified: Date    // 上次修改时间
   isAdmin: boolean      // 是否为MC绑定管理员
   whitelist: string[]   // 已添加白名单的服务器ID列表
+  tags: string[]        // 用户标签列表
 }
 
 // 为koishi扩展表定义
@@ -659,6 +660,10 @@ export function apply(ctx: Context, config: Config) {
       type: 'json',
       initial: [],
     },
+    tags: {
+      type: 'json',
+      initial: [],
+    },
   }, {
     // 设置主键为qqId
     primary: 'qqId',
@@ -694,18 +699,32 @@ export function apply(ctx: Context, config: Config) {
       
       let updatedCount = 0
       
-      // 更新每个缺少whitelist字段的记录
+      // 更新每个缺少字段的记录
       for (const record of records) {
+        let needUpdate = false
+        const updateData: any = {}
+        
+        // 检查并添加whitelist字段
         if (!record.whitelist) {
-          await ctx.database.set('mcidbind', { qqId: record.qqId }, {
-            whitelist: []
-          })
+          updateData.whitelist = []
+          needUpdate = true
+        }
+        
+        // 检查并添加tags字段
+        if (!record.tags) {
+          updateData.tags = []
+          needUpdate = true
+        }
+        
+        // 如果需要更新，执行更新操作
+        if (needUpdate) {
+          await ctx.database.set('mcidbind', { qqId: record.qqId }, updateData)
           updatedCount++
         }
       }
       
       if (updatedCount > 0) {
-        logger.info(`[初始化] 成功为${updatedCount}条记录添加whitelist字段`)
+        logger.info(`[初始化] 成功为${updatedCount}条记录添加缺失字段`)
       } else {
         logger.info(`[初始化] 所有记录都包含必要字段，无需更新`)
       }
@@ -746,7 +765,8 @@ export function apply(ctx: Context, config: Config) {
             mcUuid: record.mcUuid || '',
             lastModified: record.lastModified || new Date(),
             isAdmin: record.isAdmin || false,
-            whitelist: record.whitelist || []
+            whitelist: record.whitelist || [],
+            tags: record.tags || []
           }
         }).filter(record => record !== null)
         
@@ -2753,8 +2773,8 @@ export function apply(ctx: Context, config: Config) {
     })
   
   // 添加白名单
-  whitelistCmd.subcommand('.add <serverIdOrName:string> [target:user]', '申请/添加服务器白名单')
-    .action(async ({ session }, serverIdOrName, target) => {
+  whitelistCmd.subcommand('.add <serverIdOrName:string> [...targets:user]', '申请/添加服务器白名单')
+    .action(async ({ session }, serverIdOrName, ...targets) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
         
@@ -2771,43 +2791,146 @@ export function apply(ctx: Context, config: Config) {
           return sendMessage(session, [h.text(`未找到名称或ID为"${serverIdOrName}"的服务器\n使用 mcid whitelist servers 查看可用服务器列表`)])
         }
         
-        // 如果指定了目标用户（管理员功能）
-        if (target) {
-          const normalizedTargetId = normalizeQQId(target)
-          logger.info(`[白名单] QQ(${normalizedUserId})尝试为QQ(${normalizedTargetId})添加服务器"${server.name}"白名单`)
-          
+        // 如果有指定目标用户（批量操作或单个用户管理）
+        if (targets && targets.length > 0) {
           // 检查权限
           if (!await isAdmin(session.userId)) {
-            logger.warn(`[白名单] 权限不足: QQ(${normalizedUserId})不是管理员，无法为QQ(${normalizedTargetId})添加白名单`)
+            logger.warn(`[白名单] 权限不足: QQ(${normalizedUserId})不是管理员，无法为其他用户添加白名单`)
             return sendMessage(session, [h.text('只有管理员才能为其他用户添加白名单')])
           }
           
-          // 获取目标用户的绑定信息
-          const targetBind = await getMcBindByQQId(normalizedTargetId)
-          if (!targetBind || !targetBind.mcUsername) {
-            logger.warn(`[白名单] QQ(${normalizedTargetId})未绑定MC账号`)
-            return sendMessage(session, [h.text(`用户 ${normalizedTargetId} 尚未绑定MC账号，无法添加白名单`)])
+          // 检查是否为TAG（如果targets只有一个且不是用户ID格式）
+          if (targets.length === 1 && !/^\d+$/.test(normalizeQQId(targets[0]))) {
+            const tagName = targets[0]
+            logger.info(`[白名单] 管理员QQ(${normalizedUserId})尝试为标签"${tagName}"的所有用户添加服务器"${server.name}"白名单`)
+            
+            // 查找所有有该标签的用户
+            const allBinds = await ctx.database.get('mcidbind', {})
+            const usersWithTag = allBinds.filter(bind => 
+              bind.tags && bind.tags.includes(tagName) && bind.mcUsername && !bind.mcUsername.startsWith('_temp_')
+            )
+            
+            if (usersWithTag.length === 0) {
+              logger.warn(`[白名单] 没有已绑定MC账号的用户有标签"${tagName}"`)
+              return sendMessage(session, [h.text(`没有已绑定MC账号的用户有标签"${tagName}"`)])
+            }
+            
+            // 转换为用户ID数组
+            targets = usersWithTag.map(bind => bind.qqId)
+            logger.info(`[白名单] 找到${targets.length}个有标签"${tagName}"的已绑定用户`)
+            
+            await sendMessage(session, [h.text(`找到${targets.length}个有标签"${tagName}"的已绑定用户，开始添加白名单...`)])
           }
           
-          // 检查是否已在白名单中
-          if (isInServerWhitelist(targetBind, server.id)) {
-            logger.warn(`[白名单] QQ(${normalizedTargetId})已在服务器"${server.name}"的白名单中`)
-            return sendMessage(session, [h.text(`用户 ${normalizedTargetId} 已在服务器"${server.name}"的白名单中`)])
+          // 单个用户的简洁处理逻辑
+          if (targets.length === 1) {
+            const target = targets[0]
+            const normalizedTargetId = normalizeQQId(target)
+            logger.info(`[白名单] QQ(${normalizedUserId})尝试为QQ(${normalizedTargetId})添加服务器"${server.name}"白名单`)
+            
+            // 获取目标用户的绑定信息
+            const targetBind = await getMcBindByQQId(normalizedTargetId)
+            if (!targetBind || !targetBind.mcUsername) {
+              logger.warn(`[白名单] QQ(${normalizedTargetId})未绑定MC账号`)
+              return sendMessage(session, [h.text(`用户 ${normalizedTargetId} 尚未绑定MC账号，无法添加白名单`)])
+            }
+            
+            // 检查是否已在白名单中
+            if (isInServerWhitelist(targetBind, server.id)) {
+              logger.warn(`[白名单] QQ(${normalizedTargetId})已在服务器"${server.name}"的白名单中`)
+              return sendMessage(session, [h.text(`用户 ${normalizedTargetId} 已在服务器"${server.name}"的白名单中`)])
+            }
+            
+            // 执行添加白名单操作
+            const result = await addServerWhitelist(targetBind, server)
+            
+            if (result) {
+              logger.info(`[白名单] 成功: 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})添加了服务器"${server.name}"的白名单`)
+              return sendMessage(session, [h.text(`已成功为用户 ${normalizedTargetId} 添加服务器"${server.name}"的白名单`)])
+            } else {
+              logger.error(`[白名单] 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})添加服务器"${server.name}"白名单失败`)
+              return sendMessage(session, [h.text(`为用户 ${normalizedTargetId} 添加服务器"${server.name}"白名单失败，请检查RCON连接和命令配置`)])
+            }
           }
           
-          // 执行添加白名单操作
-          const result = await addServerWhitelist(targetBind, server)
+          // 批量用户的详细处理逻辑
+          logger.info(`[白名单] QQ(${normalizedUserId})尝试批量为${targets.length}个用户添加服务器"${server.name}"白名单`)
           
-          if (result) {
-            logger.info(`[白名单] 成功: 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})添加了服务器"${server.name}"的白名单`)
-            return sendMessage(session, [h.text(`已成功为用户 ${normalizedTargetId} 添加服务器"${server.name}"的白名单`)])
-          } else {
-            logger.error(`[白名单] 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})添加服务器"${server.name}"白名单失败`)
-            return sendMessage(session, [h.text(`为用户 ${normalizedTargetId} 添加服务器"${server.name}"白名单失败，请检查RCON连接和命令配置`)])
+          // 发送开始处理的通知
+          await sendMessage(session, [h.text(`开始为${targets.length}个用户添加服务器"${server.name}"的白名单，请稍候...`)])
+          
+          // 统计信息
+          let successCount = 0
+          let failCount = 0
+          let skipCount = 0
+          const results: string[] = []
+          
+          // 处理每个目标用户
+          for (let i = 0; i < targets.length; i++) {
+            const target = targets[i]
+            const normalizedTargetId = normalizeQQId(target)
+            
+            try {
+              // 获取目标用户的绑定信息
+              const targetBind = await getMcBindByQQId(normalizedTargetId)
+              if (!targetBind || !targetBind.mcUsername) {
+                failCount++
+                results.push(`❌ ${normalizedTargetId}: 未绑定MC账号`)
+                logger.warn(`[白名单] QQ(${normalizedTargetId})未绑定MC账号`)
+                continue
+              }
+              
+              // 检查是否已在白名单中
+              if (isInServerWhitelist(targetBind, server.id)) {
+                skipCount++
+                results.push(`⏭️ ${normalizedTargetId}: 已在白名单中`)
+                logger.warn(`[白名单] QQ(${normalizedTargetId})已在服务器"${server.name}"的白名单中`)
+                continue
+              }
+              
+              // 执行添加白名单操作
+              const result = await addServerWhitelist(targetBind, server)
+              
+              if (result) {
+                successCount++
+                results.push(`✅ ${normalizedTargetId}: 添加成功`)
+                logger.info(`[白名单] 成功: 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})添加了服务器"${server.name}"的白名单`)
+              } else {
+                failCount++
+                results.push(`❌ ${normalizedTargetId}: 添加失败`)
+                logger.error(`[白名单] 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})添加服务器"${server.name}"白名单失败`)
+              }
+              
+              // 批量操作时添加适当延迟，避免过载
+              if (i < targets.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 500))
+              }
+              
+              // 每处理5个用户发送一次进度更新（仅在批量操作时）
+              if (targets.length > 5 && (i + 1) % 5 === 0) {
+                const progress = Math.round(((i + 1) / targets.length) * 100)
+                await sendMessage(session, [h.text(`批量添加白名单进度: ${progress}% (${i + 1}/${targets.length})\n成功: ${successCount} | 失败: ${failCount} | 跳过: ${skipCount}`)])
+              }
+            } catch (error) {
+              failCount++
+              results.push(`❌ ${normalizedTargetId}: 处理出错`)
+              logger.error(`[白名单] 处理用户QQ(${normalizedTargetId})时出错: ${error.message}`)
+            }
           }
+          
+          // 生成结果报告
+          let resultMessage = `批量添加服务器"${server.name}"白名单完成\n共处理${targets.length}个用户\n✅ 成功: ${successCount} 个\n❌ 失败: ${failCount} 个\n⏭️ 跳过: ${skipCount} 个`
+          
+          // 如果有详细结果且用户数量不太多，显示详细信息
+          if (targets.length <= 10) {
+            resultMessage += '\n\n详细结果:\n' + results.join('\n')
+          }
+          
+          logger.info(`[白名单] 批量操作完成: 管理员QQ(${normalizedUserId})为${targets.length}个用户添加服务器"${server.name}"白名单，成功: ${successCount}，失败: ${failCount}，跳过: ${skipCount}`)
+          return sendMessage(session, [h.text(resultMessage)])
         }
         
-        // 为自己添加白名单
+        // 为自己添加白名单（原有逻辑保持不变）
         logger.info(`[白名单] QQ(${normalizedUserId})尝试为自己添加服务器"${server.name}"白名单`)
         
         // 检查服务器是否允许自助申请
@@ -2847,8 +2970,8 @@ export function apply(ctx: Context, config: Config) {
     })
   
   // 移除白名单
-  whitelistCmd.subcommand('.remove <serverIdOrName:string> [target:user]', '[管理员]移除服务器白名单')
-    .action(async ({ session }, serverIdOrName, target) => {
+  whitelistCmd.subcommand('.remove <serverIdOrName:string> [...targets:user]', '[管理员]移除服务器白名单')
+    .action(async ({ session }, serverIdOrName, ...targets) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
         
@@ -2871,37 +2994,140 @@ export function apply(ctx: Context, config: Config) {
           return sendMessage(session, [h.text(`未找到名称或ID为"${serverIdOrName}"的服务器\n使用 mcid whitelist servers 查看可用服务器列表`)])
         }
         
-        // 如果指定了目标用户
-        if (target) {
-          const normalizedTargetId = normalizeQQId(target)
-          logger.info(`[白名单] 管理员QQ(${normalizedUserId})尝试为QQ(${normalizedTargetId})移除服务器"${server.name}"白名单`)
-          
-          // 获取目标用户的绑定信息
-          const targetBind = await getMcBindByQQId(normalizedTargetId)
-          if (!targetBind || !targetBind.mcUsername) {
-            logger.warn(`[白名单] QQ(${normalizedTargetId})未绑定MC账号`)
-            return sendMessage(session, [h.text(`用户 ${normalizedTargetId} 尚未绑定MC账号，无法移除白名单`)])
+        // 如果有指定目标用户（批量操作或单个用户管理）
+        if (targets && targets.length > 0) {
+          // 检查是否为TAG（如果targets只有一个且不是用户ID格式）
+          if (targets.length === 1 && !/^\d+$/.test(normalizeQQId(targets[0]))) {
+            const tagName = targets[0]
+            logger.info(`[白名单] 管理员QQ(${normalizedUserId})尝试为标签"${tagName}"的所有用户移除服务器"${server.name}"白名单`)
+            
+            // 查找所有有该标签的用户
+            const allBinds = await ctx.database.get('mcidbind', {})
+            const usersWithTag = allBinds.filter(bind => 
+              bind.tags && bind.tags.includes(tagName) && bind.mcUsername && !bind.mcUsername.startsWith('_temp_')
+            )
+            
+            if (usersWithTag.length === 0) {
+              logger.warn(`[白名单] 没有已绑定MC账号的用户有标签"${tagName}"`)
+              return sendMessage(session, [h.text(`没有已绑定MC账号的用户有标签"${tagName}"`)])
+            }
+            
+            // 转换为用户ID数组
+            targets = usersWithTag.map(bind => bind.qqId)
+            logger.info(`[白名单] 找到${targets.length}个有标签"${tagName}"的已绑定用户`)
+            
+            await sendMessage(session, [h.text(`找到${targets.length}个有标签"${tagName}"的已绑定用户，开始移除白名单...`)])
           }
           
-          // 检查是否在白名单中
-          if (!isInServerWhitelist(targetBind, server.id)) {
-            logger.warn(`[白名单] QQ(${normalizedTargetId})不在服务器"${server.name}"的白名单中`)
-            return sendMessage(session, [h.text(`用户 ${normalizedTargetId} 不在服务器"${server.name}"的白名单中`)])
+          // 单个用户的简洁处理逻辑
+          if (targets.length === 1) {
+            const target = targets[0]
+            const normalizedTargetId = normalizeQQId(target)
+            logger.info(`[白名单] 管理员QQ(${normalizedUserId})尝试为QQ(${normalizedTargetId})移除服务器"${server.name}"白名单`)
+            
+            // 获取目标用户的绑定信息
+            const targetBind = await getMcBindByQQId(normalizedTargetId)
+            if (!targetBind || !targetBind.mcUsername) {
+              logger.warn(`[白名单] QQ(${normalizedTargetId})未绑定MC账号`)
+              return sendMessage(session, [h.text(`用户 ${normalizedTargetId} 尚未绑定MC账号，无法移除白名单`)])
+            }
+            
+            // 检查是否在白名单中
+            if (!isInServerWhitelist(targetBind, server.id)) {
+              logger.warn(`[白名单] QQ(${normalizedTargetId})不在服务器"${server.name}"的白名单中`)
+              return sendMessage(session, [h.text(`用户 ${normalizedTargetId} 不在服务器"${server.name}"的白名单中`)])
+            }
+            
+            // 执行移除白名单操作
+            const result = await removeServerWhitelist(targetBind, server)
+            
+            if (result) {
+              logger.info(`[白名单] 成功: 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})移除了服务器"${server.name}"的白名单`)
+              return sendMessage(session, [h.text(`已成功为用户 ${normalizedTargetId} 移除服务器"${server.name}"的白名单`)])
+            } else {
+              logger.error(`[白名单] 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})移除服务器"${server.name}"白名单失败`)
+              return sendMessage(session, [h.text(`为用户 ${normalizedTargetId} 移除服务器"${server.name}"白名单失败，请检查RCON连接和命令配置`)])
+            }
           }
           
-          // 执行移除白名单操作
-          const result = await removeServerWhitelist(targetBind, server)
+          // 批量用户的详细处理逻辑
+          logger.info(`[白名单] 管理员QQ(${normalizedUserId})尝试批量为${targets.length}个用户移除服务器"${server.name}"白名单`)
           
-          if (result) {
-            logger.info(`[白名单] 成功: 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})移除了服务器"${server.name}"的白名单`)
-            return sendMessage(session, [h.text(`已成功为用户 ${normalizedTargetId} 移除服务器"${server.name}"的白名单`)])
-          } else {
-            logger.error(`[白名单] 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})移除服务器"${server.name}"白名单失败`)
-            return sendMessage(session, [h.text(`为用户 ${normalizedTargetId} 移除服务器"${server.name}"白名单失败，请检查RCON连接和命令配置`)])
+          // 发送开始处理的通知
+          await sendMessage(session, [h.text(`开始为${targets.length}个用户移除服务器"${server.name}"的白名单，请稍候...`)])
+          
+          // 统计信息
+          let successCount = 0
+          let failCount = 0
+          let skipCount = 0
+          const results: string[] = []
+          
+          // 处理每个目标用户
+          for (let i = 0; i < targets.length; i++) {
+            const target = targets[i]
+            const normalizedTargetId = normalizeQQId(target)
+            
+            try {
+              // 获取目标用户的绑定信息
+              const targetBind = await getMcBindByQQId(normalizedTargetId)
+              if (!targetBind || !targetBind.mcUsername) {
+                failCount++
+                results.push(`❌ ${normalizedTargetId}: 未绑定MC账号`)
+                logger.warn(`[白名单] QQ(${normalizedTargetId})未绑定MC账号`)
+                continue
+              }
+              
+              // 检查是否在白名单中
+              if (!isInServerWhitelist(targetBind, server.id)) {
+                skipCount++
+                results.push(`⏭️ ${normalizedTargetId}: 不在白名单中`)
+                logger.warn(`[白名单] QQ(${normalizedTargetId})不在服务器"${server.name}"的白名单中`)
+                continue
+              }
+              
+              // 执行移除白名单操作
+              const result = await removeServerWhitelist(targetBind, server)
+              
+              if (result) {
+                successCount++
+                results.push(`✅ ${normalizedTargetId}: 移除成功`)
+                logger.info(`[白名单] 成功: 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})移除了服务器"${server.name}"的白名单`)
+              } else {
+                failCount++
+                results.push(`❌ ${normalizedTargetId}: 移除失败`)
+                logger.error(`[白名单] 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})移除服务器"${server.name}"白名单失败`)
+              }
+              
+              // 批量操作时添加适当延迟，避免过载
+              if (i < targets.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 500))
+              }
+              
+              // 每处理5个用户发送一次进度更新（仅在批量操作时）
+              if (targets.length > 5 && (i + 1) % 5 === 0) {
+                const progress = Math.round(((i + 1) / targets.length) * 100)
+                await sendMessage(session, [h.text(`批量移除白名单进度: ${progress}% (${i + 1}/${targets.length})\n成功: ${successCount} | 失败: ${failCount} | 跳过: ${skipCount}`)])
+              }
+            } catch (error) {
+              failCount++
+              results.push(`❌ ${normalizedTargetId}: 处理出错`)
+              logger.error(`[白名单] 处理用户QQ(${normalizedTargetId})时出错: ${error.message}`)
+            }
           }
+          
+          // 生成结果报告
+          let resultMessage = `批量移除服务器"${server.name}"白名单完成\n共处理${targets.length}个用户\n✅ 成功: ${successCount} 个\n❌ 失败: ${failCount} 个\n⏭️ 跳过: ${skipCount} 个`
+          
+          // 如果有详细结果且用户数量不太多，显示详细信息
+          if (targets.length <= 10) {
+            resultMessage += '\n\n详细结果:\n' + results.join('\n')
+          }
+          
+          logger.info(`[白名单] 批量操作完成: 管理员QQ(${normalizedUserId})为${targets.length}个用户移除服务器"${server.name}"白名单，成功: ${successCount}，失败: ${failCount}，跳过: ${skipCount}`)
+          return sendMessage(session, [h.text(resultMessage)])
         }
         
-        // 为自己移除白名单 (管理员也需要使用此功能移除自己的白名单)
+        // 为自己移除白名单（原有逻辑保持不变）
         logger.info(`[白名单] 管理员QQ(${normalizedUserId})尝试为自己移除服务器"${server.name}"白名单`)
         
         // 获取自己的绑定信息
@@ -3314,4 +3540,381 @@ export function apply(ctx: Context, config: Config) {
     // 如果ID未匹配到，尝试通过名称匹配
     return getServerConfigByName(serverIdOrName)
   }
+
+  // =========== 标签管理功能 ===========
+  const tagCmd = cmd.subcommand('.tag', '[管理员]用户标签管理')
+  
+  // 添加标签
+  tagCmd.subcommand('.add <tagName:string> [...targets:user]', '为用户添加标签')
+    .action(async ({ session }, tagName, ...targets) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        
+        // 检查权限
+        if (!await isAdmin(session.userId)) {
+          logger.warn(`[标签] 权限不足: QQ(${normalizedUserId})不是管理员，无法管理标签`)
+          return sendMessage(session, [h.text('只有管理员才能管理用户标签')])
+        }
+        
+        // 检查标签名称
+        if (!tagName) {
+          logger.warn(`[标签] QQ(${normalizedUserId})未提供标签名称`)
+          return sendMessage(session, [h.text('请提供标签名称')])
+        }
+        
+        // 验证标签名称格式（只允许字母、数字、中文、下划线和连字符）
+        if (!/^[\u4e00-\u9fa5a-zA-Z0-9_-]+$/.test(tagName)) {
+          logger.warn(`[标签] QQ(${normalizedUserId})提供的标签名称"${tagName}"格式无效`)
+          return sendMessage(session, [h.text('标签名称只能包含中文、字母、数字、下划线和连字符')])
+        }
+        
+        // 如果没有指定目标用户，报错
+        if (!targets || targets.length === 0) {
+          logger.warn(`[标签] QQ(${normalizedUserId})未指定目标用户`)
+          return sendMessage(session, [h.text('请使用@指定要添加标签的用户')])
+        }
+        
+        // 单个用户的简洁处理逻辑
+        if (targets.length === 1) {
+          const target = targets[0]
+          const normalizedTargetId = normalizeQQId(target)
+          logger.info(`[标签] 管理员QQ(${normalizedUserId})尝试为QQ(${normalizedTargetId})添加标签"${tagName}"`)
+          
+          // 获取目标用户的绑定信息
+          let targetBind = await getMcBindByQQId(normalizedTargetId)
+          
+          // 如果用户没有记录，创建一个临时记录
+          if (!targetBind) {
+            const tempUsername = `_temp_${normalizedTargetId}`
+            await ctx.database.create('mcidbind', {
+              qqId: normalizedTargetId,
+              mcUsername: tempUsername,
+              mcUuid: '',
+              lastModified: new Date(),
+              isAdmin: false,
+              whitelist: [],
+              tags: []
+            })
+            targetBind = await getMcBindByQQId(normalizedTargetId)
+          }
+          
+          // 检查是否已有该标签
+          if (targetBind.tags && targetBind.tags.includes(tagName)) {
+            logger.warn(`[标签] QQ(${normalizedTargetId})已有标签"${tagName}"`)
+            return sendMessage(session, [h.text(`用户 ${normalizedTargetId} 已有标签"${tagName}"`)])
+          }
+          
+          // 添加标签
+          const newTags = [...(targetBind.tags || []), tagName]
+          await ctx.database.set('mcidbind', { qqId: normalizedTargetId }, { tags: newTags })
+          
+          logger.info(`[标签] 成功: 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})添加了标签"${tagName}"`)
+          return sendMessage(session, [h.text(`已成功为用户 ${normalizedTargetId} 添加标签"${tagName}"`)])
+        }
+        
+        // 批量用户的详细处理逻辑
+        logger.info(`[标签] 管理员QQ(${normalizedUserId})尝试批量为${targets.length}个用户添加标签"${tagName}"`)
+        
+        await sendMessage(session, [h.text(`开始为${targets.length}个用户添加标签"${tagName}"，请稍候...`)])
+        
+        let successCount = 0
+        let failCount = 0
+        let skipCount = 0
+        const results: string[] = []
+        
+        for (let i = 0; i < targets.length; i++) {
+          const target = targets[i]
+          const normalizedTargetId = normalizeQQId(target)
+          
+          try {
+            // 获取目标用户的绑定信息
+            let targetBind = await getMcBindByQQId(normalizedTargetId)
+            
+            // 如果用户没有记录，创建一个临时记录
+            if (!targetBind) {
+              const tempUsername = `_temp_${normalizedTargetId}`
+              await ctx.database.create('mcidbind', {
+                qqId: normalizedTargetId,
+                mcUsername: tempUsername,
+                mcUuid: '',
+                lastModified: new Date(),
+                isAdmin: false,
+                whitelist: [],
+                tags: []
+              })
+              targetBind = await getMcBindByQQId(normalizedTargetId)
+            }
+            
+            // 检查是否已有该标签
+            if (targetBind.tags && targetBind.tags.includes(tagName)) {
+              skipCount++
+              results.push(`⏭️ ${normalizedTargetId}: 已有该标签`)
+              logger.warn(`[标签] QQ(${normalizedTargetId})已有标签"${tagName}"`)
+              continue
+            }
+            
+            // 添加标签
+            const newTags = [...(targetBind.tags || []), tagName]
+            await ctx.database.set('mcidbind', { qqId: normalizedTargetId }, { tags: newTags })
+            
+            successCount++
+            results.push(`✅ ${normalizedTargetId}: 添加成功`)
+            logger.info(`[标签] 成功: 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})添加了标签"${tagName}"`)
+            
+            // 批量操作时添加适当延迟
+            if (i < targets.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 100))
+            }
+          } catch (error) {
+            failCount++
+            results.push(`❌ ${normalizedTargetId}: 处理出错`)
+            logger.error(`[标签] 处理用户QQ(${normalizedTargetId})时出错: ${error.message}`)
+          }
+        }
+        
+        // 生成结果报告
+        let resultMessage = `批量添加标签"${tagName}"完成\n共处理${targets.length}个用户\n✅ 成功: ${successCount} 个\n❌ 失败: ${failCount} 个\n⏭️ 跳过: ${skipCount} 个`
+        
+        if (targets.length <= 10) {
+          resultMessage += '\n\n详细结果:\n' + results.join('\n')
+        }
+        
+        logger.info(`[标签] 批量操作完成: 管理员QQ(${normalizedUserId})为${targets.length}个用户添加标签"${tagName}"，成功: ${successCount}，失败: ${failCount}，跳过: ${skipCount}`)
+        return sendMessage(session, [h.text(resultMessage)])
+      } catch (error) {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logger.error(`[标签] QQ(${normalizedUserId})添加标签失败: ${error.message}`)
+        return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
+      }
+    })
+  
+  // 移除标签
+  tagCmd.subcommand('.remove <tagName:string> [...targets:user]', '移除用户标签')
+    .action(async ({ session }, tagName, ...targets) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        
+        // 检查权限
+        if (!await isAdmin(session.userId)) {
+          logger.warn(`[标签] 权限不足: QQ(${normalizedUserId})不是管理员，无法管理标签`)
+          return sendMessage(session, [h.text('只有管理员才能管理用户标签')])
+        }
+        
+        // 检查标签名称
+        if (!tagName) {
+          logger.warn(`[标签] QQ(${normalizedUserId})未提供标签名称`)
+          return sendMessage(session, [h.text('请提供标签名称')])
+        }
+        
+        // 如果没有指定目标用户，报错
+        if (!targets || targets.length === 0) {
+          logger.warn(`[标签] QQ(${normalizedUserId})未指定目标用户`)
+          return sendMessage(session, [h.text('请使用@指定要移除标签的用户')])
+        }
+        
+        // 单个用户的简洁处理逻辑
+        if (targets.length === 1) {
+          const target = targets[0]
+          const normalizedTargetId = normalizeQQId(target)
+          logger.info(`[标签] 管理员QQ(${normalizedUserId})尝试为QQ(${normalizedTargetId})移除标签"${tagName}"`)
+          
+          // 获取目标用户的绑定信息
+          const targetBind = await getMcBindByQQId(normalizedTargetId)
+          
+          if (!targetBind) {
+            logger.warn(`[标签] QQ(${normalizedTargetId})无记录`)
+            return sendMessage(session, [h.text(`用户 ${normalizedTargetId} 无记录`)])
+          }
+          
+          // 检查是否有该标签
+          if (!targetBind.tags || !targetBind.tags.includes(tagName)) {
+            logger.warn(`[标签] QQ(${normalizedTargetId})没有标签"${tagName}"`)
+            return sendMessage(session, [h.text(`用户 ${normalizedTargetId} 没有标签"${tagName}"`)])
+          }
+          
+          // 移除标签
+          const newTags = targetBind.tags.filter(tag => tag !== tagName)
+          await ctx.database.set('mcidbind', { qqId: normalizedTargetId }, { tags: newTags })
+          
+          logger.info(`[标签] 成功: 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})移除了标签"${tagName}"`)
+          return sendMessage(session, [h.text(`已成功为用户 ${normalizedTargetId} 移除标签"${tagName}"`)])
+        }
+        
+        // 批量用户的详细处理逻辑
+        logger.info(`[标签] 管理员QQ(${normalizedUserId})尝试批量为${targets.length}个用户移除标签"${tagName}"`)
+        
+        await sendMessage(session, [h.text(`开始为${targets.length}个用户移除标签"${tagName}"，请稍候...`)])
+        
+        let successCount = 0
+        let failCount = 0
+        let skipCount = 0
+        const results: string[] = []
+        
+        for (let i = 0; i < targets.length; i++) {
+          const target = targets[i]
+          const normalizedTargetId = normalizeQQId(target)
+          
+          try {
+            // 获取目标用户的绑定信息
+            const targetBind = await getMcBindByQQId(normalizedTargetId)
+            
+            if (!targetBind) {
+              failCount++
+              results.push(`❌ ${normalizedTargetId}: 无记录`)
+              logger.warn(`[标签] QQ(${normalizedTargetId})无记录`)
+              continue
+            }
+            
+            // 检查是否有该标签
+            if (!targetBind.tags || !targetBind.tags.includes(tagName)) {
+              skipCount++
+              results.push(`⏭️ ${normalizedTargetId}: 没有该标签`)
+              logger.warn(`[标签] QQ(${normalizedTargetId})没有标签"${tagName}"`)
+              continue
+            }
+            
+            // 移除标签
+            const newTags = targetBind.tags.filter(tag => tag !== tagName)
+            await ctx.database.set('mcidbind', { qqId: normalizedTargetId }, { tags: newTags })
+            
+            successCount++
+            results.push(`✅ ${normalizedTargetId}: 移除成功`)
+            logger.info(`[标签] 成功: 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})移除了标签"${tagName}"`)
+            
+            // 批量操作时添加适当延迟
+            if (i < targets.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 100))
+            }
+          } catch (error) {
+            failCount++
+            results.push(`❌ ${normalizedTargetId}: 处理出错`)
+            logger.error(`[标签] 处理用户QQ(${normalizedTargetId})时出错: ${error.message}`)
+          }
+        }
+        
+        // 生成结果报告
+        let resultMessage = `批量移除标签"${tagName}"完成\n共处理${targets.length}个用户\n✅ 成功: ${successCount} 个\n❌ 失败: ${failCount} 个\n⏭️ 跳过: ${skipCount} 个`
+        
+        if (targets.length <= 10) {
+          resultMessage += '\n\n详细结果:\n' + results.join('\n')
+        }
+        
+        logger.info(`[标签] 批量操作完成: 管理员QQ(${normalizedUserId})为${targets.length}个用户移除标签"${tagName}"，成功: ${successCount}，失败: ${failCount}，跳过: ${skipCount}`)
+        return sendMessage(session, [h.text(resultMessage)])
+      } catch (error) {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logger.error(`[标签] QQ(${normalizedUserId})移除标签失败: ${error.message}`)
+        return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
+      }
+    })
+  
+  // 列出用户标签
+  tagCmd.subcommand('.list [target:user]', '查看用户的所有标签')
+    .action(async ({ session }, target) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        
+        // 检查权限
+        if (!await isAdmin(session.userId)) {
+          logger.warn(`[标签] 权限不足: QQ(${normalizedUserId})不是管理员，无法查看标签`)
+          return sendMessage(session, [h.text('只有管理员才能查看用户标签')])
+        }
+        
+        // 如果指定了目标用户
+        if (target) {
+          const normalizedTargetId = normalizeQQId(target)
+          logger.info(`[标签] 管理员QQ(${normalizedUserId})查看QQ(${normalizedTargetId})的标签`)
+          
+          const targetBind = await getMcBindByQQId(normalizedTargetId)
+          if (!targetBind) {
+            logger.info(`[标签] QQ(${normalizedTargetId})无记录`)
+            return sendMessage(session, [h.text(`用户 ${normalizedTargetId} 无记录`)])
+          }
+          
+          if (!targetBind.tags || targetBind.tags.length === 0) {
+            logger.info(`[标签] QQ(${normalizedTargetId})没有任何标签`)
+            return sendMessage(session, [h.text(`用户 ${normalizedTargetId} 没有任何标签`)])
+          }
+          
+          const tagList = targetBind.tags.map(tag => `• ${tag}`).join('\n')
+          return sendMessage(session, [h.text(`用户 ${normalizedTargetId} 的标签:\n${tagList}`)])
+        }
+        
+        // 查看所有标签统计
+        logger.info(`[标签] 管理员QQ(${normalizedUserId})查看所有标签统计`)
+        
+        const allBinds = await ctx.database.get('mcidbind', {})
+        const tagStats: Record<string, number> = {}
+        
+        // 统计每个标签的使用次数
+        for (const bind of allBinds) {
+          if (bind.tags && bind.tags.length > 0) {
+            for (const tag of bind.tags) {
+              tagStats[tag] = (tagStats[tag] || 0) + 1
+            }
+          }
+        }
+        
+        if (Object.keys(tagStats).length === 0) {
+          return sendMessage(session, [h.text('当前没有任何用户标签')])
+        }
+        
+        // 按使用次数排序
+        const sortedTags = Object.entries(tagStats)
+          .sort((a, b) => b[1] - a[1])
+          .map(([tag, count]) => `• ${tag} (${count}人)`)
+          .join('\n')
+        
+        return sendMessage(session, [h.text(`所有标签统计:\n${sortedTags}`)])
+      } catch (error) {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logger.error(`[标签] QQ(${normalizedUserId})查看标签失败: ${error.message}`)
+        return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
+      }
+    })
+  
+  // 查找有特定标签的用户
+  tagCmd.subcommand('.find <tagName:string>', '查找有特定标签的所有用户')
+    .action(async ({ session }, tagName) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        
+        // 检查权限
+        if (!await isAdmin(session.userId)) {
+          logger.warn(`[标签] 权限不足: QQ(${normalizedUserId})不是管理员，无法查找标签`)
+          return sendMessage(session, [h.text('只有管理员才能查找标签')])
+        }
+        
+        if (!tagName) {
+          logger.warn(`[标签] QQ(${normalizedUserId})未提供标签名称`)
+          return sendMessage(session, [h.text('请提供要查找的标签名称')])
+        }
+        
+        logger.info(`[标签] 管理员QQ(${normalizedUserId})查找标签"${tagName}"的用户`)
+        
+        // 查找所有有该标签的用户
+        const allBinds = await ctx.database.get('mcidbind', {})
+        const usersWithTag = allBinds.filter(bind => 
+          bind.tags && bind.tags.includes(tagName)
+        )
+        
+        if (usersWithTag.length === 0) {
+          logger.info(`[标签] 没有用户有标签"${tagName}"`)
+          return sendMessage(session, [h.text(`没有用户有标签"${tagName}"`)])
+        }
+        
+        // 格式化用户列表
+        const userList = usersWithTag.map(bind => {
+          const mcInfo = bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? ` (MC: ${bind.mcUsername})` : ''
+          return `• ${bind.qqId}${mcInfo}`
+        }).join('\n')
+        
+        logger.info(`[标签] 找到${usersWithTag.length}个用户有标签"${tagName}"`)
+        return sendMessage(session, [h.text(`有标签"${tagName}"的用户 (共${usersWithTag.length}人):\n${userList}`)])
+      } catch (error) {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logger.error(`[标签] QQ(${normalizedUserId})查找标签失败: ${error.message}`)
+        return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
+      }
+    })
 }
