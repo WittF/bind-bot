@@ -500,7 +500,7 @@ class RateLimiter {
 
 export function apply(ctx: Context, config: Config) {
   // 创建日志记录器
-  const logger = new Logger('bind-mcid')
+  const logger = new Logger('mcid-bot')
   
   // 日志辅助函数，根据debugMode控制输出
   const logDebug = (context: string, message: string): void => {
