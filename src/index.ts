@@ -2773,7 +2773,7 @@ export function apply(ctx: Context, config: Config) {
     })
   
   // 添加白名单
-  whitelistCmd.subcommand('.add <serverIdOrName:string> [...targets:user]', '申请/添加服务器白名单')
+  whitelistCmd.subcommand('.add <serverIdOrName:string> [...targets:string]', '申请/添加服务器白名单')
     .action(async ({ session }, serverIdOrName, ...targets) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -2970,7 +2970,7 @@ export function apply(ctx: Context, config: Config) {
     })
   
   // 移除白名单
-  whitelistCmd.subcommand('.remove <serverIdOrName:string> [...targets:user]', '[管理员]移除服务器白名单')
+  whitelistCmd.subcommand('.remove <serverIdOrName:string> [...targets:string]', '[管理员]移除服务器白名单')
     .action(async ({ session }, serverIdOrName, ...targets) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -3545,7 +3545,7 @@ export function apply(ctx: Context, config: Config) {
   const tagCmd = cmd.subcommand('.tag', '[管理员]用户标签管理')
   
   // 添加标签
-  tagCmd.subcommand('.add <tagName:string> [...targets:user]', '为用户添加标签')
+  tagCmd.subcommand('.add <tagName:string> [...targets:string]', '为用户添加标签')
     .action(async ({ session }, tagName, ...targets) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -3689,7 +3689,7 @@ export function apply(ctx: Context, config: Config) {
     })
   
   // 移除标签
-  tagCmd.subcommand('.remove <tagName:string> [...targets:user]', '移除用户标签')
+  tagCmd.subcommand('.remove <tagName:string> [...targets:string]', '移除用户标签')
     .action(async ({ session }, tagName, ...targets) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
