@@ -28,7 +28,9 @@
 - `mcid admin <目标用户>` 将用户设为管理员
 - `mcid unadmin <目标用户>` 撤销用户的管理员权限
 - `mcid adminlist` 列出所有管理员
-- `mcid whitelist reset <服务器名称或ID>` 重置指定服务器的所有白名单数据库记录
+- `mcid whitelist reset <服务器ID>` 重置指定服务器的所有白名单数据库记录（可清理配置中已删除的服务器ID）
+- `mcid whitelist resetall` 清理所有未在服务器配置列表中的白名单ID
+- `mcid tag deleteall <标签名>` 删除所有用户的指定标签
 
 ## 标签功能说明
 标签功能允许管理员对用户进行分组管理，便于批量操作：
@@ -63,6 +65,7 @@ mcid whitelist remove 生存服 VIP
 | autoRecallTime | number | 0 | 消息自动撤回时间(秒)，同时控制机器人和用户消息，0表示不自动撤回 |
 | recallUserMessage | boolean | false | 是否撤回用户发送的指令消息（仅群聊消息） |
 | debugMode | boolean | false | 调试模式，启用详细日志输出 |
+| showPlayerAvatar | boolean | false | 是否显示玩家头像图片 |
 | servers | array | [] | Minecraft服务器配置列表 |
 
 ### 服务器配置项
@@ -84,7 +87,15 @@ mcid whitelist remove 生存服 VIP
 
 ## 版本历史
 
-### v1.0.2 (最新)
+### v1.0.3 (最新)
+- 🎨 **新增功能**：可选玩家头像显示 - 在配置中控制是否显示Minecraft玩家皮肤图片
+- 🔧 **改进功能**：reset命令现支持直接删除任意服务器ID，无需验证是否存在于配置中
+- 🆕 **新增命令**：`mcid whitelist resetall` - 一键清理所有未在服务器配置列表中的无效白名单ID
+- ⚡ **优化机制**：RCON执行改为真正的队列处理，按绑定时间优先（早绑定优先），避免并发冲突
+- 🏷️ **新增命令**：`mcid tag deleteall <标签名>` - 主人权限，一键删除所有用户的指定标签
+- 🛡️ **安全改进**：增强配置访问的防护性检查，提高代码稳定性
+
+### v1.0.2
 - 新增功能：支持解析 `<at id="..."/>` 格式的@用户字符串
 - 改进用户ID处理：增强对不同@用户格式的兼容性
 - 添加构建发布脚本：新增自动化构建和发布的bat脚本

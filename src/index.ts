@@ -17,6 +17,7 @@ export interface Config {
   autoRecallTime: number
   recallUserMessage: boolean
   debugMode: boolean
+  showPlayerAvatar: boolean
 }
 
 // 服务器配置接口
@@ -57,6 +58,9 @@ export const Config: Schema<Config> = Schema.object({
     .default(false),
   debugMode: Schema.boolean()
     .description('调试模式，启用详细日志输出')
+    .default(false),
+  showPlayerAvatar: Schema.boolean()
+    .description('是否显示玩家头像')
     .default(false),
   servers: Schema.array(Schema.object({
     id: Schema.string()
@@ -1543,7 +1547,7 @@ export function apply(ctx: Context, config: Config) {
           logger.info(`[查询] QQ(${normalizedTargetId})的MC账号信息：用户名=${updatedBind.mcUsername}, UUID=${updatedBind.mcUuid}`)
           return sendMessage(session, [
             h.text(`用户 ${normalizedTargetId} 的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}`),
-            ...(skinUrl ? [h.image(skinUrl)] : [])
+            ...(config?.showPlayerAvatar && skinUrl ? [h.image(skinUrl)] : [])
           ])
         }
         
@@ -1601,7 +1605,7 @@ export function apply(ctx: Context, config: Config) {
         logger.info(`[查询] QQ(${normalizedUserId})的MC账号信息：用户名=${updatedBind.mcUsername}, UUID=${updatedBind.mcUuid}`)
         return sendMessage(session, [
           h.text(`您的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}`),
-          ...(skinUrl ? [h.image(skinUrl)] : [])
+          ...(config?.showPlayerAvatar && skinUrl ? [h.image(skinUrl)] : [])
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -1666,7 +1670,7 @@ export function apply(ctx: Context, config: Config) {
         logger.info(`[反向查询] 成功: MC用户名"${username}"被QQ(${bind.qqId})绑定`)
         return sendMessage(session, [
           h.text(`MC用户名"${bind.mcUsername}"绑定信息:\nQQ号: ${bind.qqId}\nUUID: ${formattedUuid}${adminInfo}`),
-          ...(skinUrl ? [h.image(skinUrl)] : [])
+          ...(config?.showPlayerAvatar && skinUrl ? [h.image(skinUrl)] : [])
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -1739,7 +1743,7 @@ export function apply(ctx: Context, config: Config) {
           
           return sendMessage(session, [
             h.text(`已成功为用户 ${normalizedTargetId} 绑定MC账号\n用户名: ${username}\nUUID: ${formattedUuid}`),
-            ...(skinUrl ? [h.image(skinUrl)] : [])
+            ...(config?.showPlayerAvatar && skinUrl ? [h.image(skinUrl)] : [])
           ])
         }
         
@@ -1795,7 +1799,7 @@ export function apply(ctx: Context, config: Config) {
         
         return sendMessage(session, [
           h.text(`已成功绑定MC账号\n用户名: ${username}\nUUID: ${formattedUuid}`),
-          ...(skinUrl ? [h.image(skinUrl)] : [])
+          ...(config?.showPlayerAvatar && skinUrl ? [h.image(skinUrl)] : [])
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -1877,7 +1881,7 @@ export function apply(ctx: Context, config: Config) {
           
           return sendMessage(session, [
             h.text(`已成功将用户 ${normalizedTargetId} 的MC账号从 ${oldUsername} 修改为 ${username}\nUUID: ${formattedUuid}`),
-            ...(skinUrl ? [h.image(skinUrl)] : [])
+            ...(config?.showPlayerAvatar && skinUrl ? [h.image(skinUrl)] : [])
           ])
         }
 
@@ -1933,7 +1937,7 @@ export function apply(ctx: Context, config: Config) {
         
         return sendMessage(session, [
           h.text(`已成功将MC账号从 ${oldUsername} 修改为 ${username}\nUUID: ${formattedUuid}`),
-          ...(skinUrl ? [h.image(skinUrl)] : [])
+          ...(config?.showPlayerAvatar && skinUrl ? [h.image(skinUrl)] : [])
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -3187,16 +3191,13 @@ export function apply(ctx: Context, config: Config) {
           return sendMessage(session, [h.text('请提供服务器ID或名称\n使用 mcid whitelist servers 查看可用服务器列表')])
         }
         
-        // 获取服务器配置（先通过ID查找，再通过名称查找）
-        const server = getServerConfigByIdOrName(serverIdOrName)
-        if (!server) {
-          logger.warn(`[重置白名单] QQ(${normalizedUserId})提供的服务器ID或名称"${serverIdOrName}"无效`)
-          return sendMessage(session, [h.text(`未找到ID或名称为"${serverIdOrName}"的服务器\n使用 mcid whitelist servers 查看可用服务器列表`)])
-        }
+        // 直接使用提供的ID进行删除，不验证服务器是否存在于配置中
+        const serverId = serverIdOrName
+        logger.info(`[重置白名单] 主人QQ(${normalizedUserId})正在重置服务器ID"${serverId}"的白名单数据库记录`)
         
         // 查询所有用户绑定记录
         const allBinds = await ctx.database.get('mcidbind', {})
-        logger.info(`[重置白名单] 主人QQ(${normalizedUserId})正在重置服务器"${server.name}"(ID:${server.id})的白名单数据库，共有${allBinds.length}条记录需要检查`)
+        logger.info(`[重置白名单] 共有${allBinds.length}条记录需要检查`)
         
         // 统计信息
         let processedCount = 0
@@ -3207,22 +3208,88 @@ export function apply(ctx: Context, config: Config) {
           processedCount++
           
           // 检查该用户是否有此服务器的白名单
-          if (bind.whitelist && bind.whitelist.includes(server.id)) {
+          if (bind.whitelist && bind.whitelist.includes(serverId)) {
             // 更新记录，移除该服务器的白名单
-            const newWhitelist = bind.whitelist.filter(id => id !== server.id)
+            const newWhitelist = bind.whitelist.filter(id => id !== serverId)
             await ctx.database.set('mcidbind', { qqId: bind.qqId }, {
               whitelist: newWhitelist
             })
             updatedCount++
-            logger.info(`[重置白名单] 已从QQ(${bind.qqId})的白名单记录中移除服务器"${server.name}"(ID:${server.id})`)
+            logger.info(`[重置白名单] 已从QQ(${bind.qqId})的白名单记录中移除服务器ID"${serverId}"`)
           }
         }
         
-        logger.info(`[重置白名单] 成功: 主人QQ(${normalizedUserId})重置了服务器"${server.name}"(ID:${server.id})的白名单数据库，共处理${processedCount}条记录，更新${updatedCount}条记录`)
-        return sendMessage(session, [h.text(`已成功重置服务器"${server.name}"(ID:${server.id})的白名单数据库记录\n共处理${processedCount}条记录，更新${updatedCount}条记录\n\n注意：此操作仅清除数据库记录，如需同时清除服务器上的白名单，请使用RCON命令手动操作`)])
+        logger.info(`[重置白名单] 成功: 主人QQ(${normalizedUserId})重置了服务器ID"${serverId}"的白名单数据库，共处理${processedCount}条记录，更新${updatedCount}条记录`)
+        return sendMessage(session, [h.text(`已成功重置服务器ID"${serverId}"的白名单数据库记录\n共处理${processedCount}条记录，更新${updatedCount}条记录\n\n注意：此操作仅清除数据库记录，如需同时清除服务器上的白名单，请使用RCON命令手动操作`)])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
         logger.error(`[重置白名单] QQ(${normalizedUserId})重置白名单数据库失败: ${error.message}`)
+        return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
+      }
+    })
+    
+  // 重置所有未在服务器配置中的白名单ID
+  whitelistCmd.subcommand('.resetall', '[主人]清理所有未在服务器配置列表中的白名单ID')
+    .action(async ({ session }) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        
+        // 检查是否为主人
+        if (!isMaster(session.userId)) {
+          logger.warn(`[清理白名单] 权限不足: QQ(${normalizedUserId})不是主人，无法执行清理操作`)
+          return sendMessage(session, [h.text('只有主人才能执行白名单清理操作')])
+        }
+        
+        // 获取当前配置中所有有效的服务器ID
+        const validServerIds = new Set(config.servers?.map(server => server.id) || [])
+        logger.info(`[清理白名单] 主人QQ(${normalizedUserId})开始清理白名单，有效服务器ID: ${Array.from(validServerIds).join(', ')}`)
+        
+        // 查询所有用户绑定记录
+        const allBinds = await ctx.database.get('mcidbind', {})
+        
+        // 统计信息
+        let processedCount = 0
+        let updatedCount = 0
+        let removedIdsTotal = 0
+        const invalidIdsFound = new Set<string>()
+        
+        // 处理每条记录
+        for (const bind of allBinds) {
+          processedCount++
+          
+          if (bind.whitelist && bind.whitelist.length > 0) {
+            // 分离有效和无效的服务器ID
+            const validIds = bind.whitelist.filter(id => validServerIds.has(id))
+            const invalidIds = bind.whitelist.filter(id => !validServerIds.has(id))
+            
+            // 记录发现的无效ID
+            invalidIds.forEach(id => invalidIdsFound.add(id))
+            
+            // 如果有无效ID需要移除
+            if (invalidIds.length > 0) {
+              await ctx.database.set('mcidbind', { qqId: bind.qqId }, {
+                whitelist: validIds
+              })
+              updatedCount++
+              removedIdsTotal += invalidIds.length
+              logger.info(`[清理白名单] QQ(${bind.qqId})移除了${invalidIds.length}个无效的服务器ID: ${invalidIds.join(', ')}`)
+            }
+          }
+        }
+        
+        // 生成清理报告
+        const invalidIdsArray = Array.from(invalidIdsFound)
+        let resultMessage = `白名单清理完成\n共处理${processedCount}条记录，更新${updatedCount}条记录\n移除了${removedIdsTotal}个无效的白名单条目`
+        
+        if (invalidIdsArray.length > 0) {
+          resultMessage += `\n\n发现的无效服务器ID:\n${invalidIdsArray.map(id => `• ${id}`).join('\n')}`
+        }
+        
+        logger.info(`[清理白名单] 成功: 主人QQ(${normalizedUserId})清理完成，处理${processedCount}条记录，更新${updatedCount}条记录，移除${removedIdsTotal}个无效条目`)
+        return sendMessage(session, [h.text(resultMessage)])
+      } catch (error) {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logger.error(`[清理白名单] QQ(${normalizedUserId})清理白名单失败: ${error.message}`)
         return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
       }
     })
@@ -3275,7 +3342,14 @@ export function apply(ctx: Context, config: Config) {
           (bind.mcUuid && bind.mcUuid.trim() !== '')
         );
         
-        logger.info(`[批量白名单] 管理员QQ(${normalizedUserId})正在批量添加服务器"${server.name}"的白名单，共有${validBinds.length}条有效记录需要处理`)
+        // 按绑定时间排序，早绑定的用户优先处理
+        validBinds.sort((a, b) => {
+          const timeA = a.lastModified ? new Date(a.lastModified).getTime() : 0;
+          const timeB = b.lastModified ? new Date(b.lastModified).getTime() : 0;
+          return timeA - timeB; // 升序排序，早绑定的在前
+        });
+        
+        logger.info(`[批量白名单] 管理员QQ(${normalizedUserId})正在批量添加服务器"${server.name}"的白名单，共有${validBinds.length}条有效记录需要处理，已按绑定时间排序（早绑定优先）`)
         
         // 统计信息
         let successCount = 0
@@ -3285,38 +3359,26 @@ export function apply(ctx: Context, config: Config) {
         // 记录最后一次通知的进度百分比
         let lastNotifiedProgress = 0
         
-        // 限制并发数量，避免RCON连接过载
-        // 修改为固定最多每秒2个请求的限制
-        const MAX_CONCURRENT = 2;  // 固定为2个并发
-        const chunks = []
-        
-        // 将用户分组，每组最多MAX_CONCURRENT个用户
-        for (let i = 0; i < validBinds.length; i += MAX_CONCURRENT) {
-          chunks.push(validBinds.slice(i, i + MAX_CONCURRENT))
-        }
-        
-        // 逐组处理用户
-        for (let i = 0; i < chunks.length; i++) {
-          const chunk = chunks[i]
+        // 使用队列处理，每个请求等待上一个完成后再继续
+        // 移除并发处理，改为顺序处理确保RCON命令按顺序执行
+        for (let i = 0; i < validBinds.length; i++) {
+          const bind = validBinds[i];
           
-          // 并发处理当前组的用户
-          await Promise.all(chunk.map(async (bind) => {
-            try {
-              // 跳过已经在白名单中的用户
-              if (isInServerWhitelist(bind, server.id)) {
-                skipCount++
-                logger.debug(`[批量白名单] 跳过已在白名单中的用户QQ(${bind.qqId})的MC账号(${bind.mcUsername})`)
-                return
-              }
-              
+          try {
+            // 跳过已经在白名单中的用户
+            if (isInServerWhitelist(bind, server.id)) {
+              skipCount++
+              logger.debug(`[批量白名单] 跳过已在白名单中的用户QQ(${bind.qqId})的MC账号(${bind.mcUsername})`)
+            } else {
               // 添加错误阈值检查
               const currentFailRate = failCount / (successCount + failCount + 1);
               if (currentFailRate > 0.5 && (successCount + failCount) >= 5) {
                 logger.error(`[批量白名单] 失败率过高(${Math.round(currentFailRate * 100)}%)，中止操作`);
-                throw new Error(`失败率过高，操作已中止`);
+                await sendMessage(session, [h.text(`⚠️ 批量添加白名单操作已中止: 失败率过高(${Math.round(currentFailRate * 100)}%)，请检查服务器连接`)]);
+                break;
               }
               
-              // 执行添加白名单操作
+              // 执行添加白名单操作，顺序执行确保每个命令等待上一个完成
               const result = await addServerWhitelist(bind, server)
               
               if (result) {
@@ -3326,40 +3388,30 @@ export function apply(ctx: Context, config: Config) {
                 failCount++
                 logger.error(`[批量白名单] 添加用户QQ(${bind.qqId})的MC账号(${bind.mcUsername})到服务器"${server.name}"的白名单失败`)
               }
-            } catch (error) {
-              failCount++
-              logger.error(`[批量白名单] 处理用户QQ(${bind.qqId})时出错: ${error.message}`)
-              
-              // 如果错误指示操作已中止，向外传播错误
-              if (error.message.includes('失败率过高')) {
-                throw error;
-              }
             }
-          })).catch(error => {
-            // 捕获并处理Promise.all中的错误
+          } catch (error) {
+            failCount++
+            logger.error(`[批量白名单] 处理用户QQ(${bind.qqId})时出错: ${error.message}`)
+            
+            // 如果错误指示操作已中止，退出循环
             if (error.message.includes('失败率过高')) {
-              // 设置一个标志，指示下面的循环应该退出
-              i = chunks.length; // 强制退出循环
-              sendMessage(session, [h.text(`⚠️ 批量添加白名单操作已中止: 失败率过高(${Math.round((failCount / (successCount + failCount)) * 100)}%)，请检查服务器连接`)]);
+              await sendMessage(session, [h.text(`⚠️ 批量添加白名单操作已中止: ${error.message}`)]);
+              break;
             }
-          });
+          }
           
-          // 如果操作因高失败率而中止，跳出循环
-          if (i >= chunks.length) break;
-          
-          // 计算实际已处理的用户数（考虑最后一组可能不满）
-          const processedCount = (i + 1) * MAX_CONCURRENT > validBinds.length ? 
-                               validBinds.length : (i + 1) * MAX_CONCURRENT;
+          // 计算进度
+          const processedCount = i + 1;
           const progress = Math.floor((processedCount / validBinds.length) * 100);
           
           // 只有当进度增加了20%或以上，或者是首次或最后一次才发送通知
-          if (i === 0 || progress - lastNotifiedProgress >= 20 || i === chunks.length - 1) {
+          if (i === 0 || progress - lastNotifiedProgress >= 20 || i === validBinds.length - 1) {
             await sendMessage(session, [h.text(`批量添加白名单进度: ${progress}%，已处理${processedCount}/${validBinds.length}个用户\n成功: ${successCount} | 失败: ${failCount} | 跳过: ${skipCount}`)]);
             lastNotifiedProgress = progress;
           }
           
-          // 添加延迟确保每秒最多处理2个请求（1秒 / 2 = 500毫秒）
-          await new Promise(resolve => setTimeout(resolve, 500));
+          // 添加延迟确保RCON命令有足够的处理时间，避免过载
+          await new Promise(resolve => setTimeout(resolve, 1000)); // 每个请求间隔1秒
         }
         
         logger.info(`[批量白名单] 成功: 管理员QQ(${normalizedUserId})批量添加了服务器"${server.name}"的白名单，成功: ${successCount}，失败: ${failCount}，跳过: ${skipCount}`)
@@ -3923,6 +3975,70 @@ export function apply(ctx: Context, config: Config) {
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
         logger.error(`[标签] QQ(${normalizedUserId})查找标签失败: ${error.message}`)
+        return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
+      }
+    })
+
+  // 删除所有用户的某个标签
+  tagCmd.subcommand('.deleteall <tagName:string>', '[主人]删除所有用户的某个标签')
+    .action(async ({ session }, tagName) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        
+        // 检查是否为主人
+        if (!isMaster(session.userId)) {
+          logger.warn(`[标签] 权限不足: QQ(${normalizedUserId})不是主人，无法执行删除所有人标签操作`)
+          return sendMessage(session, [h.text('只有主人才能删除所有用户的标签')])
+        }
+        
+        if (!tagName) {
+          logger.warn(`[标签] QQ(${normalizedUserId})未提供标签名称`)
+          return sendMessage(session, [h.text('请提供要删除的标签名称')])
+        }
+        
+        logger.info(`[标签] 主人QQ(${normalizedUserId})开始删除所有用户的标签"${tagName}"`)
+        
+        // 查找所有有该标签的用户
+        const allBinds = await ctx.database.get('mcidbind', {})
+        const usersWithTag = allBinds.filter(bind => 
+          bind.tags && bind.tags.includes(tagName)
+        )
+        
+        if (usersWithTag.length === 0) {
+          logger.info(`[标签] 没有用户有标签"${tagName}"，无需删除`)
+          return sendMessage(session, [h.text(`没有用户有标签"${tagName}"，无需删除`)])
+        }
+        
+        logger.info(`[标签] 找到${usersWithTag.length}个用户有标签"${tagName}"，开始批量删除`)
+        await sendMessage(session, [h.text(`找到${usersWithTag.length}个用户有标签"${tagName}"，开始批量删除...`)])
+        
+        // 统计信息
+        let successCount = 0
+        let failCount = 0
+        
+        // 批量删除标签
+        for (const bind of usersWithTag) {
+          try {
+            // 移除该标签
+            const newTags = bind.tags.filter(tag => tag !== tagName)
+            await ctx.database.set('mcidbind', { qqId: bind.qqId }, { tags: newTags })
+            
+            successCount++
+            logger.debug(`[标签] 成功从用户QQ(${bind.qqId})移除标签"${tagName}"`)
+          } catch (error) {
+            failCount++
+            logger.error(`[标签] 从用户QQ(${bind.qqId})移除标签"${tagName}"失败: ${error.message}`)
+          }
+        }
+        
+        // 生成结果报告
+        const resultMessage = `批量删除标签"${tagName}"完成\n共处理${usersWithTag.length}个用户\n✅ 成功: ${successCount} 个\n❌ 失败: ${failCount} 个`
+        
+        logger.info(`[标签] 批量删除完成: 主人QQ(${normalizedUserId})删除了${usersWithTag.length}个用户的标签"${tagName}"，成功: ${successCount}，失败: ${failCount}`)
+        return sendMessage(session, [h.text(resultMessage)])
+      } catch (error) {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logger.error(`[标签] QQ(${normalizedUserId})批量删除标签失败: ${error.message}`)
         return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
       }
     })
