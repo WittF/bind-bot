@@ -1633,34 +1633,35 @@ export function apply(ctx: Context, config: Config) {
       // 使用机器人昵称，支持多种匹配方式
       const botNickname = config.botNickname
       
-      // 尝试识别以机器人昵称开头的mcid命令
-      let mcidCommand = null
+      // 尝试识别以机器人昵称开头的mcid或buid命令
+      let matchedCommand = null
       
-      // 1. 尝试匹配原始的botNickname格式
-      const regularPrefixRegex = new RegExp(`^${escapeRegExp(botNickname)}\\s+(mcid\\s+.*)$`, 'i')
+      // 1. 尝试匹配原始的botNickname格式（支持mcid和buid命令）
+      const regularPrefixRegex = new RegExp(`^${escapeRegExp(botNickname)}\\s+((mcid|buid)\\s+.*)$`, 'i')
       const regularMatch = content.match(regularPrefixRegex)
       
       // 2. 如果botNickname不包含@，也尝试匹配带@的版本
       const atPrefixRegex = !botNickname.startsWith('@') ? 
-        new RegExp(`^@${escapeRegExp(botNickname)}\\s+(mcid\\s+.*)$`, 'i') : 
+        new RegExp(`^@${escapeRegExp(botNickname)}\\s+((mcid|buid)\\s+.*)$`, 'i') : 
         null
       
       if (regularMatch && regularMatch[1]) {
-        mcidCommand = regularMatch[1].trim()
+        matchedCommand = regularMatch[1].trim()
       } else if (atPrefixRegex) {
         const atMatch = content.match(atPrefixRegex)
         if (atMatch && atMatch[1]) {
-          mcidCommand = atMatch[1].trim()
+          matchedCommand = atMatch[1].trim()
         }
       }
       
-      // 如果找到匹配的mcid命令，执行它
-      if (mcidCommand) {
-        logger.info(`[前缀匹配] 成功识别mcid命令，原始消息: "${content}"，执行命令: "${mcidCommand}"`)
+      // 如果找到匹配的命令，执行它
+      if (matchedCommand) {
+        const commandType = matchedCommand.startsWith('mcid') ? 'mcid' : 'buid'
+        logger.info(`[前缀匹配] 成功识别${commandType}命令，原始消息: "${content}"，执行命令: "${matchedCommand}"`)
         
         // 使用session.execute方法主动触发命令执行
-        session.execute(mcidCommand).catch(error => {
-          logger.error(`[前缀匹配] 执行命令"${mcidCommand}"失败: ${error.message}`)
+        session.execute(matchedCommand).catch(error => {
+          logger.error(`[前缀匹配] 执行命令"${matchedCommand}"失败: ${error.message}`)
         })
         
         // 返回终止后续中间件处理，避免重复处理
@@ -1738,6 +1739,7 @@ export function apply(ctx: Context, config: Config) {
           
           // 添加BUID信息
           let buidInfo = ''
+          let buidAvatar = null
           if (updatedBind.buidUid) {
             buidInfo = `\n\nB站账号信息：\nB站UID: ${updatedBind.buidUid}\n用户名: ${updatedBind.buidUsername}`
             if (updatedBind.guardLevel > 0) {
@@ -1746,16 +1748,17 @@ export function apply(ctx: Context, config: Config) {
             if (updatedBind.medalName) {
               buidInfo += `\n粉丝牌: ${updatedBind.medalName} Lv.${updatedBind.medalLevel}`
             }
-            if (updatedBind.lastActiveTime) {
-              const lastActive = new Date(updatedBind.lastActiveTime)
-              buidInfo += `\n最后活跃: ${lastActive.toLocaleString()}`
+            // 不再显示最后活跃时间
+            if (config?.showAvatar) {
+              buidAvatar = h.image(`https://workers.vrp.moe/bilibili/avatar/${updatedBind.buidUid}`)
             }
           }
 
           logger.info(`[查询] QQ(${normalizedTargetId})的MC账号信息：用户名=${updatedBind.mcUsername}, UUID=${updatedBind.mcUuid}`)
           return sendMessage(session, [
             h.text(`用户 ${normalizedTargetId} 的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}${buidInfo}`),
-            ...(config?.showAvatar && skinUrl ? [h.image(skinUrl)] : [])
+            ...(config?.showAvatar && skinUrl ? [h.image(skinUrl)] : []),
+            ...(buidAvatar ? [buidAvatar] : [])
           ])
         }
         
@@ -1812,6 +1815,7 @@ export function apply(ctx: Context, config: Config) {
         
         // 添加BUID信息
         let buidInfo = ''
+        let buidAvatar = null
         if (updatedBind.buidUid) {
           buidInfo = `\n\nB站账号信息：\nB站UID: ${updatedBind.buidUid}\n用户名: ${updatedBind.buidUsername}`
           if (updatedBind.guardLevel > 0) {
@@ -1820,19 +1824,17 @@ export function apply(ctx: Context, config: Config) {
           if (updatedBind.medalName) {
             buidInfo += `\n粉丝牌: ${updatedBind.medalName} Lv.${updatedBind.medalLevel}`
           }
-          if (updatedBind.wealthMedalLevel > 0) {
-            buidInfo += `\n荣耀等级: ${updatedBind.wealthMedalLevel}`
-          }
-          if (updatedBind.lastActiveTime) {
-            const lastActive = new Date(updatedBind.lastActiveTime)
-            buidInfo += `\n最后活跃: ${lastActive.toLocaleString()}`
+          // 不再显示最后活跃时间
+          if (config?.showAvatar) {
+            buidAvatar = h.image(`https://workers.vrp.moe/bilibili/avatar/${updatedBind.buidUid}`)
           }
         }
 
         logger.info(`[查询] QQ(${normalizedUserId})的MC账号信息：用户名=${updatedBind.mcUsername}, UUID=${updatedBind.mcUuid}`)
         return sendMessage(session, [
           h.text(`您的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}${buidInfo}`),
-          ...(config?.showAvatar && skinUrl ? [h.image(skinUrl)] : [])
+          ...(config?.showAvatar && skinUrl ? [h.image(skinUrl)] : []),
+          ...(buidAvatar ? [buidAvatar] : [])
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -2396,7 +2398,7 @@ export function apply(ctx: Context, config: Config) {
         detailInfo += `\n舰长等级: ${bind.guardLevelText || '无'} (${bind.guardLevel || 0})`
         detailInfo += `\n粉丝牌: ${bind.medalName || '无'} Lv.${bind.medalLevel || 0}`
         detailInfo += `\n荣耀等级: ${bind.wealthMedalLevel || 0}`
-        detailInfo += `\n最后活跃: ${bind.lastActiveTime ? new Date(bind.lastActiveTime).toLocaleString() : '未知'}`
+        detailInfo += `\n最后活跃: ${bind.lastActiveTime ? new Date(bind.lastActiveTime).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '未知'}`
         return sendMessage(session, [h.text(userInfo + detailInfo)])
       } catch (error) {
         return sendMessage(session, [h.text(`查询失败: ${error.message}`)])
@@ -2433,6 +2435,13 @@ export function apply(ctx: Context, config: Config) {
             return sendMessage(session, [h.text('只有管理员才能为其他用户绑定BUID')])
           }
 
+          // 检查目标用户是否已绑定MC账号
+          const targetBind = await getMcBindByQQId(normalizedTargetId)
+          if (!targetBind || !targetBind.mcUsername || targetBind.mcUsername.startsWith('_temp_')) {
+            logWarn('BUID绑定', `QQ(${normalizedTargetId})尚未绑定MC账号，无法绑定BUID`)
+            return sendMessage(session, [h.text(`用户 ${normalizedTargetId} 尚未绑定MC账号，请先绑定MC账号后再绑定B站UID`)])
+          }
+
           // 检查UID是否已被除目标用户以外的其他用户绑定
           if (await checkBuidExists(uid, target)) {
             logWarn('BUID绑定', `BUID"${uid}"已被其他QQ号绑定`)
@@ -2455,8 +2464,14 @@ export function apply(ctx: Context, config: Config) {
         // 为自己绑定BUID
         logDebug('BUID绑定', `QQ(${normalizedUserId})尝试绑定BUID: ${uid}(${buidUser.username})`)
         
-        // 检查用户是否已绑定BUID
+        // 检查用户是否已绑定MC账号
         const selfBind = await getMcBindByQQId(normalizedUserId)
+        if (!selfBind || !selfBind.mcUsername || selfBind.mcUsername.startsWith('_temp_')) {
+          logWarn('BUID绑定', `QQ(${normalizedUserId})尚未绑定MC账号，无法绑定BUID`)
+          return sendMessage(session, [h.text(`您尚未绑定MC账号，请先使用 ` + formatCommand('mcid bind <用户名>') + ` 绑定MC账号后再绑定B站UID`)])
+        }
+        
+        // 检查用户是否已绑定BUID
         if (selfBind && selfBind.buidUid) {
           // 检查是否是管理员或是否在冷却时间内
           if (!await isAdmin(session.userId) && !checkCooldown(selfBind.lastModified, 3)) {
@@ -2488,11 +2503,20 @@ export function apply(ctx: Context, config: Config) {
         
         logOperation('绑定BUID', normalizedUserId, true, `绑定BUID: ${uid}(${buidUser.username})`)
         
-        return sendMessage(session, [h.text(`已成功绑定BUID\n用户名: ${buidUser.username}\nUID: ${uid}\n${buidUser.guard_level > 0 ? `舰长等级: ${buidUser.guard_level_text}\n` : ''}${buidUser.medal ? `粉丝牌: ${buidUser.medal.name} Lv.${buidUser.medal.level}` : ''}`)])
+        logger.info(`[绑定] QQ(${normalizedUserId})成功绑定B站UID(${uid})`)
+        return sendMessage(session, [
+          h.text(`成功绑定B站账号！\n`),
+          h.text(`B站UID: ${buidUser.uid}\n`),
+          h.text(`用户名: ${buidUser.username}\n`),
+          buidUser.guard_level > 0 ? h.text(`舰长等级: ${buidUser.guard_level_text} (${buidUser.guard_level})\n`) : null,
+          buidUser.medal ? h.text(`粉丝牌: ${buidUser.medal.name} Lv.${buidUser.medal.level}\n`) : null,
+          buidUser.wealthMedalLevel > 0 ? h.text(`荣耀等级: ${buidUser.wealthMedalLevel}\n`) : null,
+          h.text(`\n绑定成功！`),
+          ...(config?.showAvatar ? [h.image(`https://workers.vrp.moe/bilibili/avatar/${buidUser.uid}`)] : [])
+        ].filter(Boolean))
       } catch (error) {
-        const normalizedUserId = normalizeQQId(session.userId)
-        logError('BUID绑定', normalizedUserId, `QQ(${normalizedUserId})绑定BUID"${uid}"失败: ${error.message}`)
-        return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
+        logError('绑定', session.userId, error)
+        return sendMessage(session, [h.text(`绑定失败：${getFriendlyErrorMessage(error)}`)])
       }
     })
 
