@@ -17,7 +17,8 @@ export interface Config {
   autoRecallTime: number
   recallUserMessage: boolean
   debugMode: boolean
-  showAvatar: boolean
+  showMcSkin: boolean
+  showBuidAvatar: boolean
   // BUID相关配置
   zminfoApiUrl: string
 }
@@ -61,8 +62,11 @@ export const Config: Schema<Config> = Schema.object({
   debugMode: Schema.boolean()
     .description('调试模式，启用详细日志输出')
     .default(false),
-  showAvatar: Schema.boolean()
-    .description('是否显示头像（MC皮肤和B站头像）')
+  showMcSkin: Schema.boolean()
+    .description('是否显示MC皮肤')
+    .default(false),
+  showBuidAvatar: Schema.boolean()
+    .description('是否显示B站头像')
     .default(false),
   zminfoApiUrl: Schema.string()
     .description('ZMINFO API地址')
@@ -1749,7 +1753,7 @@ export function apply(ctx: Context, config: Config) {
               buidInfo += `\n粉丝牌: ${updatedBind.medalName} Lv.${updatedBind.medalLevel}`
             }
             // 不再显示最后活跃时间
-            if (config?.showAvatar) {
+            if (config?.showBuidAvatar) {
               buidAvatar = h.image(`https://workers.vrp.moe/bilibili/avatar/${updatedBind.buidUid}`)
             }
           }
@@ -1757,7 +1761,7 @@ export function apply(ctx: Context, config: Config) {
           logger.info(`[查询] QQ(${normalizedTargetId})的MC账号信息：用户名=${updatedBind.mcUsername}, UUID=${updatedBind.mcUuid}`)
           return sendMessage(session, [
             h.text(`用户 ${normalizedTargetId} 的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}${buidInfo}`),
-            ...(config?.showAvatar && skinUrl ? [h.image(skinUrl)] : []),
+            ...(config?.showMcSkin && skinUrl ? [h.image(skinUrl)] : []),
             ...(buidAvatar ? [buidAvatar] : [])
           ])
         }
@@ -1825,7 +1829,7 @@ export function apply(ctx: Context, config: Config) {
             buidInfo += `\n粉丝牌: ${updatedBind.medalName} Lv.${updatedBind.medalLevel}`
           }
           // 不再显示最后活跃时间
-          if (config?.showAvatar) {
+          if (config?.showBuidAvatar) {
             buidAvatar = h.image(`https://workers.vrp.moe/bilibili/avatar/${updatedBind.buidUid}`)
           }
         }
@@ -1833,7 +1837,7 @@ export function apply(ctx: Context, config: Config) {
         logger.info(`[查询] QQ(${normalizedUserId})的MC账号信息：用户名=${updatedBind.mcUsername}, UUID=${updatedBind.mcUuid}`)
         return sendMessage(session, [
           h.text(`您的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}${buidInfo}`),
-          ...(config?.showAvatar && skinUrl ? [h.image(skinUrl)] : []),
+          ...(config?.showMcSkin && skinUrl ? [h.image(skinUrl)] : []),
           ...(buidAvatar ? [buidAvatar] : [])
         ])
       } catch (error) {
@@ -1899,7 +1903,7 @@ export function apply(ctx: Context, config: Config) {
         logger.info(`[反向查询] 成功: MC用户名"${username}"被QQ(${bind.qqId})绑定`)
         return sendMessage(session, [
           h.text(`MC用户名"${bind.mcUsername}"绑定信息:\nQQ号: ${bind.qqId}\nUUID: ${formattedUuid}${adminInfo}`),
-          ...(config?.showAvatar && skinUrl ? [h.image(skinUrl)] : [])
+          ...(config?.showMcSkin && skinUrl ? [h.image(skinUrl)] : [])
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -1972,7 +1976,7 @@ export function apply(ctx: Context, config: Config) {
           
           return sendMessage(session, [
             h.text(`已成功为用户 ${normalizedTargetId} 绑定MC账号\n用户名: ${username}\nUUID: ${formattedUuid}`),
-            ...(config?.showAvatar && skinUrl ? [h.image(skinUrl)] : [])
+            ...(config?.showMcSkin && skinUrl ? [h.image(skinUrl)] : [])
           ])
         }
         
@@ -2028,7 +2032,7 @@ export function apply(ctx: Context, config: Config) {
         
         return sendMessage(session, [
           h.text(`已成功绑定MC账号\n用户名: ${username}\nUUID: ${formattedUuid}`),
-          ...(config?.showAvatar && skinUrl ? [h.image(skinUrl)] : [])
+          ...(config?.showMcSkin && skinUrl ? [h.image(skinUrl)] : [])
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -2110,7 +2114,7 @@ export function apply(ctx: Context, config: Config) {
           
           return sendMessage(session, [
             h.text(`已成功将用户 ${normalizedTargetId} 的MC账号从 ${oldUsername} 修改为 ${username}\nUUID: ${formattedUuid}`),
-            ...(config?.showAvatar && skinUrl ? [h.image(skinUrl)] : [])
+            ...(config?.showMcSkin && skinUrl ? [h.image(skinUrl)] : [])
           ])
         }
 
@@ -2166,7 +2170,7 @@ export function apply(ctx: Context, config: Config) {
         
         return sendMessage(session, [
           h.text(`已成功将MC账号从 ${oldUsername} 修改为 ${username}\nUUID: ${formattedUuid}`),
-          ...(config?.showAvatar && skinUrl ? [h.image(skinUrl)] : [])
+          ...(config?.showMcSkin && skinUrl ? [h.image(skinUrl)] : [])
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -2512,7 +2516,7 @@ export function apply(ctx: Context, config: Config) {
           buidUser.medal ? h.text(`粉丝牌: ${buidUser.medal.name} Lv.${buidUser.medal.level}\n`) : null,
           buidUser.wealthMedalLevel > 0 ? h.text(`荣耀等级: ${buidUser.wealthMedalLevel}\n`) : null,
           h.text(`\n绑定成功！`),
-          ...(config?.showAvatar ? [h.image(`https://workers.vrp.moe/bilibili/avatar/${buidUser.uid}`)] : [])
+          ...(config?.showBuidAvatar ? [h.image(`https://workers.vrp.moe/bilibili/avatar/${buidUser.uid}`)] : [])
         ].filter(Boolean))
       } catch (error) {
         logError('绑定', session.userId, error)
@@ -4517,7 +4521,7 @@ export function apply(ctx: Context, config: Config) {
             buidUser.guard_level > 0 ? h.text(`舰长等级: ${buidUser.guard_level_text} (${buidUser.guard_level})\n`) : null,
             buidUser.medal ? h.text(`粉丝牌: ${buidUser.medal.name} Lv.${buidUser.medal.level}\n`) : null,
             buidUser.wealthMedalLevel > 0 ? h.text(`荣耀等级: ${buidUser.wealthMedalLevel}\n`) : null,
-            h.text(`\n绑定成功！`)
+            ...(config?.showBuidAvatar ? [h.image(`https://workers.vrp.moe/bilibili/avatar/${buidUser.uid}`)] : [])
           ].filter(Boolean))
         } else {
           logger.error(`[绑定] QQ(${normalizedUserId})绑定B站UID(${buid})失败`)

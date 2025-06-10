@@ -113,7 +113,8 @@ mcid whitelist remove 生存服 VIP
 | autoRecallTime | number | 0 | 消息自动撤回时间(秒)，同时控制机器人和用户消息，0表示不自动撤回 |
 | recallUserMessage | boolean | false | 是否撤回用户发送的指令消息（仅群聊消息） |
 | debugMode | boolean | false | 调试模式，启用详细日志输出 |
-| showAvatar | boolean | false | 是否显示头像（MC皮肤和B站头像） |
+| showMcSkin | boolean | false | 是否显示MC皮肤 |
+| showBuidAvatar | boolean | false | 是否显示B站头像 |
 | zminfoApiUrl | string | 'http://zminfo-api.wittf.ink' | ZMINFO API地址，用于获取B站用户信息 |
 | servers | array | [] | Minecraft服务器配置列表 |
 
