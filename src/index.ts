@@ -17,7 +17,9 @@ export interface Config {
   autoRecallTime: number
   recallUserMessage: boolean
   debugMode: boolean
-  showPlayerAvatar: boolean
+  showAvatar: boolean
+  // BUID相关配置
+  zminfoApiUrl: string
 }
 
 // 服务器配置接口
@@ -59,9 +61,12 @@ export const Config: Schema<Config> = Schema.object({
   debugMode: Schema.boolean()
     .description('调试模式，启用详细日志输出')
     .default(false),
-  showPlayerAvatar: Schema.boolean()
-    .description('是否显示玩家头像')
+  showAvatar: Schema.boolean()
+    .description('是否显示头像（MC皮肤和B站头像）')
     .default(false),
+  zminfoApiUrl: Schema.string()
+    .description('ZMINFO API地址')
+    .default('http://zminfo-api.wittf.ink'),
   servers: Schema.array(Schema.object({
     id: Schema.string()
       .description('服务器唯一ID（不允许重复）')
@@ -112,6 +117,15 @@ export interface MCIDBIND {
   isAdmin: boolean      // 是否为MC绑定管理员
   whitelist: string[]   // 已添加白名单的服务器ID列表
   tags: string[]        // 用户标签列表
+  // BUID相关字段
+  buidUid: string       // B站UID
+  buidUsername: string  // B站用户名
+  guardLevel: number    // 舰长等级
+  guardLevelText: string // 舰长等级文本
+  medalName: string     // 粉丝牌名称
+  medalLevel: number    // 粉丝牌等级
+  wealthMedalLevel: number // 荣耀等级
+  lastActiveTime: Date  // 最后活跃时间
 }
 
 // 为koishi扩展表定义
@@ -132,6 +146,31 @@ interface AvatarCache {
 interface MojangProfile {
   id: string    // UUID (不带连字符)
   name: string  // 玩家名称
+}
+
+// ZMINFO API响应接口
+interface ZminfoUser {
+  uid: string
+  username: string
+  avatar_url: string
+  guard_level: number
+  guard_level_text: string
+  medal: {
+    name: string
+    level: number
+    uid: string
+    room: number
+  } | null
+  wealthMedalLevel: number
+  last_active_time: string
+}
+
+interface ZminfoApiResponse {
+  success: boolean
+  message: string
+  data?: {
+    user?: ZminfoUser
+  }
 }
 
 // RconManager类，用于管理RCON连接
@@ -671,14 +710,49 @@ export function apply(ctx: Context, config: Config) {
       type: 'json',
       initial: [],
     },
+    // BUID相关字段
+    buidUid: {
+      type: 'string',
+      initial: '',
+    },
+    buidUsername: {
+      type: 'string',
+      initial: '',
+    },
+    guardLevel: {
+      type: 'integer',
+      initial: 0,
+    },
+    guardLevelText: {
+      type: 'string',
+      initial: '',
+    },
+    medalName: {
+      type: 'string',
+      initial: '',
+    },
+    medalLevel: {
+      type: 'integer',
+      initial: 0,
+    },
+    wealthMedalLevel: {
+      type: 'integer',
+      initial: 0,
+    },
+    lastActiveTime: {
+      type: 'timestamp',
+      initial: null,
+    },
   }, {
     // 设置主键为qqId
     primary: 'qqId',
     // 添加索引
-    unique: [['mcUsername']],
+    unique: [['mcUsername'], ['buidUid']],
     // 添加isAdmin索引，提高查询效率
-    indexes: [['isAdmin']],
+    indexes: [['isAdmin'], ['buidUid']],
   })
+
+
 
   // 检查表结构是否包含旧字段
   const checkTableStructure = async (): Promise<boolean> => {
@@ -1036,13 +1110,13 @@ export function apply(ctx: Context, config: Config) {
   }
 
   // 检查冷却时间
-  const checkCooldown = (lastModified: Date | null): boolean => {
+  const checkCooldown = (lastModified: Date | null, multiplier: number = 1): boolean => {
     if (!lastModified) return true
     const now = new Date()
     const diffTime = now.getTime() - lastModified.getTime()
     // 使用Math.floor确保冷却时间精确
     const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
-    return diffDays >= config.cooldownDays
+    return diffDays >= config.cooldownDays * multiplier
   }
   
   // 根据QQ号查询MCIDBIND表中的绑定信息
@@ -1420,6 +1494,124 @@ export function apply(ctx: Context, config: Config) {
     return normalizedQQId === normalizedMasterId
   }
 
+  // =========== BUID相关功能 ===========
+  
+  // 验证BUID是否存在
+  const validateBUID = async (buid: string): Promise<ZminfoUser | null> => {
+    try {
+      if (!buid || !/^\d+$/.test(buid)) {
+        logWarn('B站账号验证', `无效的B站UID格式: ${buid}`)
+        return null
+      }
+
+      logDebug('B站账号验证', `验证B站UID: ${buid}`)
+      
+      const response = await axios.get(`${config.zminfoApiUrl}/api/user/${buid}`, {
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'Koishi-MCID-Bot/1.0'
+        }
+      })
+
+      if (response.data.success && response.data.data && response.data.data.user) {
+        const user = response.data.data.user
+        logDebug('B站账号验证', `B站UID ${buid} 验证成功: ${user.username}`)
+        return user
+      } else {
+        logWarn('B站账号验证', `B站UID ${buid} 不存在或API返回失败: ${response.data.message}`)
+        return null
+      }
+    } catch (error) {
+      if (error.response?.status === 404) {
+        logWarn('B站账号验证', `B站UID ${buid} 不存在`)
+        return null
+      }
+      
+      logError('B站账号验证', 'system', `验证B站UID ${buid} 时出错: ${error.message}`)
+      throw new Error(`无法验证B站UID: ${error.message}`)
+    }
+  }
+
+  // 根据B站UID查询绑定信息
+  const getBuidBindByBuid = async (buid: string): Promise<MCIDBIND | null> => {
+    try {
+      if (!buid) {
+        logger.warn(`[B站账号绑定] 尝试查询空B站UID`)
+        return null
+      }
+      
+      const binds = await ctx.database.get('mcidbind', { buidUid: buid })
+      return binds.length > 0 ? binds[0] : null
+    } catch (error) {
+      logError('B站账号绑定', 'system', `根据B站UID(${buid})查询绑定信息失败: ${error.message}`)
+      return null
+    }
+  }
+
+  // 检查B站UID是否已被绑定
+  const checkBuidExists = async (buid: string, currentUserId?: string): Promise<boolean> => {
+    try {
+      const bind = await getBuidBindByBuid(buid)
+      if (!bind) return false
+      
+      // 如果指定了当前用户ID，则排除当前用户的绑定
+      if (currentUserId) {
+        const normalizedCurrentId = normalizeQQId(currentUserId)
+        return bind.qqId !== normalizedCurrentId
+      }
+      
+      return true
+    } catch (error) {
+      logError('B站账号绑定', 'system', `检查B站UID(${buid})是否存在时出错: ${error.message}`)
+      return false
+    }
+  }
+
+  // 创建或更新B站账号绑定
+  const createOrUpdateBuidBind = async (userId: string, buidUser: ZminfoUser): Promise<boolean> => {
+    try {
+      const normalizedQQId = normalizeQQId(userId)
+      if (!normalizedQQId) {
+        logger.error(`[B站账号绑定] 创建/更新绑定失败: 无法提取有效的QQ号`)
+        return false
+      }
+      // 查询是否已存在绑定记录
+      let bind = await getMcBindByQQId(normalizedQQId)
+      const updateData: any = {
+        buidUid: buidUser.uid,
+        buidUsername: buidUser.username,
+        guardLevel: buidUser.guard_level || 0,
+        guardLevelText: buidUser.guard_level_text || '',
+        medalName: buidUser.medal?.name || '',
+        medalLevel: buidUser.medal?.level || 0,
+        wealthMedalLevel: buidUser.wealthMedalLevel || 0,
+        lastActiveTime: buidUser.last_active_time ? new Date(buidUser.last_active_time) : new Date(),
+        lastModified: new Date()
+      }
+      if (bind) {
+        await ctx.database.set('mcidbind', { qqId: normalizedQQId }, updateData)
+        logger.info(`[B站账号绑定] 更新绑定: QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}`)
+      } else {
+        // 允许mcUsername为空字符串
+        const newBind: any = {
+          qqId: normalizedQQId,
+          mcUsername: '',
+          mcUuid: '',
+          isAdmin: false,
+          whitelist: [],
+          tags: [],
+          ...updateData
+        }
+        await ctx.database.create('mcidbind', newBind)
+        logger.info(`[B站账号绑定] 创建绑定: QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}`)
+      }
+      return true
+    } catch (error) {
+      logError('B站账号绑定', userId, `创建/更新B站账号绑定失败: ${error.message}`)
+      return false
+    }
+  }
+
   // =========== MC命令组 ===========
   const cmd = ctx.command('mcid', 'Minecraft 账号绑定管理')
 
@@ -1544,10 +1736,26 @@ export function apply(ctx: Context, config: Config) {
             whitelistInfo = '\n未加入任何服务器的白名单';
           }
           
+          // 添加BUID信息
+          let buidInfo = ''
+          if (updatedBind.buidUid) {
+            buidInfo = `\n\nB站账号信息：\nB站UID: ${updatedBind.buidUid}\n用户名: ${updatedBind.buidUsername}`
+            if (updatedBind.guardLevel > 0) {
+              buidInfo += `\n舰长等级: ${updatedBind.guardLevelText} (${updatedBind.guardLevel})`
+            }
+            if (updatedBind.medalName) {
+              buidInfo += `\n粉丝牌: ${updatedBind.medalName} Lv.${updatedBind.medalLevel}`
+            }
+            if (updatedBind.lastActiveTime) {
+              const lastActive = new Date(updatedBind.lastActiveTime)
+              buidInfo += `\n最后活跃: ${lastActive.toLocaleString()}`
+            }
+          }
+
           logger.info(`[查询] QQ(${normalizedTargetId})的MC账号信息：用户名=${updatedBind.mcUsername}, UUID=${updatedBind.mcUuid}`)
           return sendMessage(session, [
-            h.text(`用户 ${normalizedTargetId} 的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}`),
-            ...(config?.showPlayerAvatar && skinUrl ? [h.image(skinUrl)] : [])
+            h.text(`用户 ${normalizedTargetId} 的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}${buidInfo}`),
+            ...(config?.showAvatar && skinUrl ? [h.image(skinUrl)] : [])
           ])
         }
         
@@ -1602,10 +1810,29 @@ export function apply(ctx: Context, config: Config) {
           whitelistInfo = '\n未加入任何服务器的白名单';
         }
         
+        // 添加BUID信息
+        let buidInfo = ''
+        if (updatedBind.buidUid) {
+          buidInfo = `\n\nB站账号信息：\nB站UID: ${updatedBind.buidUid}\n用户名: ${updatedBind.buidUsername}`
+          if (updatedBind.guardLevel > 0) {
+            buidInfo += `\n舰长等级: ${updatedBind.guardLevelText} (${updatedBind.guardLevel})`
+          }
+          if (updatedBind.medalName) {
+            buidInfo += `\n粉丝牌: ${updatedBind.medalName} Lv.${updatedBind.medalLevel}`
+          }
+          if (updatedBind.wealthMedalLevel > 0) {
+            buidInfo += `\n荣耀等级: ${updatedBind.wealthMedalLevel}`
+          }
+          if (updatedBind.lastActiveTime) {
+            const lastActive = new Date(updatedBind.lastActiveTime)
+            buidInfo += `\n最后活跃: ${lastActive.toLocaleString()}`
+          }
+        }
+
         logger.info(`[查询] QQ(${normalizedUserId})的MC账号信息：用户名=${updatedBind.mcUsername}, UUID=${updatedBind.mcUuid}`)
         return sendMessage(session, [
-          h.text(`您的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}`),
-          ...(config?.showPlayerAvatar && skinUrl ? [h.image(skinUrl)] : [])
+          h.text(`您的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}${buidInfo}`),
+          ...(config?.showAvatar && skinUrl ? [h.image(skinUrl)] : [])
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -1670,7 +1897,7 @@ export function apply(ctx: Context, config: Config) {
         logger.info(`[反向查询] 成功: MC用户名"${username}"被QQ(${bind.qqId})绑定`)
         return sendMessage(session, [
           h.text(`MC用户名"${bind.mcUsername}"绑定信息:\nQQ号: ${bind.qqId}\nUUID: ${formattedUuid}${adminInfo}`),
-          ...(config?.showPlayerAvatar && skinUrl ? [h.image(skinUrl)] : [])
+          ...(config?.showAvatar && skinUrl ? [h.image(skinUrl)] : [])
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -1743,7 +1970,7 @@ export function apply(ctx: Context, config: Config) {
           
           return sendMessage(session, [
             h.text(`已成功为用户 ${normalizedTargetId} 绑定MC账号\n用户名: ${username}\nUUID: ${formattedUuid}`),
-            ...(config?.showPlayerAvatar && skinUrl ? [h.image(skinUrl)] : [])
+            ...(config?.showAvatar && skinUrl ? [h.image(skinUrl)] : [])
           ])
         }
         
@@ -1758,8 +1985,8 @@ export function apply(ctx: Context, config: Config) {
           
           if (!isTempUsername) {
             // 检查是否是管理员或是否在冷却时间内
-            if (!await isAdmin(session.userId) && !checkCooldown(selfBind.lastModified)) {
-              const days = config.cooldownDays
+            if (!await isAdmin(session.userId) && !checkCooldown(selfBind.lastModified, 3)) {
+              const days = config.cooldownDays * 3
               const now = new Date()
               const diffTime = now.getTime() - selfBind.lastModified.getTime()
               const passedDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
@@ -1799,7 +2026,7 @@ export function apply(ctx: Context, config: Config) {
         
         return sendMessage(session, [
           h.text(`已成功绑定MC账号\n用户名: ${username}\nUUID: ${formattedUuid}`),
-          ...(config?.showPlayerAvatar && skinUrl ? [h.image(skinUrl)] : [])
+          ...(config?.showAvatar && skinUrl ? [h.image(skinUrl)] : [])
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -1881,7 +2108,7 @@ export function apply(ctx: Context, config: Config) {
           
           return sendMessage(session, [
             h.text(`已成功将用户 ${normalizedTargetId} 的MC账号从 ${oldUsername} 修改为 ${username}\nUUID: ${formattedUuid}`),
-            ...(config?.showPlayerAvatar && skinUrl ? [h.image(skinUrl)] : [])
+            ...(config?.showAvatar && skinUrl ? [h.image(skinUrl)] : [])
           ])
         }
 
@@ -1901,8 +2128,8 @@ export function apply(ctx: Context, config: Config) {
         }
 
         // 检查冷却时间
-        if (!await isAdmin(session.userId) && !checkCooldown(selfBind.lastModified)) {
-          const days = config.cooldownDays
+        if (!await isAdmin(session.userId) && !checkCooldown(selfBind.lastModified, 3)) {
+          const days = config.cooldownDays * 3
           const now = new Date()
           const diffTime = now.getTime() - selfBind.lastModified.getTime()
           const passedDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
@@ -1937,7 +2164,7 @@ export function apply(ctx: Context, config: Config) {
         
         return sendMessage(session, [
           h.text(`已成功将MC账号从 ${oldUsername} 修改为 ${username}\nUUID: ${formattedUuid}`),
-          ...(config?.showPlayerAvatar && skinUrl ? [h.image(skinUrl)] : [])
+          ...(config?.showAvatar && skinUrl ? [h.image(skinUrl)] : [])
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -2135,6 +2362,190 @@ export function apply(ctx: Context, config: Config) {
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
         logger.error(`[管理员] QQ(${normalizedUserId})查看管理员列表失败: ${error.message}`)
+        return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
+      }
+    })
+
+  // =========== BUID命令组 ===========
+  const buidCmd = ctx.command('buid', 'B站UID绑定管理')
+
+  // 查询BUID绑定命令
+  buidCmd.subcommand('.query [target:user]', '查询用户绑定的BUID')
+    .action(async ({ session }, target) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        let bind: MCIDBIND | null
+        if (target) {
+          const normalizedTargetId = normalizeQQId(target)
+          bind = await getMcBindByQQId(normalizedTargetId)
+        } else {
+          bind = await getMcBindByQQId(normalizedUserId)
+        }
+        if (!bind || !bind.buidUid) {
+          return sendMessage(session, [h.text(target ? `该用户尚未绑定B站账号` : `您尚未绑定B站账号，请使用 ` + formatCommand('buid bind <UID>') + ` 进行绑定`)])
+        }
+        // 每次查询都刷新B站数据
+        const buidUser = await validateBUID(bind.buidUid)
+        if (buidUser) {
+          await createOrUpdateBuidBind(bind.qqId, buidUser)
+          // 重新获取最新绑定
+          bind = await getMcBindByQQId(bind.qqId)
+        }
+        const userInfo = `${target ? `用户 ${bind.qqId}` : '您的'}B站账号信息：\nB站UID: ${bind.buidUid}\n用户名: ${bind.buidUsername}`
+        let detailInfo = ''
+        detailInfo += `\n舰长等级: ${bind.guardLevelText || '无'} (${bind.guardLevel || 0})`
+        detailInfo += `\n粉丝牌: ${bind.medalName || '无'} Lv.${bind.medalLevel || 0}`
+        detailInfo += `\n荣耀等级: ${bind.wealthMedalLevel || 0}`
+        detailInfo += `\n最后活跃: ${bind.lastActiveTime ? new Date(bind.lastActiveTime).toLocaleString() : '未知'}`
+        return sendMessage(session, [h.text(userInfo + detailInfo)])
+      } catch (error) {
+        return sendMessage(session, [h.text(`查询失败: ${error.message}`)])
+      }
+    })
+
+  // 绑定BUID命令
+  buidCmd.subcommand('.bind <uid:string> [target:user]', '绑定B站UID')
+    .action(async ({ session }, uid, target) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        
+        // 检查UID格式
+        if (!uid || !/^\d+$/.test(uid)) {
+          logWarn('BUID绑定', `QQ(${normalizedUserId})提供的UID"${uid}"格式无效`)
+          return sendMessage(session, [h.text('请提供有效的B站UID（纯数字）')])
+        }
+
+        // 验证UID是否存在
+        const buidUser = await validateBUID(uid)
+        if (!buidUser) {
+          logWarn('BUID绑定', `QQ(${normalizedUserId})提供的UID"${uid}"不存在`)
+          return sendMessage(session, [h.text(`无法验证UID: ${uid}，该用户可能不存在或未被发现，你可以去直播间逛一圈，发个弹幕回来再绑定`)])
+        }
+
+        // 如果指定了目标用户（管理员功能）
+        if (target) {
+          const normalizedTargetId = normalizeQQId(target)
+          logDebug('BUID绑定', `QQ(${normalizedUserId})尝试为QQ(${normalizedTargetId})绑定BUID: ${uid}(${buidUser.username})`)
+          
+          // 检查权限
+          if (!await isAdmin(session.userId)) {
+            logWarn('BUID绑定', `权限不足: QQ(${normalizedUserId})不是管理员，无法为QQ(${normalizedTargetId})绑定BUID`)
+            return sendMessage(session, [h.text('只有管理员才能为其他用户绑定BUID')])
+          }
+
+          // 检查UID是否已被除目标用户以外的其他用户绑定
+          if (await checkBuidExists(uid, target)) {
+            logWarn('BUID绑定', `BUID"${uid}"已被其他QQ号绑定`)
+            return sendMessage(session, [h.text(`UID ${uid} 已被其他用户绑定`)])
+          }
+
+          // 创建或更新绑定记录
+          const bindResult = await createOrUpdateBuidBind(target, buidUser)
+          
+          if (!bindResult) {
+            logError('BUID绑定', normalizedUserId, `管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})绑定BUID"${uid}"失败: 数据库操作失败`)
+            return sendMessage(session, [h.text(`为用户 ${normalizedTargetId} 绑定BUID失败: 数据库操作出错，请联系管理员`)])
+          }
+          
+          logOperation('为他人绑定BUID', normalizedUserId, true, `为QQ(${normalizedTargetId})绑定BUID: ${uid}(${buidUser.username})`)
+          
+          return sendMessage(session, [h.text(`已成功为用户 ${normalizedTargetId} 绑定BUID\n用户名: ${buidUser.username}\nUID: ${uid}\n${buidUser.guard_level > 0 ? `舰长等级: ${buidUser.guard_level_text}\n` : ''}${buidUser.medal ? `粉丝牌: ${buidUser.medal.name} Lv.${buidUser.medal.level}` : ''}`)])
+        }
+        
+        // 为自己绑定BUID
+        logDebug('BUID绑定', `QQ(${normalizedUserId})尝试绑定BUID: ${uid}(${buidUser.username})`)
+        
+        // 检查用户是否已绑定BUID
+        const selfBind = await getMcBindByQQId(normalizedUserId)
+        if (selfBind && selfBind.buidUid) {
+          // 检查是否是管理员或是否在冷却时间内
+          if (!await isAdmin(session.userId) && !checkCooldown(selfBind.lastModified, 3)) {
+            const days = config.cooldownDays * 3
+            const now = new Date()
+            const diffTime = now.getTime() - selfBind.lastModified.getTime()
+            const passedDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
+            const remainingDays = days - passedDays
+            
+            logWarn('BUID绑定', `QQ(${normalizedUserId})已绑定BUID"${selfBind.buidUid}"，且在冷却期内，还需${remainingDays}天`)
+            return sendMessage(session, [h.text(`您已绑定BUID: ${selfBind.buidUid}，如需修改，请在冷却期结束后(还需${remainingDays}天)或联系管理员。`)])
+          }
+          logDebug('BUID绑定', `QQ(${normalizedUserId})已绑定BUID"${selfBind.buidUid}"，将进行更新`)
+        }
+
+        // 检查UID是否已被绑定
+        if (await checkBuidExists(uid, session.userId)) {
+          logWarn('BUID绑定', `BUID"${uid}"已被其他QQ号绑定`)
+          return sendMessage(session, [h.text(`UID ${uid} 已被其他用户绑定`)])
+        }
+
+        // 创建或更新绑定
+        const bindResult = await createOrUpdateBuidBind(session.userId, buidUser)
+        
+        if (!bindResult) {
+          logError('BUID绑定', normalizedUserId, `QQ(${normalizedUserId})绑定BUID"${uid}"失败: 数据库操作失败`)
+          return sendMessage(session, [h.text('绑定失败，数据库操作出错，请联系管理员')])
+        }
+        
+        logOperation('绑定BUID', normalizedUserId, true, `绑定BUID: ${uid}(${buidUser.username})`)
+        
+        return sendMessage(session, [h.text(`已成功绑定BUID\n用户名: ${buidUser.username}\nUID: ${uid}\n${buidUser.guard_level > 0 ? `舰长等级: ${buidUser.guard_level_text}\n` : ''}${buidUser.medal ? `粉丝牌: ${buidUser.medal.name} Lv.${buidUser.medal.level}` : ''}`)])
+      } catch (error) {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logError('BUID绑定', normalizedUserId, `QQ(${normalizedUserId})绑定BUID"${uid}"失败: ${error.message}`)
+        return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
+      }
+    })
+
+  // 通过BUID查询绑定QQ账号命令
+  buidCmd.subcommand('.finduser <uid:string>', '[管理员]通过BUID查询绑定的QQ账号')
+    .action(async ({ session }, uid) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        
+        // 检查权限，只允许管理员使用
+        if (!await isAdmin(session.userId)) {
+          logger.warn(`[BUID反向查询] 权限不足: QQ(${normalizedUserId})不是管理员，无法使用反向查询`)
+          return sendMessage(session, [h.text('只有管理员才能使用此命令')])
+        }
+        
+        if (!uid) {
+          logger.warn(`[BUID反向查询] QQ(${normalizedUserId})未提供BUID`)
+          return sendMessage(session, [h.text('请提供要查询的B站UID')])
+        }
+        
+        logger.info(`[BUID反向查询] QQ(${normalizedUserId})尝试通过BUID"${uid}"查询绑定的QQ账号`)
+        
+        // 查询UID绑定信息
+        const bind = await getBuidBindByBuid(uid)
+        
+        if (!bind || !bind.qqId) {
+          logger.info(`[BUID反向查询] BUID"${uid}"未被任何QQ账号绑定`)
+          return sendMessage(session, [h.text(`未找到绑定BUID"${uid}"的QQ账号`)])
+        }
+        
+        // 为Admin添加更多信息
+        let adminInfo = `BUID"${bind.buidUid}"绑定信息:\nQQ号: ${bind.qqId}\n用户名: ${bind.buidUsername}`
+        
+        if (bind.guardLevel > 0) {
+          adminInfo += `\n舰长等级: ${bind.guardLevelText} (${bind.guardLevel})`
+        }
+        if (bind.medalName) {
+          adminInfo += `\n粉丝牌: ${bind.medalName} Lv.${bind.medalLevel}`
+        }
+        if (bind.wealthMedalLevel > 0) {
+          adminInfo += `\n荣耀等级: ${bind.wealthMedalLevel}`
+        }
+        if (bind.lastActiveTime) {
+          adminInfo += `\n最后活跃: ${new Date(bind.lastActiveTime).toLocaleString()}`
+        }
+        adminInfo += `\n绑定时间: ${bind.lastModified ? new Date(bind.lastModified).toLocaleString() : '未知'}`
+        adminInfo += `\n管理员权限: ${bind.isAdmin ? '是' : '否'}`
+        
+        logger.info(`[BUID反向查询] 成功: BUID"${uid}"被QQ(${bind.qqId})绑定`)
+        return sendMessage(session, [h.text(adminInfo)])
+      } catch (error) {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logger.error(`[BUID反向查询] QQ(${normalizedUserId})通过BUID"${uid}"查询失败: ${error.message}`)
         return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
       }
     })
@@ -4040,6 +4451,93 @@ export function apply(ctx: Context, config: Config) {
         const normalizedUserId = normalizeQQId(session.userId)
         logger.error(`[标签] QQ(${normalizedUserId})批量删除标签失败: ${error.message}`)
         return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
+      }
+    })
+
+  // 绑定B站账号命令
+  cmd.subcommand('.bindbuid <buid:string>', '绑定B站账号')
+    .action(async ({ session }, buid) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logger.info(`[绑定] QQ(${normalizedUserId})尝试绑定B站UID(${buid})`)
+        
+        // 验证B站UID格式
+        if (!buid || !/^\d+$/.test(buid)) {
+          logger.warn(`[绑定] QQ(${normalizedUserId})尝试绑定无效的B站UID格式: ${buid}`)
+          return sendMessage(session, [h.text(`无效的B站UID格式，请输入正确的B站UID`)])
+        }
+        
+        // 检查是否已绑定
+        const existingBind = await getBuidBindByBuid(buid)
+        if (existingBind) {
+          const existingQQId = existingBind.qqId
+          logger.warn(`[绑定] QQ(${normalizedUserId})尝试绑定已被QQ(${existingQQId})绑定的B站UID(${buid})`)
+          return sendMessage(session, [h.text(`该B站UID已被其他用户绑定`)])
+        }
+        
+        // 验证B站UID
+        const buidUser = await validateBUID(buid)
+        if (!buidUser) {
+          logger.warn(`[绑定] QQ(${normalizedUserId})尝试绑定不存在的B站UID(${buid})`)
+          return sendMessage(session, [h.text(`无法验证B站UID，请确认输入正确`)])
+        }
+        
+        // 创建或更新绑定
+        const success = await createOrUpdateBuidBind(normalizedUserId, buidUser)
+        if (success) {
+          logger.info(`[绑定] QQ(${normalizedUserId})成功绑定B站UID(${buid})`)
+          return sendMessage(session, [
+            h.text(`成功绑定B站账号！\n`),
+            h.text(`B站UID: ${buidUser.uid}\n`),
+            h.text(`用户名: ${buidUser.username}\n`),
+            buidUser.guard_level > 0 ? h.text(`舰长等级: ${buidUser.guard_level_text} (${buidUser.guard_level})\n`) : null,
+            buidUser.medal ? h.text(`粉丝牌: ${buidUser.medal.name} Lv.${buidUser.medal.level}\n`) : null,
+            buidUser.wealthMedalLevel > 0 ? h.text(`荣耀等级: ${buidUser.wealthMedalLevel}\n`) : null,
+            h.text(`\n绑定成功！`)
+          ].filter(Boolean))
+        } else {
+          logger.error(`[绑定] QQ(${normalizedUserId})绑定B站UID(${buid})失败`)
+          return sendMessage(session, [h.text(`绑定失败，请稍后重试`)])
+        }
+      } catch (error) {
+        logError('绑定', session.userId, error)
+        return sendMessage(session, [h.text(`绑定失败：${getFriendlyErrorMessage(error)}`)])
+      }
+    })
+
+  // 解绑B站账号命令
+  cmd.subcommand('.unbindbuid', '解绑B站账号')
+    .action(async ({ session }) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logger.info(`[解绑] QQ(${normalizedUserId})尝试解绑B站账号`)
+        
+        // 查询当前绑定
+        const bind = await getMcBindByQQId(normalizedUserId)
+        if (!bind || !bind.buidUid) {
+          logger.warn(`[解绑] QQ(${normalizedUserId})尝试解绑未绑定的B站账号`)
+          return sendMessage(session, [h.text(`您尚未绑定B站账号`)])
+        }
+        
+        // 更新绑定信息
+        const updateData = {
+          buidUid: '',
+          buidUsername: '',
+          guardLevel: 0,
+          guardLevelText: '',
+          medalName: '',
+          medalLevel: 0,
+          wealthMedalLevel: 0,
+          lastActiveTime: null,
+          lastModified: new Date()
+        }
+        
+        await ctx.database.set('mcidbind', { qqId: normalizedUserId }, updateData)
+        logger.info(`[解绑] QQ(${normalizedUserId})成功解绑B站账号`)
+        return sendMessage(session, [h.text(`已成功解绑B站账号`)])
+      } catch (error) {
+        logError('解绑', session.userId, error)
+        return sendMessage(session, [h.text(`解绑失败：${getFriendlyErrorMessage(error)}`)])
       }
     })
 }

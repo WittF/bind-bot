@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-mcid-bot",
   "description": "适用于Koishi框架的Minecraft账号绑定机器人，支持QQ用户绑定和管理",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -21,7 +21,7 @@
   ],
   "koishi": {
     "description": {
-      "zh": "适用于Koishi框架的Minecraft账号绑定插件，支持QQ用户绑定和管理，v1.0.3新增可选头像显示、改进RCON排队机制、支持批量标签管理等功能"
+      "zh": "适用于Koishi框架的Minecraft账号绑定插件，支持QQ用户绑定和管理，v1.0.5新增B站UID绑定功能、优化头像显示、改进RCON排队机制、支持批量标签管理等功能"
     }
   },
   "devDependencies": {
