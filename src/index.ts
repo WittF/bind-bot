@@ -1,11 +1,12 @@
 import { Context, Schema, h, Session, Logger } from 'koishi'
+import {} from '@koishijs/plugin-server'
 import axios from 'axios'
 import * as RconClient from 'rcon-client'
 
 export const name = 'mcid-bot'
 
 // 声明插件依赖
-export const inject = ['database']
+export const inject = ['database', 'server']
 
 // 定义插件配置
 export interface Config {
@@ -17,8 +18,8 @@ export interface Config {
   autoRecallTime: number
   recallUserMessage: boolean
   debugMode: boolean
+  showAvatar: boolean
   showMcSkin: boolean
-  showBuidAvatar: boolean
   // BUID相关配置
   zminfoApiUrl: string
 }
@@ -62,11 +63,11 @@ export const Config: Schema<Config> = Schema.object({
   debugMode: Schema.boolean()
     .description('调试模式，启用详细日志输出')
     .default(false),
-  showMcSkin: Schema.boolean()
-    .description('是否显示MC皮肤')
+  showAvatar: Schema.boolean()
+    .description('是否显示头像图片（MC用头图，B站用头像）')
     .default(false),
-  showBuidAvatar: Schema.boolean()
-    .description('是否显示B站头像')
+  showMcSkin: Schema.boolean()
+    .description('是否使用MC皮肤渲染图（需要先开启showAvatar）')
     .default(false),
   zminfoApiUrl: Schema.string()
     .description('ZMINFO API地址')
@@ -545,6 +546,27 @@ class RateLimiter {
   }
 }
 
+// 天选开奖信息接口
+interface LotteryWinner {
+  uid: number
+  username: string
+  medal_level: number
+}
+
+interface LotteryResult {
+  type: string
+  lottery_id: string
+  room_id: number
+  reward_name: string
+  reward_num: number
+  message: string
+  winners_count: number
+  winners: LotteryWinner[]
+  timestamp: number
+  host_uid: number
+  host_username: string
+}
+
 export function apply(ctx: Context, config: Config) {
   // 创建日志记录器
   const logger = new Logger('mcid-bot')
@@ -683,6 +705,74 @@ export function apply(ctx: Context, config: Config) {
   ctx.on('dispose', async () => {
     logger.info('[RCON管理器] 插件卸载，关闭所有RCON连接');
     await rconManager.closeAll();
+  });
+
+  // 注册天选开奖 Webhook
+  ctx.server.post('/lottery', async (content) => {
+    try {
+      logger.info(`[天选开奖] 收到天选开奖webhook请求`)
+      
+      // 检查请求头
+      const userAgent = content.header['user-agent'] || content.header['User-Agent']
+      if (userAgent && !userAgent.includes('ZMINFO-EventBridge')) {
+        logger.warn(`[天选开奖] 无效的User-Agent: ${userAgent}`)
+        content.status = 400
+        content.body = 'Invalid User-Agent'
+        return
+      }
+      
+      // 解析请求数据
+      let lotteryData: LotteryResult
+      try {
+        // 如果是字符串，尝试解析为JSON
+        if (typeof content.request.body === 'string') {
+          lotteryData = JSON.parse(content.request.body)
+        } else {
+          lotteryData = content.request.body as LotteryResult
+        }
+      } catch (parseError) {
+        logger.error(`[天选开奖] 解析请求数据失败: ${parseError.message}`)
+        content.status = 400
+        content.body = 'Invalid JSON format'
+        return
+      }
+      
+      // 验证数据格式
+      if (!lotteryData.type || lotteryData.type !== 'lottery-result') {
+        logger.warn(`[天选开奖] 无效的事件类型: ${lotteryData.type}`)
+        content.status = 400
+        content.body = 'Invalid event type'
+        return
+      }
+      
+      if (!lotteryData.lottery_id || !lotteryData.winners || !Array.isArray(lotteryData.winners)) {
+        logger.warn(`[天选开奖] 数据格式不完整`)
+        content.status = 400
+        content.body = 'Incomplete data format'
+        return
+      }
+      
+      // 记录接收的数据
+      if (config.debugMode) {
+        logger.debug(`[天选开奖] 接收到的数据: ${JSON.stringify(lotteryData, null, 2)}`)
+      } else {
+        logger.info(`[天选开奖] 接收到天选事件: ${lotteryData.lottery_id}，奖品: ${lotteryData.reward_name}，中奖人数: ${lotteryData.winners.length}`)
+      }
+      
+      // 异步处理天选开奖数据（不阻塞响应）
+      handleLotteryResult(lotteryData).catch(error => {
+        logger.error(`[天选开奖] 异步处理天选开奖数据失败: ${error.message}`)
+      })
+      
+      // 立即返回成功响应
+      content.status = 200
+      content.body = 'OK'
+      
+    } catch (error) {
+      logger.error(`[天选开奖] 处理webhook请求失败: ${error.message}`)
+      content.status = 500
+      content.body = 'Internal Server Error'
+    }
   });
 
   // 在数据库中创建MCIDBIND表
@@ -1346,7 +1436,8 @@ export function apply(ctx: Context, config: Config) {
             error.code === 'ECONNRESET' || 
             error.code === 'ECONNREFUSED' || 
             error.code === 'ECONNABORTED' || 
-            error.response?.status === 429)) { // 添加429 (Too Many Requests)
+            error.response?.status === 429 || // 添加429 (Too Many Requests)
+            error.response?.status === 403)) { // 添加403 (Forbidden)
           // 尝试使用playerdb.co作为备用API
           logger.info(`[Mojang API] 遇到错误(${error.code || error.response?.status})，将尝试使用备用API`)
           return tryBackupAPI(username);
@@ -1388,37 +1479,24 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
-  // 检查Crafatar头像URL是否有效（预防UUID无效的情况）
+  // 获取MC头图URL
   const getCrafatarUrl = (uuid: string): string | null => {
     if (!uuid) return null
     
     // 检查UUID格式 (不带连字符应为32位，带连字符应为36位)
     const uuidRegex = /^[0-9a-f]{32}$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
     if (!uuidRegex.test(uuid)) {
-      logger.warn(`[头像] UUID "${uuid}" 格式无效，无法生成头像URL`)
+      logger.warn(`[MC头图] UUID "${uuid}" 格式无效，无法生成头图URL`)
       return null
     }
     
     // 移除任何连字符，Crafatar接受不带连字符的UUID
     const cleanUuid = uuid.replace(/-/g, '')
     
-    // 检查缓存
-    const currentTime = Date.now()
-    if (avatarCache[cleanUuid] && (currentTime - avatarCache[cleanUuid].timestamp) < CACHE_DURATION) {
-      logger.debug(`[头像] 从缓存获取UUID "${cleanUuid}" 的头像URL`)
-      return avatarCache[cleanUuid].url
-    }
+    // 直接生成URL
+    const url = `https://crafatar.com/avatars/${cleanUuid}`
     
-    // 生成URL
-    const url = `https://crafatar.com/avatars/${cleanUuid}?size=100&overlay`
-    
-    // 更新缓存
-    avatarCache[cleanUuid] = {
-      url,
-      timestamp: currentTime
-    }
-    
-    logger.debug(`[头像] 为UUID "${cleanUuid}" 生成新的头像URL并缓存`)
+    logger.debug(`[MC头图] 为UUID "${cleanUuid}" 生成头图URL`)
     return url
   }
 
@@ -1703,8 +1781,18 @@ export function apply(ctx: Context, config: Config) {
           const updatedBind = await checkAndUpdateUsername(targetBind);
           
           const formattedUuid = formatUuid(updatedBind.mcUuid)
-          // 获取皮肤渲染URL
-          const skinUrl = getStarlightSkinUrl(updatedBind.mcUsername)
+          
+          // 根据配置决定显示哪种图像
+          let mcAvatarUrl = null
+          if (config?.showAvatar) {
+            if (config?.showMcSkin) {
+              // 显示皮肤渲染图
+              mcAvatarUrl = getStarlightSkinUrl(updatedBind.mcUsername)
+            } else {
+              // 显示头图
+              mcAvatarUrl = getCrafatarUrl(updatedBind.mcUuid)
+            }
+          }
           
           // 添加获取白名单服务器信息
           let whitelistInfo = '';
@@ -1753,15 +1841,17 @@ export function apply(ctx: Context, config: Config) {
               buidInfo += `\n粉丝牌: ${updatedBind.medalName} Lv.${updatedBind.medalLevel}`
             }
             // 不再显示最后活跃时间
-            if (config?.showBuidAvatar) {
-              buidAvatar = h.image(`https://workers.vrp.moe/bilibili/avatar/${updatedBind.buidUid}`)
+            if (config?.showAvatar) {
+              buidAvatar = h.image(`https://workers.vrp.moe/bilibili/avatar/${updatedBind.buidUid}?size=160`)
             }
+          } else {
+            buidInfo = `\n\n该用户尚未绑定B站账号`
           }
-
+          
           logger.info(`[查询] QQ(${normalizedTargetId})的MC账号信息：用户名=${updatedBind.mcUsername}, UUID=${updatedBind.mcUuid}`)
           return sendMessage(session, [
             h.text(`用户 ${normalizedTargetId} 的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}${buidInfo}`),
-            ...(config?.showMcSkin && skinUrl ? [h.image(skinUrl)] : []),
+            ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : []),
             ...(buidAvatar ? [buidAvatar] : [])
           ])
         }
@@ -1779,8 +1869,18 @@ export function apply(ctx: Context, config: Config) {
         const updatedBind = await checkAndUpdateUsername(selfBind);
         
         const formattedUuid = formatUuid(updatedBind.mcUuid)
-        // 获取皮肤渲染URL
-        const skinUrl = getStarlightSkinUrl(updatedBind.mcUsername)
+        
+        // 根据配置决定显示哪种图像
+        let mcAvatarUrl = null
+        if (config?.showAvatar) {
+          if (config?.showMcSkin) {
+            // 显示皮肤渲染图
+            mcAvatarUrl = getStarlightSkinUrl(updatedBind.mcUsername)
+          } else {
+            // 显示头图
+            mcAvatarUrl = getCrafatarUrl(updatedBind.mcUuid)
+          }
+        }
         
         // 添加获取白名单服务器信息
         let whitelistInfo = '';
@@ -1817,29 +1917,35 @@ export function apply(ctx: Context, config: Config) {
           whitelistInfo = '\n未加入任何服务器的白名单';
         }
         
-        // 添加BUID信息
+                          // 准备B站账号信息
         let buidInfo = ''
         let buidAvatar = null
         if (updatedBind.buidUid) {
-          buidInfo = `\n\nB站账号信息：\nB站UID: ${updatedBind.buidUid}\n用户名: ${updatedBind.buidUsername}`
+          buidInfo = `B站账号信息：\nB站UID: ${updatedBind.buidUid}\n用户名: ${updatedBind.buidUsername}`
           if (updatedBind.guardLevel > 0) {
             buidInfo += `\n舰长等级: ${updatedBind.guardLevelText} (${updatedBind.guardLevel})`
           }
           if (updatedBind.medalName) {
             buidInfo += `\n粉丝牌: ${updatedBind.medalName} Lv.${updatedBind.medalLevel}`
           }
-          // 不再显示最后活跃时间
-          if (config?.showBuidAvatar) {
-            buidAvatar = h.image(`https://workers.vrp.moe/bilibili/avatar/${updatedBind.buidUid}`)
-          }
+                      if (config?.showAvatar) {
+              buidAvatar = h.image(`https://workers.vrp.moe/bilibili/avatar/${updatedBind.buidUid}?size=160`)
+            }
+        } else {
+          buidInfo = `您尚未绑定B站账号，使用 ${formatCommand('buid bind <B站UID>')} 进行绑定`
         }
-
+        
         logger.info(`[查询] QQ(${normalizedUserId})的MC账号信息：用户名=${updatedBind.mcUsername}, UUID=${updatedBind.mcUuid}`)
-        return sendMessage(session, [
-          h.text(`您的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}${buidInfo}`),
-          ...(config?.showMcSkin && skinUrl ? [h.image(skinUrl)] : []),
+        
+        // 按照用户期望的顺序发送消息：MC账号信息 -> MC头图 -> B站账号信息 -> B站头像
+        const messageElements = [
+          h.text(`您的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}`),
+          ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : []),
+          h.text(buidInfo),
           ...(buidAvatar ? [buidAvatar] : [])
-        ])
+        ]
+        
+        return sendMessage(session, messageElements)
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
         logger.error(`[查询] QQ(${normalizedUserId})查询MC账号失败: ${error.message}`)
@@ -1874,10 +1980,17 @@ export function apply(ctx: Context, config: Config) {
           return sendMessage(session, [h.text(`未找到绑定MC用户名"${username}"的QQ账号`)])
         }
         
-        // 获取绑定用户的头像
-        const avatarUrl = bind.mcUuid ? getCrafatarUrl(bind.mcUuid) : null
-        // 获取皮肤渲染URL
-        const skinUrl = getStarlightSkinUrl(bind.mcUsername)
+        // 根据配置决定显示哪种图像
+        let mcAvatarUrl = null
+        if (config?.showAvatar) {
+          if (config?.showMcSkin) {
+            // 显示皮肤渲染图
+            mcAvatarUrl = getStarlightSkinUrl(bind.mcUsername)
+          } else {
+            // 显示头图
+            mcAvatarUrl = getCrafatarUrl(bind.mcUuid)
+          }
+        }
         // 格式化UUID
         const formattedUuid = formatUuid(bind.mcUuid)
         
@@ -1903,7 +2016,7 @@ export function apply(ctx: Context, config: Config) {
         logger.info(`[反向查询] 成功: MC用户名"${username}"被QQ(${bind.qqId})绑定`)
         return sendMessage(session, [
           h.text(`MC用户名"${bind.mcUsername}"绑定信息:\nQQ号: ${bind.qqId}\nUUID: ${formattedUuid}${adminInfo}`),
-          ...(config?.showMcSkin && skinUrl ? [h.image(skinUrl)] : [])
+          ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : [])
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -1970,13 +2083,22 @@ export function apply(ctx: Context, config: Config) {
           
           logOperation('为他人绑定MC账号', normalizedUserId, true, `为QQ(${normalizedTargetId})绑定MC账号: ${username}(${uuid})`)
           
-          // 获取皮肤渲染URL
-          const skinUrl = getStarlightSkinUrl(username)
+          // 根据配置决定显示哪种图像
+          let mcAvatarUrl = null
+          if (config?.showAvatar) {
+            if (config?.showMcSkin) {
+              // 显示皮肤渲染图
+              mcAvatarUrl = getStarlightSkinUrl(username)
+            } else {
+              // 显示头图
+              mcAvatarUrl = getCrafatarUrl(uuid)
+            }
+          }
           const formattedUuid = formatUuid(uuid)
           
           return sendMessage(session, [
             h.text(`已成功为用户 ${normalizedTargetId} 绑定MC账号\n用户名: ${username}\nUUID: ${formattedUuid}`),
-            ...(config?.showMcSkin && skinUrl ? [h.image(skinUrl)] : [])
+            ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : [])
           ])
         }
         
@@ -2026,13 +2148,22 @@ export function apply(ctx: Context, config: Config) {
         
         logOperation('绑定MC账号', normalizedUserId, true, `绑定MC账号: ${username}(${uuid})`)
         
-        // 获取皮肤渲染URL
-        const skinUrl = getStarlightSkinUrl(username)
+        // 根据配置决定显示哪种图像
+        let mcAvatarUrl = null
+        if (config?.showAvatar) {
+          if (config?.showMcSkin) {
+            // 显示皮肤渲染图
+            mcAvatarUrl = getStarlightSkinUrl(username)
+          } else {
+            // 显示头图
+            mcAvatarUrl = getCrafatarUrl(uuid)
+          }
+        }
         const formattedUuid = formatUuid(uuid)
         
         return sendMessage(session, [
           h.text(`已成功绑定MC账号\n用户名: ${username}\nUUID: ${formattedUuid}`),
-          ...(config?.showMcSkin && skinUrl ? [h.image(skinUrl)] : [])
+          ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : [])
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -2108,13 +2239,22 @@ export function apply(ctx: Context, config: Config) {
           
           logger.info(`[修改] 成功: 管理员QQ(${normalizedUserId})修改QQ(${normalizedTargetId})的MC账号: ${oldUsername} -> ${username}(${uuid})`)
           
-          // 获取皮肤渲染URL
-          const skinUrl = getStarlightSkinUrl(username)
+          // 根据配置决定显示哪种图像
+          let mcAvatarUrl = null
+          if (config?.showAvatar) {
+            if (config?.showMcSkin) {
+              // 显示皮肤渲染图
+              mcAvatarUrl = getStarlightSkinUrl(username)
+            } else {
+              // 显示头图
+              mcAvatarUrl = getCrafatarUrl(uuid)
+            }
+          }
           const formattedUuid = formatUuid(uuid)
           
           return sendMessage(session, [
             h.text(`已成功将用户 ${normalizedTargetId} 的MC账号从 ${oldUsername} 修改为 ${username}\nUUID: ${formattedUuid}`),
-            ...(config?.showMcSkin && skinUrl ? [h.image(skinUrl)] : [])
+            ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : [])
           ])
         }
 
@@ -2164,13 +2304,22 @@ export function apply(ctx: Context, config: Config) {
         
         logger.info(`[修改] 成功: QQ(${normalizedUserId})修改MC账号: ${oldUsername} -> ${username}(${uuid})`)
         
-        // 获取皮肤渲染URL
-        const skinUrl = getStarlightSkinUrl(username)
+        // 根据配置决定显示哪种图像
+        let mcAvatarUrl = null
+        if (config?.showAvatar) {
+          if (config?.showMcSkin) {
+            // 显示皮肤渲染图
+            mcAvatarUrl = getStarlightSkinUrl(username)
+          } else {
+            // 显示头图
+            mcAvatarUrl = getCrafatarUrl(uuid)
+          }
+        }
         const formattedUuid = formatUuid(uuid)
         
         return sendMessage(session, [
           h.text(`已成功将MC账号从 ${oldUsername} 修改为 ${username}\nUUID: ${formattedUuid}`),
-          ...(config?.showMcSkin && skinUrl ? [h.image(skinUrl)] : [])
+          ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : [])
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -2372,6 +2521,55 @@ export function apply(ctx: Context, config: Config) {
       }
     })
 
+  // 统计数据命令
+  cmd.subcommand('.stats', '[管理员]查看数据库统计信息')
+    .action(async ({ session }) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logger.info(`[统计] QQ(${normalizedUserId})尝试查看数据库统计`)
+        
+        // 检查权限，只允许管理员使用
+        if (!await isAdmin(session.userId)) {
+          logger.warn(`[统计] 权限不足: QQ(${normalizedUserId})不是管理员，无法查看统计信息`)
+          return sendMessage(session, [h.text('只有管理员才能查看统计信息')])
+        }
+        
+        // 查询所有绑定记录
+        const allBinds = await ctx.database.get('mcidbind', {})
+        
+        // 统计绑定情况
+        let mcidBoundUsers = 0
+        let buidBoundUsers = 0
+        
+        // 遍历所有绑定记录进行统计
+        for (const bind of allBinds) {
+          // MCID绑定统计
+          const hasMcid = bind.mcUsername && !bind.mcUsername.startsWith('_temp_')
+          if (hasMcid) {
+            mcidBoundUsers++
+          }
+          
+          // BUID绑定统计
+          const hasBuid = bind.buidUid && bind.buidUid.trim() !== ''
+          if (hasBuid) {
+            buidBoundUsers++
+          }
+        }
+        
+        // 构建简化的统计信息
+        let statsInfo = `📊 绑定统计\n`
+        statsInfo += `\n已绑定MCID: ${mcidBoundUsers}人\n`
+        statsInfo += `已绑定BUID: ${buidBoundUsers}人`
+        
+        logger.info(`[统计] 成功: 管理员QQ(${normalizedUserId})查看了数据库统计`)
+        return sendMessage(session, [h.text(statsInfo)])
+      } catch (error) {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logger.error(`[统计] QQ(${normalizedUserId})查看统计失败: ${error.message}`)
+        return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
+      }
+    })
+
   // =========== BUID命令组 ===========
   const buidCmd = ctx.command('buid', 'B站UID绑定管理')
 
@@ -2403,7 +2601,12 @@ export function apply(ctx: Context, config: Config) {
         detailInfo += `\n粉丝牌: ${bind.medalName || '无'} Lv.${bind.medalLevel || 0}`
         detailInfo += `\n荣耀等级: ${bind.wealthMedalLevel || 0}`
         detailInfo += `\n最后活跃: ${bind.lastActiveTime ? new Date(bind.lastActiveTime).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '未知'}`
-        return sendMessage(session, [h.text(userInfo + detailInfo)])
+        
+        const messageContent = [h.text(userInfo + detailInfo)]
+        if (config?.showAvatar && bind.buidUid) {
+          messageContent.push(h.image(`https://workers.vrp.moe/bilibili/avatar/${bind.buidUid}?size=160`))
+        }
+        return sendMessage(session, messageContent)
       } catch (error) {
         return sendMessage(session, [h.text(`查询失败: ${error.message}`)])
       }
@@ -2415,23 +2618,22 @@ export function apply(ctx: Context, config: Config) {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
         
-        // 检查UID格式
-        if (!uid || !/^\d+$/.test(uid)) {
-          logWarn('BUID绑定', `QQ(${normalizedUserId})提供的UID"${uid}"格式无效`)
-          return sendMessage(session, [h.text('请提供有效的B站UID（纯数字）')])
+        // 解析UID格式，支持 "UID:12345" 和 "12345" 两种格式
+        let actualUid = uid
+        if (uid && uid.toLowerCase().startsWith('uid:')) {
+          actualUid = uid.substring(4) // 移除 "UID:" 前缀
         }
-
-        // 验证UID是否存在
-        const buidUser = await validateBUID(uid)
-        if (!buidUser) {
-          logWarn('BUID绑定', `QQ(${normalizedUserId})提供的UID"${uid}"不存在`)
-          return sendMessage(session, [h.text(`无法验证UID: ${uid}，该用户可能不存在或未被发现，你可以去直播间逛一圈，发个弹幕回来再绑定`)])
+        
+        // 检查UID格式
+        if (!actualUid || !/^\d+$/.test(actualUid)) {
+          logWarn('BUID绑定', `QQ(${normalizedUserId})提供的UID"${uid}"格式无效`)
+          return sendMessage(session, [h.text('请提供有效的B站UID（纯数字或UID:数字格式）')])
         }
 
         // 如果指定了目标用户（管理员功能）
         if (target) {
           const normalizedTargetId = normalizeQQId(target)
-          logDebug('BUID绑定', `QQ(${normalizedUserId})尝试为QQ(${normalizedTargetId})绑定BUID: ${uid}(${buidUser.username})`)
+          logDebug('BUID绑定', `QQ(${normalizedUserId})尝试为QQ(${normalizedTargetId})绑定BUID: ${actualUid}`)
           
           // 检查权限
           if (!await isAdmin(session.userId)) {
@@ -2447,26 +2649,33 @@ export function apply(ctx: Context, config: Config) {
           }
 
           // 检查UID是否已被除目标用户以外的其他用户绑定
-          if (await checkBuidExists(uid, target)) {
-            logWarn('BUID绑定', `BUID"${uid}"已被其他QQ号绑定`)
-            return sendMessage(session, [h.text(`UID ${uid} 已被其他用户绑定`)])
+          if (await checkBuidExists(actualUid, target)) {
+            logWarn('BUID绑定', `BUID"${actualUid}"已被其他QQ号绑定`)
+            return sendMessage(session, [h.text(`UID ${actualUid} 已被其他用户绑定`)])
+          }
+
+          // 验证UID是否存在
+          const buidUser = await validateBUID(actualUid)
+          if (!buidUser) {
+            logWarn('BUID绑定', `QQ(${normalizedUserId})提供的UID"${actualUid}"不存在`)
+            return sendMessage(session, [h.text(`无法验证UID: ${actualUid}，该用户可能不存在或未被发现，你可以去直播间逛一圈，发个弹幕回来再绑定`)])
           }
 
           // 创建或更新绑定记录
           const bindResult = await createOrUpdateBuidBind(target, buidUser)
           
           if (!bindResult) {
-            logError('BUID绑定', normalizedUserId, `管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})绑定BUID"${uid}"失败: 数据库操作失败`)
+            logError('BUID绑定', normalizedUserId, `管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})绑定BUID"${actualUid}"失败: 数据库操作失败`)
             return sendMessage(session, [h.text(`为用户 ${normalizedTargetId} 绑定BUID失败: 数据库操作出错，请联系管理员`)])
           }
           
-          logOperation('为他人绑定BUID', normalizedUserId, true, `为QQ(${normalizedTargetId})绑定BUID: ${uid}(${buidUser.username})`)
+          logOperation('为他人绑定BUID', normalizedUserId, true, `为QQ(${normalizedTargetId})绑定BUID: ${actualUid}(${buidUser.username})`)
           
-          return sendMessage(session, [h.text(`已成功为用户 ${normalizedTargetId} 绑定BUID\n用户名: ${buidUser.username}\nUID: ${uid}\n${buidUser.guard_level > 0 ? `舰长等级: ${buidUser.guard_level_text}\n` : ''}${buidUser.medal ? `粉丝牌: ${buidUser.medal.name} Lv.${buidUser.medal.level}` : ''}`)])
+          return sendMessage(session, [h.text(`已成功为用户 ${normalizedTargetId} 绑定B站账号\n用户名: ${buidUser.username}\nUID: ${actualUid}\n${buidUser.guard_level > 0 ? `舰长等级: ${buidUser.guard_level_text}\n` : ''}${buidUser.medal ? `粉丝牌: ${buidUser.medal.name} Lv.${buidUser.medal.level}` : ''}`)])
         }
         
         // 为自己绑定BUID
-        logDebug('BUID绑定', `QQ(${normalizedUserId})尝试绑定BUID: ${uid}(${buidUser.username})`)
+        logDebug('BUID绑定', `QQ(${normalizedUserId})尝试绑定BUID: ${actualUid}`)
         
         // 检查用户是否已绑定MC账号
         const selfBind = await getMcBindByQQId(normalizedUserId)
@@ -2486,28 +2695,35 @@ export function apply(ctx: Context, config: Config) {
             const remainingDays = days - passedDays
             
             logWarn('BUID绑定', `QQ(${normalizedUserId})已绑定BUID"${selfBind.buidUid}"，且在冷却期内，还需${remainingDays}天`)
-            return sendMessage(session, [h.text(`您已绑定BUID: ${selfBind.buidUid}，如需修改，请在冷却期结束后(还需${remainingDays}天)或联系管理员。`)])
+            return sendMessage(session, [h.text(`您已绑定B站UID: ${selfBind.buidUid}，如需修改，请在冷却期结束后(还需${remainingDays}天)或联系管理员。`)])
           }
           logDebug('BUID绑定', `QQ(${normalizedUserId})已绑定BUID"${selfBind.buidUid}"，将进行更新`)
         }
 
         // 检查UID是否已被绑定
-        if (await checkBuidExists(uid, session.userId)) {
-          logWarn('BUID绑定', `BUID"${uid}"已被其他QQ号绑定`)
-          return sendMessage(session, [h.text(`UID ${uid} 已被其他用户绑定`)])
+        if (await checkBuidExists(actualUid, session.userId)) {
+          logWarn('BUID绑定', `BUID"${actualUid}"已被其他QQ号绑定`)
+          return sendMessage(session, [h.text(`UID ${actualUid} 已被其他用户绑定`)])
+        }
+
+        // 验证UID是否存在
+        const buidUser = await validateBUID(actualUid)
+        if (!buidUser) {
+          logWarn('BUID绑定', `QQ(${normalizedUserId})提供的UID"${actualUid}"不存在`)
+          return sendMessage(session, [h.text(`无法验证UID: ${actualUid}，该用户可能不存在或未被发现，你可以去直播间逛一圈，发个弹幕回来再绑定`)])
         }
 
         // 创建或更新绑定
         const bindResult = await createOrUpdateBuidBind(session.userId, buidUser)
         
         if (!bindResult) {
-          logError('BUID绑定', normalizedUserId, `QQ(${normalizedUserId})绑定BUID"${uid}"失败: 数据库操作失败`)
+          logError('BUID绑定', normalizedUserId, `QQ(${normalizedUserId})绑定BUID"${actualUid}"失败: 数据库操作失败`)
           return sendMessage(session, [h.text('绑定失败，数据库操作出错，请联系管理员')])
         }
         
-        logOperation('绑定BUID', normalizedUserId, true, `绑定BUID: ${uid}(${buidUser.username})`)
+        logOperation('绑定BUID', normalizedUserId, true, `绑定BUID: ${actualUid}(${buidUser.username})`)
         
-        logger.info(`[绑定] QQ(${normalizedUserId})成功绑定B站UID(${uid})`)
+        logger.info(`[绑定] QQ(${normalizedUserId})成功绑定B站UID(${actualUid})`)
         return sendMessage(session, [
           h.text(`成功绑定B站账号！\n`),
           h.text(`B站UID: ${buidUser.uid}\n`),
@@ -2515,8 +2731,7 @@ export function apply(ctx: Context, config: Config) {
           buidUser.guard_level > 0 ? h.text(`舰长等级: ${buidUser.guard_level_text} (${buidUser.guard_level})\n`) : null,
           buidUser.medal ? h.text(`粉丝牌: ${buidUser.medal.name} Lv.${buidUser.medal.level}\n`) : null,
           buidUser.wealthMedalLevel > 0 ? h.text(`荣耀等级: ${buidUser.wealthMedalLevel}\n`) : null,
-          h.text(`\n绑定成功！`),
-          ...(config?.showBuidAvatar ? [h.image(`https://workers.vrp.moe/bilibili/avatar/${buidUser.uid}`)] : [])
+          ...(config?.showAvatar ? [h.image(`https://workers.vrp.moe/bilibili/avatar/${buidUser.uid}?size=160`)] : [])
         ].filter(Boolean))
       } catch (error) {
         logError('绑定', session.userId, error)
@@ -2532,27 +2747,34 @@ export function apply(ctx: Context, config: Config) {
         
         // 检查权限，只允许管理员使用
         if (!await isAdmin(session.userId)) {
-          logger.warn(`[BUID反向查询] 权限不足: QQ(${normalizedUserId})不是管理员，无法使用反向查询`)
+          logger.warn(`[B站账号反向查询] 权限不足: QQ(${normalizedUserId})不是管理员，无法使用反向查询`)
           return sendMessage(session, [h.text('只有管理员才能使用此命令')])
         }
         
-        if (!uid) {
-          logger.warn(`[BUID反向查询] QQ(${normalizedUserId})未提供BUID`)
-          return sendMessage(session, [h.text('请提供要查询的B站UID')])
+        // 解析UID格式，支持 "UID:12345" 和 "12345" 两种格式
+        let actualUid = uid
+        if (uid && uid.toLowerCase().startsWith('uid:')) {
+          actualUid = uid.substring(4) // 移除 "UID:" 前缀
         }
         
-        logger.info(`[BUID反向查询] QQ(${normalizedUserId})尝试通过BUID"${uid}"查询绑定的QQ账号`)
+        // 检查UID格式
+        if (!actualUid || !/^\d+$/.test(actualUid)) {
+          logger.warn(`[B站账号反向查询] QQ(${normalizedUserId})提供的UID"${uid}"格式无效`)
+          return sendMessage(session, [h.text('请提供有效的B站UID（纯数字或UID:数字格式）')])
+        }
+        
+        logger.info(`[B站账号反向查询] QQ(${normalizedUserId})尝试通过B站UID"${actualUid}"查询绑定的QQ账号`)
         
         // 查询UID绑定信息
-        const bind = await getBuidBindByBuid(uid)
+        const bind = await getBuidBindByBuid(actualUid)
         
         if (!bind || !bind.qqId) {
-          logger.info(`[BUID反向查询] BUID"${uid}"未被任何QQ账号绑定`)
-          return sendMessage(session, [h.text(`未找到绑定BUID"${uid}"的QQ账号`)])
+          logger.info(`[B站账号反向查询] B站UID"${actualUid}"未被任何QQ账号绑定`)
+          return sendMessage(session, [h.text(`未找到绑定B站UID"${actualUid}"的QQ账号`)])
         }
         
         // 为Admin添加更多信息
-        let adminInfo = `BUID"${bind.buidUid}"绑定信息:\nQQ号: ${bind.qqId}\n用户名: ${bind.buidUsername}`
+        let adminInfo = `B站UID"${bind.buidUid}"绑定信息:\nQQ号: ${bind.qqId}\n用户名: ${bind.buidUsername}`
         
         if (bind.guardLevel > 0) {
           adminInfo += `\n舰长等级: ${bind.guardLevelText} (${bind.guardLevel})`
@@ -2569,11 +2791,11 @@ export function apply(ctx: Context, config: Config) {
         adminInfo += `\n绑定时间: ${bind.lastModified ? new Date(bind.lastModified).toLocaleString() : '未知'}`
         adminInfo += `\n管理员权限: ${bind.isAdmin ? '是' : '否'}`
         
-        logger.info(`[BUID反向查询] 成功: BUID"${uid}"被QQ(${bind.qqId})绑定`)
+        logger.info(`[B站账号反向查询] 成功: B站UID"${actualUid}"被QQ(${bind.qqId})绑定`)
         return sendMessage(session, [h.text(adminInfo)])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
-        logger.error(`[BUID反向查询] QQ(${normalizedUserId})通过BUID"${uid}"查询失败: ${error.message}`)
+        logger.error(`[B站账号反向查询] QQ(${normalizedUserId})通过B站UID查询失败: ${error.message}`)
         return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
       }
     })
@@ -3935,7 +4157,8 @@ export function apply(ctx: Context, config: Config) {
         error.code === 'ECONNRESET' || 
         error.code === 'ECONNREFUSED' || 
         error.code === 'ECONNABORTED' || 
-        error.response?.status === 429)) {
+        error.response?.status === 429 || // 添加429 (Too Many Requests)
+        error.response?.status === 403)) { // 添加403 (Forbidden)
         
         logger.info(`[Mojang API] 通过UUID查询用户名时遇到错误(${error.code || error.response?.status})，将尝试使用备用API`);
         return getUsernameByUuidBackupAPI(uuid);
@@ -4482,6 +4705,203 @@ export function apply(ctx: Context, config: Config) {
       }
     })
 
+  // =========== 天选开奖 Webhook 处理 ===========
+  
+  // 处理天选开奖结果
+  const handleLotteryResult = async (lotteryData: LotteryResult): Promise<void> => {
+    try {
+      logger.info(`[天选开奖] 开始处理天选事件: ${lotteryData.lottery_id}，奖品: ${lotteryData.reward_name}，中奖人数: ${lotteryData.winners.length}`)
+      
+      // 生成标签名称
+      const tagName = `天选-${lotteryData.lottery_id}`
+      
+      // 统计信息
+      let matchedCount = 0
+      let notBoundCount = 0
+      let tagAddedCount = 0
+      let tagExistedCount = 0
+      const matchedUsers: Array<{qqId: string, mcUsername: string, buidUsername: string, uid: number, username: string}> = []
+      
+      // 处理每个中奖用户
+      for (const winner of lotteryData.winners) {
+        try {
+          // 根据B站UID查找绑定的QQ用户
+          const bind = await getBuidBindByBuid(winner.uid.toString())
+          
+          if (bind && bind.qqId) {
+            matchedCount++
+            matchedUsers.push({
+              qqId: bind.qqId,
+              mcUsername: bind.mcUsername || '未绑定MC',
+              buidUsername: bind.buidUsername,
+              uid: winner.uid,
+              username: winner.username
+            })
+            
+            // 检查是否已有该标签
+            if (bind.tags && bind.tags.includes(tagName)) {
+              tagExistedCount++
+              logger.debug(`[天选开奖] QQ(${bind.qqId})已有标签"${tagName}"`)
+            } else {
+              // 添加标签
+              const newTags = [...(bind.tags || []), tagName]
+              await ctx.database.set('mcidbind', { qqId: bind.qqId }, { tags: newTags })
+              tagAddedCount++
+              logger.debug(`[天选开奖] 为QQ(${bind.qqId})添加标签"${tagName}"`)
+            }
+          } else {
+            notBoundCount++
+            logger.debug(`[天选开奖] B站UID(${winner.uid})未绑定QQ账号`)
+          }
+        } catch (error) {
+          logger.error(`[天选开奖] 处理中奖用户UID(${winner.uid})时出错: ${error.message}`)
+        }
+      }
+      
+      logger.info(`[天选开奖] 处理完成: 总计${lotteryData.winners.length}人中奖，匹配${matchedCount}人，未绑定${notBoundCount}人，新增标签${tagAddedCount}人，已有标签${tagExistedCount}人`)
+      
+      // 生成并发送结果消息
+      await sendLotteryResultToGroup(lotteryData, {
+        totalWinners: lotteryData.winners.length,
+        matchedCount,
+        notBoundCount,
+        tagAddedCount,
+        tagExistedCount,
+        matchedUsers,
+        tagName
+      })
+      
+    } catch (error) {
+      logger.error(`[天选开奖] 处理天选事件"${lotteryData.lottery_id}"失败: ${error.message}`)
+    }
+  }
+  
+  // 发送天选开奖结果到群
+  const sendLotteryResultToGroup = async (
+    lotteryData: LotteryResult, 
+    stats: {
+      totalWinners: number
+      matchedCount: number
+      notBoundCount: number
+      tagAddedCount: number
+      tagExistedCount: number
+      matchedUsers: Array<{qqId: string, mcUsername: string, buidUsername: string, uid: number, username: string}>
+      tagName: string
+    }
+  ): Promise<void> => {
+    try {
+      const targetChannelId = '931805503' // 目标群号
+      const privateTargetId = 'private:3431185320' // 私聊目标
+      
+      // 格式化时间
+      const lotteryTime = new Date(lotteryData.timestamp).toLocaleString('zh-CN', { 
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      })
+      
+      // 构建简化版群消息（去掉主播信息、统计信息和标签提示）
+      let groupMessage = `🎉 天选开奖结果通知\n\n`
+      groupMessage += `📅 开奖时间: ${lotteryTime}\n`
+      groupMessage += `🎁 奖品名称: ${lotteryData.reward_name}\n`
+      groupMessage += `📊 奖品数量: ${lotteryData.reward_num}个\n\n`
+      
+      // 如果有匹配的用户，显示详细信息
+      if (stats.matchedUsers.length > 0) {
+        groupMessage += `🎯 已绑定的中奖用户:\n`
+        
+        // 限制显示前10个用户，避免消息过长
+        const displayUsers = stats.matchedUsers.slice(0, 10)
+        for (let i = 0; i < displayUsers.length; i++) {
+          const user = displayUsers[i]
+          const index = i + 1
+          groupMessage += `${index}. ${user.buidUsername} (UID: ${user.uid})\n`
+          groupMessage += `   QQ: ${user.qqId} | MC: ${user.mcUsername}\n`
+        }
+        
+        // 如果用户太多，显示省略信息
+        if (stats.matchedUsers.length > 10) {
+          groupMessage += `... 还有${stats.matchedUsers.length - 10}位中奖用户\n`
+        }
+      } else {
+        groupMessage += `😔 暂无已绑定用户中奖\n`
+      }
+      
+      // 构建完整版私聊消息（包含所有信息和未绑定用户）
+      let privateMessage = `🎉 天选开奖结果通知\n\n`
+      privateMessage += `📅 开奖时间: ${lotteryTime}\n`
+      privateMessage += `🎁 奖品名称: ${lotteryData.reward_name}\n`
+      privateMessage += `📊 奖品数量: ${lotteryData.reward_num}个\n`
+      privateMessage += `🏷️ 事件ID: ${lotteryData.lottery_id}\n`
+      privateMessage += `👤 主播: ${lotteryData.host_username} (UID: ${lotteryData.host_uid})\n`
+      privateMessage += `🏠 房间号: ${lotteryData.room_id}\n\n`
+      
+      // 统计信息
+      privateMessage += `📈 处理统计:\n`
+      privateMessage += `• 总中奖人数: ${stats.totalWinners}人\n`
+      privateMessage += `• 已绑定用户: ${stats.matchedCount}人 ✅\n`
+      privateMessage += `• 未绑定用户: ${stats.notBoundCount}人 ⚠️\n`
+      privateMessage += `• 新增标签: ${stats.tagAddedCount}人\n`
+      privateMessage += `• 已有标签: ${stats.tagExistedCount}人\n\n`
+      
+      // 显示所有中奖用户（包括未绑定的）
+      if (lotteryData.winners.length > 0) {
+        privateMessage += `🎯 所有中奖用户:\n`
+        
+        for (let i = 0; i < lotteryData.winners.length; i++) {
+          const winner = lotteryData.winners[i]
+          const index = i + 1
+          
+          // 查找对应的绑定用户
+          const matchedUser = stats.matchedUsers.find(user => user.uid === winner.uid)
+          
+          if (matchedUser) {
+            privateMessage += `${index}. ${winner.username} (UID: ${winner.uid})\n`
+            privateMessage += `   QQ: ${matchedUser.qqId} | MC: ${matchedUser.mcUsername}\n`
+          } else {
+            privateMessage += `${index}. ${winner.username} (UID: ${winner.uid})\n`
+            privateMessage += `   无绑定信息，自动跳过\n`
+          }
+        }
+        
+        privateMessage += `\n🏷️ 标签"${stats.tagName}"已自动添加到已绑定用户\n`
+      }
+      
+      // 准备消息元素
+      const groupMessageElements = [h.text(groupMessage)]
+      const privateMessageElements = [h.text(privateMessage)]
+      
+      // 发送消息到指定群（简化版）
+      for (const bot of ctx.bots) {
+        try {
+          await bot.sendMessage(targetChannelId, groupMessageElements)
+          logger.info(`[天选开奖] 成功发送简化开奖结果到群${targetChannelId}`)
+          break // 成功发送后退出循环
+        } catch (error) {
+          logger.error(`[天选开奖] 发送消息到群${targetChannelId}失败: ${error.message}`)
+        }
+      }
+      
+      // 发送消息到私聊（完整版）
+      for (const bot of ctx.bots) {
+        try {
+          await bot.sendMessage(privateTargetId, privateMessageElements)
+          logger.info(`[天选开奖] 成功发送完整开奖结果到私聊${privateTargetId}`)
+          break // 成功发送后退出循环
+        } catch (error) {
+          logger.error(`[天选开奖] 发送消息到私聊${privateTargetId}失败: ${error.message}`)
+        }
+      }
+      
+    } catch (error) {
+      logger.error(`[天选开奖] 发送开奖结果失败: ${error.message}`)
+    }
+  }
+
   // 绑定B站账号命令
   cmd.subcommand('.bindbuid <buid:string>', '绑定B站账号')
     .action(async ({ session }, buid) => {
@@ -4521,7 +4941,7 @@ export function apply(ctx: Context, config: Config) {
             buidUser.guard_level > 0 ? h.text(`舰长等级: ${buidUser.guard_level_text} (${buidUser.guard_level})\n`) : null,
             buidUser.medal ? h.text(`粉丝牌: ${buidUser.medal.name} Lv.${buidUser.medal.level}\n`) : null,
             buidUser.wealthMedalLevel > 0 ? h.text(`荣耀等级: ${buidUser.wealthMedalLevel}\n`) : null,
-            ...(config?.showBuidAvatar ? [h.image(`https://workers.vrp.moe/bilibili/avatar/${buidUser.uid}`)] : [])
+            ...(config?.showAvatar ? [h.image(`https://workers.vrp.moe/bilibili/avatar/${buidUser.uid}?size=160`)] : [])
           ].filter(Boolean))
         } else {
           logger.error(`[绑定] QQ(${normalizedUserId})绑定B站UID(${buid})失败`)

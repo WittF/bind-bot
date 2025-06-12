@@ -113,8 +113,8 @@ mcid whitelist remove 生存服 VIP
 | autoRecallTime | number | 0 | 消息自动撤回时间(秒)，同时控制机器人和用户消息，0表示不自动撤回 |
 | recallUserMessage | boolean | false | 是否撤回用户发送的指令消息（仅群聊消息） |
 | debugMode | boolean | false | 调试模式，启用详细日志输出 |
-| showMcSkin | boolean | false | 是否显示MC皮肤 |
-| showBuidAvatar | boolean | false | 是否显示B站头像 |
+| showAvatar | boolean | false | 是否显示头像图片（MC用头图，B站用头像） |
+| showMcSkin | boolean | false | 是否使用MC皮肤渲染图（需要先开启showAvatar） |
 | zminfoApiUrl | string | 'http://zminfo-api.wittf.ink' | ZMINFO API地址，用于获取B站用户信息 |
 | servers | array | [] | Minecraft服务器配置列表 |
 
@@ -137,7 +137,23 @@ mcid whitelist remove 生存服 VIP
 
 ## 版本历史
 
-### v1.0.4 (最新)
+### v1.0.10 (最新)
+- 🔧 **配置优化**：图像显示配置重构
+  - 将 `showBuidAvatar` 重命名为 `showAvatar`，作为图像显示总开关
+  - `showMcSkin` 现在需要 `showAvatar` 开启后才能使用，控制MC是否使用皮肤渲染图
+  - 简化MC头图API，直接使用 `https://crafatar.com/avatars/uuid`
+- 🆕 **新增功能**：`buid query` 命令图像显示，根据配置显示B站头像
+- 🔧 **智能图像显示逻辑**：
+  - `showAvatar=false`：不显示任何图像
+  - `showAvatar=true & showMcSkin=false`：MC显示头图，B站显示头像
+  - `showAvatar=true & showMcSkin=true`：MC显示皮肤渲染图，B站显示头像
+
+### v1.0.9
+- 🐛 **修复**：B站绑定成功消息重复问题、Mojang API 403错误处理
+- 🆕 **新增功能**：mcid query B站绑定提醒
+- 📊 **新增命令**：`mcid stats` 管理员统计命令
+
+### v1.0.4
 - 🎨 **新增功能**：B站UID绑定功能
   - 支持绑定和查询B站账号信息
   - 集成ZMINFO API获取详细用户数据
