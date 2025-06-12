@@ -22,6 +22,8 @@ export interface Config {
   showMcSkin: boolean
   // BUID相关配置
   zminfoApiUrl: string
+  // 天选播报配置
+  enableLotteryBroadcast: boolean
 }
 
 // 服务器配置接口
@@ -72,6 +74,9 @@ export const Config: Schema<Config> = Schema.object({
   zminfoApiUrl: Schema.string()
     .description('ZMINFO API地址')
     .default('http://zminfo-api.wittf.ink'),
+  enableLotteryBroadcast: Schema.boolean()
+    .description('是否启用天选开奖播报功能')
+    .default(false),
   servers: Schema.array(Schema.object({
     id: Schema.string()
       .description('服务器唯一ID（不允许重复）')
@@ -711,6 +716,14 @@ export function apply(ctx: Context, config: Config) {
   ctx.server.post('/lottery', async (content) => {
     try {
       logger.info(`[天选开奖] 收到天选开奖webhook请求`)
+      
+      // 检查天选播报开关
+      if (!config?.enableLotteryBroadcast) {
+        logger.info(`[天选开奖] 天选播报功能已禁用，忽略webhook请求`)
+        content.status = 200
+        content.body = 'Lottery broadcast disabled'
+        return
+      }
       
       // 检查请求头
       const userAgent = content.header['user-agent'] || content.header['User-Agent']
@@ -1694,6 +1707,42 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
+  // 仅更新B站信息，不更新绑定时间（用于查询时刷新数据）
+  const updateBuidInfoOnly = async (userId: string, buidUser: ZminfoUser): Promise<boolean> => {
+    try {
+      const normalizedQQId = normalizeQQId(userId)
+      if (!normalizedQQId) {
+        logger.error(`[B站账号信息更新] 更新失败: 无法提取有效的QQ号`)
+        return false
+      }
+      
+      // 查询是否已存在绑定记录
+      const bind = await getMcBindByQQId(normalizedQQId)
+      if (!bind) {
+        logger.warn(`[B站账号信息更新] QQ(${normalizedQQId})没有绑定记录，无法更新B站信息`)
+        return false
+      }
+      
+      // 仅更新B站相关字段，不更新lastModified
+      const updateData: any = {
+        buidUsername: buidUser.username,
+        guardLevel: buidUser.guard_level || 0,
+        guardLevelText: buidUser.guard_level_text || '',
+        medalName: buidUser.medal?.name || '',
+        medalLevel: buidUser.medal?.level || 0,
+        wealthMedalLevel: buidUser.wealthMedalLevel || 0,
+        lastActiveTime: buidUser.last_active_time ? new Date(buidUser.last_active_time) : new Date()
+      }
+      
+      await ctx.database.set('mcidbind', { qqId: normalizedQQId }, updateData)
+      logger.info(`[B站账号信息更新] 刷新信息: QQ=${normalizedQQId}, B站UID=${bind.buidUid}, 用户名=${buidUser.username}`)
+      return true
+    } catch (error) {
+      logError('B站账号信息更新', userId, `更新B站账号信息失败: ${error.message}`)
+      return false
+    }
+  }
+
   // =========== MC命令组 ===========
   const cmd = ctx.command('mcid', 'Minecraft 账号绑定管理')
 
@@ -2588,10 +2637,10 @@ export function apply(ctx: Context, config: Config) {
         if (!bind || !bind.buidUid) {
           return sendMessage(session, [h.text(target ? `该用户尚未绑定B站账号` : `您尚未绑定B站账号，请使用 ` + formatCommand('buid bind <UID>') + ` 进行绑定`)])
         }
-        // 每次查询都刷新B站数据
+        // 每次查询都刷新B站数据（仅更新信息，不更新绑定时间）
         const buidUser = await validateBUID(bind.buidUid)
         if (buidUser) {
-          await createOrUpdateBuidBind(bind.qqId, buidUser)
+          await updateBuidInfoOnly(bind.qqId, buidUser)
           // 重新获取最新绑定
           bind = await getMcBindByQQId(bind.qqId)
         }
@@ -4710,6 +4759,12 @@ export function apply(ctx: Context, config: Config) {
   // 处理天选开奖结果
   const handleLotteryResult = async (lotteryData: LotteryResult): Promise<void> => {
     try {
+      // 检查天选播报开关
+      if (!config?.enableLotteryBroadcast) {
+        logger.debug(`[天选开奖] 天选播报功能已禁用，跳过处理天选事件: ${lotteryData.lottery_id}`)
+        return
+      }
+      
       logger.info(`[天选开奖] 开始处理天选事件: ${lotteryData.lottery_id}，奖品: ${lotteryData.reward_name}，中奖人数: ${lotteryData.winners.length}`)
       
       // 生成标签名称
