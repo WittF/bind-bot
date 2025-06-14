@@ -40,7 +40,7 @@
 4. **标签系统**: tag add/remove/list/find/deleteall
 5. **权限管理**: admin/unadmin/adminlist（主人权限）
 6. **RCON连接**: 自动管理多服务器RCON连接池
-7. **天选播报**: 天选开奖结果自动播报功能
+7. **天选播报**: 天选开奖结果自动播报功能并为已中奖用户添加TAG
 
 ## v1.1.3版本修复记录
 

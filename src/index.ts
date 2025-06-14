@@ -1809,7 +1809,7 @@ export function apply(ctx: Context, config: Config) {
   }
 
   // 查询MC账号命令
-  cmd.subcommand('.query [target:user]', '查询用户绑定的MC账号')
+  cmd.subcommand('.query [target:string]', '查询用户绑定的MC账号')
     .action(async ({ session }, target) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -2075,7 +2075,7 @@ export function apply(ctx: Context, config: Config) {
     })
 
   // 绑定MC账号命令
-  cmd.subcommand('.bind <username:string> [target:user]', '绑定MC账号')
+  cmd.subcommand('.bind <username:string> [target:string]', '绑定MC账号')
     .action(async ({ session }, username, target) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -2222,7 +2222,7 @@ export function apply(ctx: Context, config: Config) {
     })
 
   // 修改MC账号命令
-  cmd.subcommand('.change <username:string> [target:user]', '修改绑定的MC账号')
+  cmd.subcommand('.change <username:string> [target:string]', '修改绑定的MC账号')
     .action(async ({ session }, username, target) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -2378,7 +2378,7 @@ export function apply(ctx: Context, config: Config) {
     })
 
   // 解绑MC账号命令
-  cmd.subcommand('.unbind [target:user]', '[管理员]解绑MC账号')
+  cmd.subcommand('.unbind [target:string]', '[管理员]解绑MC账号')
     .action(async ({ session }, target) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -2439,7 +2439,7 @@ export function apply(ctx: Context, config: Config) {
     })
     
   // 管理员管理命令
-  cmd.subcommand('.admin <target:user>', '[主人]将用户设为管理员')
+  cmd.subcommand('.admin <target:string>', '[主人]将用户设为管理员')
     .action(async ({ session }, target) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -2498,7 +2498,7 @@ export function apply(ctx: Context, config: Config) {
     })
 
   // 撤销管理员命令
-  cmd.subcommand('.unadmin <target:user>', '[主人]撤销用户的管理员权限')
+  cmd.subcommand('.unadmin <target:string>', '[主人]撤销用户的管理员权限')
     .action(async ({ session }, target) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -2623,7 +2623,7 @@ export function apply(ctx: Context, config: Config) {
   const buidCmd = ctx.command('buid', 'B站UID绑定管理')
 
   // 查询BUID绑定命令
-  buidCmd.subcommand('.query [target:user]', '查询用户绑定的BUID')
+  buidCmd.subcommand('.query [target:string]', '查询用户绑定的BUID')
     .action(async ({ session }, target) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -2662,7 +2662,7 @@ export function apply(ctx: Context, config: Config) {
     })
 
   // 绑定BUID命令
-  buidCmd.subcommand('.bind <uid:string> [target:user]', '绑定B站UID')
+  buidCmd.subcommand('.bind <uid:string> [target:string]', '绑定B站UID')
     .action(async ({ session }, uid, target) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -4583,7 +4583,7 @@ export function apply(ctx: Context, config: Config) {
     })
   
   // 列出用户标签
-  tagCmd.subcommand('.list [target:user]', '查看用户的所有标签')
+  tagCmd.subcommand('.list [target:string]', '查看用户的所有标签')
     .action(async ({ session }, target) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
