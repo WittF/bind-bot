@@ -73,7 +73,7 @@ export const Config: Schema<Config> = Schema.object({
     .default(false),
   zminfoApiUrl: Schema.string()
     .description('ZMINFO API地址')
-    .default('http://zminfo-api.wittf.ink'),
+    .default('https://zminfo-api.wittf.com'),
   enableLotteryBroadcast: Schema.boolean()
     .description('是否启用天选开奖播报功能')
     .default(false),
@@ -1882,7 +1882,7 @@ export function apply(ctx: Context, config: Config) {
           let buidInfo = ''
           let buidAvatar = null
           if (updatedBind.buidUid) {
-            buidInfo = `\n\nB站账号信息：\nB站UID: ${updatedBind.buidUid}\n用户名: ${updatedBind.buidUsername}`
+            buidInfo = `B站账号信息：\nB站UID: ${updatedBind.buidUid}\n用户名: ${updatedBind.buidUsername}`
             if (updatedBind.guardLevel > 0) {
               buidInfo += `\n舰长等级: ${updatedBind.guardLevelText} (${updatedBind.guardLevel})`
             }
@@ -1894,15 +1894,20 @@ export function apply(ctx: Context, config: Config) {
               buidAvatar = h.image(`https://workers.vrp.moe/bilibili/avatar/${updatedBind.buidUid}?size=160`)
             }
           } else {
-            buidInfo = `\n\n该用户尚未绑定B站账号`
+            buidInfo = `该用户尚未绑定B站账号`
           }
           
           logger.info(`[查询] QQ(${normalizedTargetId})的MC账号信息：用户名=${updatedBind.mcUsername}, UUID=${updatedBind.mcUuid}`)
-          return sendMessage(session, [
-            h.text(`用户 ${normalizedTargetId} 的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}${buidInfo}`),
+          
+          // 按照用户期望的顺序发送消息：MC账号信息 -> MC头图 -> B站账号信息 -> B站头像
+          const messageElements = [
+            h.text(`用户 ${normalizedTargetId} 的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}`),
             ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : []),
+            h.text(buidInfo),
             ...(buidAvatar ? [buidAvatar] : [])
-          ])
+          ]
+          
+          return sendMessage(session, messageElements)
         }
         
         // 查询自己的MC账号
