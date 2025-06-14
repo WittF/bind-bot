@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-mcid-bot",
   "description": "适用于Koishi框架的Minecraft账号绑定机器人，支持QQ用户绑定和管理",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -21,7 +21,7 @@
   ],
   "koishi": {
     "description": {
-      "zh": "[WittF自用]适用于Koishi框架的Minecraft账号绑定插件，支持QQ用户绑定和管理。v1.1.2版本修复了B站账号查询时错误更新绑定时间的问题，并添加了天选播报功能开关。"
+      "zh": "[WittF自用]适用于Koishi框架的Minecraft账号绑定插件，支持QQ用户绑定和管理。v1.1.3版本优化了白名单命令的标签处理逻辑，优先检查标签名再检查QQ号，修复了标签识别问题。"
     }
   },
   "devDependencies": {

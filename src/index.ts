@@ -3522,27 +3522,28 @@ export function apply(ctx: Context, config: Config) {
             return sendMessage(session, [h.text('只有管理员才能为其他用户添加白名单')])
           }
           
-          // 检查是否为TAG（如果targets只有一个且不是用户ID格式）
-          if (targets.length === 1 && !/^\d+$/.test(normalizeQQId(targets[0]))) {
-            const tagName = targets[0]
-            logger.info(`[白名单] 管理员QQ(${normalizedUserId})尝试为标签"${tagName}"的所有用户添加服务器"${server.name}"白名单`)
+          // 检查是否为标签（优先检查标签名，没有匹配标签再按QQ号处理）
+          if (targets.length === 1) {
+            const targetValue = targets[0]
             
-            // 查找所有有该标签的用户
+            // 首先检查是否存在该标签名
             const allBinds = await ctx.database.get('mcidbind', {})
             const usersWithTag = allBinds.filter(bind => 
-              bind.tags && bind.tags.includes(tagName) && bind.mcUsername && !bind.mcUsername.startsWith('_temp_')
+              bind.tags && bind.tags.includes(targetValue) && bind.mcUsername && !bind.mcUsername.startsWith('_temp_')
             )
             
-            if (usersWithTag.length === 0) {
-              logger.warn(`[白名单] 没有已绑定MC账号的用户有标签"${tagName}"`)
-              return sendMessage(session, [h.text(`没有已绑定MC账号的用户有标签"${tagName}"`)])
+            if (usersWithTag.length > 0) {
+              // 作为标签处理
+              const tagName = targetValue
+              logger.info(`[白名单] 管理员QQ(${normalizedUserId})尝试为标签"${tagName}"的所有用户添加服务器"${server.name}"白名单`)
+              
+              // 转换为用户ID数组
+              targets = usersWithTag.map(bind => bind.qqId)
+              logger.info(`[白名单] 找到${targets.length}个有标签"${tagName}"的已绑定用户`)
+              
+              await sendMessage(session, [h.text(`找到${targets.length}个有标签"${tagName}"的已绑定用户，开始添加白名单...`)])
             }
-            
-            // 转换为用户ID数组
-            targets = usersWithTag.map(bind => bind.qqId)
-            logger.info(`[白名单] 找到${targets.length}个有标签"${tagName}"的已绑定用户`)
-            
-            await sendMessage(session, [h.text(`找到${targets.length}个有标签"${tagName}"的已绑定用户，开始添加白名单...`)])
+            // 如果没有找到标签，将继续按单个用户处理
           }
           
           // 单个用户的简洁处理逻辑
@@ -3719,27 +3720,28 @@ export function apply(ctx: Context, config: Config) {
         
         // 如果有指定目标用户（批量操作或单个用户管理）
         if (targets && targets.length > 0) {
-          // 检查是否为TAG（如果targets只有一个且不是用户ID格式）
-          if (targets.length === 1 && !/^\d+$/.test(normalizeQQId(targets[0]))) {
-            const tagName = targets[0]
-            logger.info(`[白名单] 管理员QQ(${normalizedUserId})尝试为标签"${tagName}"的所有用户移除服务器"${server.name}"白名单`)
+          // 检查是否为标签（优先检查标签名，没有匹配标签再按QQ号处理）
+          if (targets.length === 1) {
+            const targetValue = targets[0]
             
-            // 查找所有有该标签的用户
+            // 首先检查是否存在该标签名
             const allBinds = await ctx.database.get('mcidbind', {})
             const usersWithTag = allBinds.filter(bind => 
-              bind.tags && bind.tags.includes(tagName) && bind.mcUsername && !bind.mcUsername.startsWith('_temp_')
+              bind.tags && bind.tags.includes(targetValue) && bind.mcUsername && !bind.mcUsername.startsWith('_temp_')
             )
             
-            if (usersWithTag.length === 0) {
-              logger.warn(`[白名单] 没有已绑定MC账号的用户有标签"${tagName}"`)
-              return sendMessage(session, [h.text(`没有已绑定MC账号的用户有标签"${tagName}"`)])
+            if (usersWithTag.length > 0) {
+              // 作为标签处理
+              const tagName = targetValue
+              logger.info(`[白名单] 管理员QQ(${normalizedUserId})尝试为标签"${tagName}"的所有用户移除服务器"${server.name}"白名单`)
+              
+              // 转换为用户ID数组
+              targets = usersWithTag.map(bind => bind.qqId)
+              logger.info(`[白名单] 找到${targets.length}个有标签"${tagName}"的已绑定用户`)
+              
+              await sendMessage(session, [h.text(`找到${targets.length}个有标签"${tagName}"的已绑定用户，开始移除白名单...`)])
             }
-            
-            // 转换为用户ID数组
-            targets = usersWithTag.map(bind => bind.qqId)
-            logger.info(`[白名单] 找到${targets.length}个有标签"${tagName}"的已绑定用户`)
-            
-            await sendMessage(session, [h.text(`找到${targets.length}个有标签"${tagName}"的已绑定用户，开始移除白名单...`)])
+            // 如果没有找到标签，将继续按单个用户处理
           }
           
           // 单个用户的简洁处理逻辑
