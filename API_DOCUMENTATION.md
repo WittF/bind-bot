@@ -4,8 +4,9 @@
 
 ZMINFO 是一个专业的B站事件监听器，基于 LAPLACE Chat 标准设计。提供API接口用于查询收集到的用户数据和事件统计。
 
-**服务地址**: `http://zminfo-api.wittf.ink`  
-**版本**: 1.0.0
+**服务地址**: `http://localhost:3001`  
+**版本**: 1.1.0  
+**最后更新**: 2025年6月 - 添加历史最高舰长等级字段，优化等级更新机制
 
 ## 认证
 
@@ -60,7 +61,7 @@ ZMINFO 是一个专业的B站事件监听器，基于 LAPLACE Chat 标准设计�
 ```json
 {
   "success": true,
-  "message": "ZMINFO-API 事件监听器数据查询接口",
+  "message": "ZMINFO-API 用户信息查询系统",
   "version": "1.0.0",
   "endpoints": {
     "user_info": "/api/user/:uid",
@@ -68,12 +69,48 @@ ZMINFO 是一个专业的B站事件监听器，基于 LAPLACE Chat 标准设计�
     "user_stats": "/api/stats",
     "guard_users": "/api/guards",
     "active_users": "/api/active",
-    "fans_medal": "/api/fans-medal"
-  }
+    "fans_medal": "/api/fans-medal",
+    "user_activity": "/api/user/:uid/activity",
+    "users_batch": "/api/users/batch",
+    "lottery_events": "/api/lottery",
+    "lottery_active": "/api/lottery/active",
+    "lottery_finished": "/api/lottery/finished",
+    "lottery_by_id": "/api/lottery/:lotteryId",
+    "lottery_stats": "/api/lottery/stats",
+    "bridge_status": "/api/bridge/status",
+    "events_search": "/api/events/search",
+    "events_stats": "/api/events/stats",
+    "lottery_check": "/api/events/lottery/check",
+    "health_check": "/api/health"
+  },
+  "description": "提供B站用户信息查询服务和事件日志分析"
 }
 ```
 
 ### 2. 用户信息查询
+
+#### 用户信息字段说明
+
+用户信息对象包含以下字段：
+
+- `uid`: 用户UID
+- `username`: 用户昵称
+- `avatar_url`: 头像URL（使用代理服务）
+- `guard_level`: 当前舰长等级（0=无，1=总督，2=提督，3=舰长）
+- `guard_level_text`: 当前舰长等级文本
+- `max_guard_level`: **历史最高舰长等级**（0=白字，1=总督，2=提督，3=舰长）
+- `max_guard_level_text`: **历史最高舰长等级文本**
+- `medal`: 粉丝牌信息对象
+  - `name`: 粉丝牌名称
+  - `level`: 粉丝牌等级
+  - `uid`: 粉丝牌主播UID
+  - `room`: 粉丝牌房间号
+- `wealthMedalLevel`: 荣耀等级（财富勋章等级）
+- `last_active_time`: 最后活跃时间
+
+**注意**：
+- 粉丝牌等级和荣耀等级采用智能更新机制，只有在新等级大于现有等级时才更新，防止用户隐藏信息导致的数据回退
+- `max_guard_level` 记录用户达到过的最高舰长等级，即使舰长过期也会保留历史记录
 
 #### `GET /api/user/:uid`
 根据UID查询用户详细信息
@@ -93,6 +130,8 @@ ZMINFO 是一个专业的B站事件监听器，基于 LAPLACE Chat 标准设计�
       "avatar_url": "https://workers.vrp.moe/bilibili/avatar/123456789",
       "guard_level": 3,
       "guard_level_text": "舰长",
+      "max_guard_level": 1,
+      "max_guard_level_text": "总督",
       "medal": {
         "name": "生态",
         "level": 27,
@@ -129,6 +168,8 @@ ZMINFO 是一个专业的B站事件监听器，基于 LAPLACE Chat 标准设计�
         "avatar_url": "https://workers.vrp.moe/bilibili/avatar/123456789",
         "guard_level": 3,
         "guard_level_text": "舰长",
+        "max_guard_level": 2,
+        "max_guard_level_text": "提督",
         "medal": {
           "name": "生态",
           "level": 25,
@@ -336,6 +377,257 @@ ZMINFO 是一个专业的B站事件监听器，基于 LAPLACE Chat 标准设计�
 }
 ```
 
+## 6. 天选事件相关接口
+
+### 6.1 获取所有天选事件
+
+#### `GET /api/lottery`
+获取天选事件列表，支持分页和状态过滤
+
+**参数**:
+- `page` (query): 页码，默认1
+- `limit` (query): 每页数量，默认20，最大100
+- `status` (query): 状态过滤 (0:未开始 1:进行中 2:已开奖 3:已取消)
+
+**示例**: `/api/lottery?page=1&limit=20&status=2`
+
+**响应**:
+```json
+{
+  "success": true,
+  "message": "查询成功",
+  "data": {
+    "events": [
+      {
+        "lottery_id": "lottery_123456",
+        "room_id": 544853,
+        "title": "天选B坷垃一袋",
+        "award": {
+          "name": "B坷垃一袋",
+          "image": "https://example.com/award.jpg",
+          "num": 1
+        },
+        "requirement": {
+          "type": 1,
+          "value": "关注主播",
+          "text": "关注主播",
+          "danmu": ""
+        },
+        "time": {
+          "start_time": "2024-01-20T10:00:00.000Z",
+          "end_time": "2024-01-20T10:10:00.000Z",
+          "current_time": "2024-01-20T10:00:00.000Z",
+          "remaining_seconds": 0
+        },
+        "status": {
+          "code": 2,
+          "text": "已开奖",
+          "is_active": false,
+          "is_finished": true
+        },
+        "winner": {
+          "uid": "12345678",
+          "username": "中奖用户",
+          "avatar": "https://workers.vrp.moe/bilibili/avatar/12345678",
+          "medal": {
+            "name": "张三",
+            "level": 18
+          }
+        },
+        "metadata": {},
+        "created_at": "2024-01-20T10:00:00.000Z",
+        "updated_at": "2024-01-20T10:10:00.000Z"
+      }
+    ],
+    "filter": {
+      "page": 1,
+      "limit": 20,
+      "status": 2
+    }
+  }
+}
+```
+
+### 6.2 获取进行中的天选事件
+
+#### `GET /api/lottery/active`
+获取当前正在进行的天选事件
+
+**响应**:
+```json
+{
+  "success": true,
+  "message": "查询成功",
+  "data": {
+    "events": [
+      {
+        "lottery_id": "lottery_active_123",
+        "room_id": 544853,
+        "title": "天选谢谢惠顾",
+        "award": {
+          "name": "谢谢惠顾",
+          "num": 2
+        },
+        "requirement": {
+          "type": 0,
+          "text": "无要求"
+        },
+        "status": {
+          "code": 1,
+          "text": "进行中",
+          "is_active": true,
+          "is_finished": false
+        },
+        "time": {
+          "start_time": "2024-01-20T10:05:00.000Z",
+          "end_time": "2024-01-20T10:15:00.000Z",
+          "remaining_seconds": 420
+        },
+        "winner": null
+      }
+    ],
+    "count": 1
+  }
+}
+```
+
+### 6.3 获取已开奖的天选事件
+
+#### `GET /api/lottery/finished`
+获取已经开奖的天选事件列表
+
+**参数**:
+- `page` (query): 页码，默认1
+- `limit` (query): 每页数量，默认20，最大100
+
+**示例**: `/api/lottery/finished?page=1&limit=10`
+
+**响应**:
+```json
+{
+  "success": true,
+  "message": "查询成功",
+  "data": {
+    "events": [
+      {
+        "lottery_id": "lottery_finished_123",
+        "room_id": 544853,
+        "title": "天选礼品卡",
+        "award": {
+          "name": "京东卡50元",
+          "num": 1
+        },
+        "status": {
+          "code": 2,
+          "text": "已开奖",
+          "is_finished": true
+        },
+        "winner": {
+          "uid": "87654321",
+          "username": "幸运儿",
+          "avatar": "https://workers.vrp.moe/bilibili/avatar/87654321",
+          "medal": {
+            "name": "张三",
+            "level": 25
+          }
+        },
+        "created_at": "2024-01-20T09:30:00.000Z",
+        "updated_at": "2024-01-20T09:40:00.000Z"
+      }
+    ],
+    "filter": {
+      "page": 1,
+      "limit": 10
+    }
+  }
+}
+```
+
+### 6.4 根据天选ID查询事件
+
+#### `GET /api/lottery/:lotteryId`
+根据天选事件ID查询具体事件信息
+
+**参数**:
+- `lotteryId` (path): 天选事件ID
+
+**示例**: `/api/lottery/lottery_123456`
+
+**响应**:
+```json
+{
+  "success": true,
+  "message": "查询成功",
+  "data": {
+    "event": {
+      "lottery_id": "lottery_123456",
+      "room_id": 544853,
+      "title": "天选B坷垃一袋",
+      "award": {
+        "name": "B坷垃一袋",
+        "image": "https://example.com/award.jpg",
+        "num": 1
+      },
+      "requirement": {
+        "type": 1,
+        "value": "关注主播",
+        "text": "关注主播",
+        "danmu": ""
+      },
+      "time": {
+        "start_time": "2024-01-20T10:00:00.000Z",
+        "end_time": "2024-01-20T10:10:00.000Z",
+        "remaining_seconds": 0
+      },
+      "status": {
+        "code": 2,
+        "text": "已开奖",
+        "is_finished": true
+      },
+      "winner": {
+        "uid": "12345678",
+        "username": "中奖用户",
+        "avatar": "https://workers.vrp.moe/bilibili/avatar/12345678",
+        "medal": {
+          "name": "张三",
+          "level": 18
+        }
+      },
+      "metadata": {
+        "lottery_start_event": {
+          "duration": 600,
+          "giftName": "小心心",
+          "giftPrice": 5000
+        }
+      }
+    }
+  }
+}
+```
+
+### 6.5 获取天选事件统计信息
+
+#### `GET /api/lottery/stats`
+获取天选事件的统计信息
+
+**响应**:
+```json
+{
+  "success": true,
+  "message": "查询成功",
+  "data": {
+    "stats": {
+      "total_events": 156,
+      "active_events": 2,
+      "finished_events": 145,
+      "pending_events": 9,
+      "events_with_winners": 140,
+      "avg_duration_minutes": "8.5"
+    }
+  }
+}
+```
+
 ## 错误响应
 
 ### 错误格式
@@ -456,12 +748,40 @@ curl -X POST "http://localhost:3001/api/users/batch" \
   -d '{"uids": ["123456789", "987654321"]}'
 ```
 
-## 注意事项
+## 更新日志
 
-1. **频率限制**: API限制每分钟100次请求
-2. **数据实时性**: 用户信息通过EventBridge实时更新
-3. **缓存策略**: 建议客户端适当缓存查询结果
-4. **UID格式**: 所有UID必须是数字字符串
-5. **分页限制**: 单次查询最多返回100条记录
-6. **数据格式**: 响应数据符合 LAPLACE Chat 标准格式
-7. **字段变更**: `fans_medal` 已更名为 `medal`，`wealth_medal_level` 已更名为 `wealthMedalLevel`
+### v1.1.0 (2024年6月)
+
+**新增功能**:
+- ✅ 添加 `max_guard_level` 字段 - 记录用户历史最高舰长等级
+- ✅ 添加 `max_guard_level_text` 字段 - 历史最高舰长等级的文本描述
+- ✅ 智能等级更新机制 - 粉丝牌等级和荣耀等级只有在新值更大时才更新
+- ✅ 数据保护机制 - 防止用户隐藏信息导致的等级数据回退
+
+**API变更**:
+- 所有返回用户信息的接口都新增了 `max_guard_level` 和 `max_guard_level_text` 字段
+- 用户信息更新逻辑优化，确保等级数据的准确性和持久性
+
+**舰长等级说明**:
+- 0: 白字（普通用户）
+- 1: 总督（最高等级）
+- 2: 提督（中等级）  
+- 3: 舰长（基础等级）
+- 数值越小代表等级越高
+
+**向后兼容性**:
+- 所有现有API接口保持兼容
+- 新字段为新增字段，不影响现有客户端使用
+
+### v1.0.0 (2025年5月)
+
+**初始版本**:
+- 基础用户信息查询API
+- 用户搜索和筛选功能
+- 天选事件监听和查询
+- 用户活动记录和统计
+- 系统状态监控接口
+
+---
+
+*本文档由 ZMINFO 项目自动生成和维护*

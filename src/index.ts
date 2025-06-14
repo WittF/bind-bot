@@ -130,8 +130,10 @@ export interface MCIDBIND {
   // BUID相关字段
   buidUid: string       // B站UID
   buidUsername: string  // B站用户名
-  guardLevel: number    // 舰长等级
-  guardLevelText: string // 舰长等级文本
+  guardLevel: number    // 当前舰长等级
+  guardLevelText: string // 当前舰长等级文本
+  maxGuardLevel: number    // 历史最高舰长等级
+  maxGuardLevelText: string // 历史最高舰长等级文本
   medalName: string     // 粉丝牌名称
   medalLevel: number    // 粉丝牌等级
   wealthMedalLevel: number // 荣耀等级
@@ -165,6 +167,8 @@ interface ZminfoUser {
   avatar_url: string
   guard_level: number
   guard_level_text: string
+  max_guard_level: number        // 历史最高舰长等级
+  max_guard_level_text: string   // 历史最高舰长等级文本
   medal: {
     name: string
     level: number
@@ -834,6 +838,14 @@ export function apply(ctx: Context, config: Config) {
       type: 'string',
       initial: '',
     },
+    maxGuardLevel: {
+      type: 'integer',
+      initial: 0,
+    },
+    maxGuardLevelText: {
+      type: 'string',
+      initial: '',
+    },
     medalName: {
       type: 'string',
       initial: '',
@@ -901,6 +913,18 @@ export function apply(ctx: Context, config: Config) {
         // 检查并添加tags字段
         if (!record.tags) {
           updateData.tags = []
+          needUpdate = true
+        }
+        
+        // 检查并添加maxGuardLevel字段
+        if (!('maxGuardLevel' in record)) {
+          updateData.maxGuardLevel = 0
+          needUpdate = true
+        }
+        
+        // 检查并添加maxGuardLevelText字段
+        if (!('maxGuardLevelText' in record)) {
+          updateData.maxGuardLevelText = ''
           needUpdate = true
         }
         
@@ -1677,6 +1701,8 @@ export function apply(ctx: Context, config: Config) {
         buidUsername: buidUser.username,
         guardLevel: buidUser.guard_level || 0,
         guardLevelText: buidUser.guard_level_text || '',
+        maxGuardLevel: buidUser.max_guard_level || 0,
+        maxGuardLevelText: buidUser.max_guard_level_text || '',
         medalName: buidUser.medal?.name || '',
         medalLevel: buidUser.medal?.level || 0,
         wealthMedalLevel: buidUser.wealthMedalLevel || 0,
@@ -1728,6 +1754,8 @@ export function apply(ctx: Context, config: Config) {
         buidUsername: buidUser.username,
         guardLevel: buidUser.guard_level || 0,
         guardLevelText: buidUser.guard_level_text || '',
+        maxGuardLevel: buidUser.max_guard_level || 0,
+        maxGuardLevelText: buidUser.max_guard_level_text || '',
         medalName: buidUser.medal?.name || '',
         medalLevel: buidUser.medal?.level || 0,
         wealthMedalLevel: buidUser.wealthMedalLevel || 0,
@@ -1978,6 +2006,13 @@ export function apply(ctx: Context, config: Config) {
           buidInfo = `B站账号信息：\nB站UID: ${updatedBind.buidUid}\n用户名: ${updatedBind.buidUsername}`
           if (updatedBind.guardLevel > 0) {
             buidInfo += `\n舰长等级: ${updatedBind.guardLevelText} (${updatedBind.guardLevel})`
+            // 只有当历史最高等级比当前等级更高时才显示（数值越小等级越高）
+            if (updatedBind.maxGuardLevel > 0 && updatedBind.maxGuardLevel < updatedBind.guardLevel) {
+              buidInfo += `\n历史最高: ${updatedBind.maxGuardLevelText} (${updatedBind.maxGuardLevel})`
+            }
+          } else if (updatedBind.maxGuardLevel > 0) {
+            // 当前无舰长但有历史记录，显示历史最高
+            buidInfo += `\n历史舰长: ${updatedBind.maxGuardLevelText} (${updatedBind.maxGuardLevel})`
           }
           if (updatedBind.medalName) {
             buidInfo += `\n粉丝牌: ${updatedBind.medalName} Lv.${updatedBind.medalLevel}`
@@ -2651,7 +2686,16 @@ export function apply(ctx: Context, config: Config) {
         }
         const userInfo = `${target ? `用户 ${bind.qqId}` : '您的'}B站账号信息：\nB站UID: ${bind.buidUid}\n用户名: ${bind.buidUsername}`
         let detailInfo = ''
-        detailInfo += `\n舰长等级: ${bind.guardLevelText || '无'} (${bind.guardLevel || 0})`
+                  if (bind.guardLevel > 0) {
+            detailInfo += `\n舰长等级: ${bind.guardLevelText} (${bind.guardLevel})`
+            // 只有当历史最高等级比当前等级更高时才显示（数值越小等级越高）
+            if (bind.maxGuardLevel > 0 && bind.maxGuardLevel < bind.guardLevel) {
+              detailInfo += `\n历史最高: ${bind.maxGuardLevelText} (${bind.maxGuardLevel})`
+            }
+          } else if (bind.maxGuardLevel > 0) {
+            // 当前无舰长但有历史记录，显示历史最高
+            detailInfo += `\n历史舰长: ${bind.maxGuardLevelText} (${bind.maxGuardLevel})`
+          }
         detailInfo += `\n粉丝牌: ${bind.medalName || '无'} Lv.${bind.medalLevel || 0}`
         detailInfo += `\n荣耀等级: ${bind.wealthMedalLevel || 0}`
         detailInfo += `\n最后活跃: ${bind.lastActiveTime ? new Date(bind.lastActiveTime).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '未知'}`
@@ -2832,6 +2876,13 @@ export function apply(ctx: Context, config: Config) {
         
         if (bind.guardLevel > 0) {
           adminInfo += `\n舰长等级: ${bind.guardLevelText} (${bind.guardLevel})`
+          // 只有当历史最高等级比当前等级更高时才显示（数值越小等级越高）
+          if (bind.maxGuardLevel > 0 && bind.maxGuardLevel < bind.guardLevel) {
+            adminInfo += `\n历史最高: ${bind.maxGuardLevelText} (${bind.maxGuardLevel})`
+          }
+        } else if (bind.maxGuardLevel > 0) {
+          // 当前无舰长但有历史记录，显示历史最高
+          adminInfo += `\n历史舰长: ${bind.maxGuardLevelText} (${bind.maxGuardLevel})`
         }
         if (bind.medalName) {
           adminInfo += `\n粉丝牌: ${bind.medalName} Lv.${bind.medalLevel}`
