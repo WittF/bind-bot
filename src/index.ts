@@ -555,6 +555,18 @@ class RateLimiter {
   }
 }
 
+// 交互型绑定会话状态接口
+interface BindingSession {
+  userId: string
+  channelId: string
+  state: 'waiting_mc_username' | 'waiting_buid'
+  startTime: number
+  timeout: NodeJS.Timeout
+  mcUsername?: string
+  mcUuid?: string
+  invalidInputCount?: number // 记录无效输入次数
+}
+
 // 天选开奖信息接口
 interface LotteryWinner {
   uid: number
@@ -579,6 +591,10 @@ interface LotteryResult {
 export function apply(ctx: Context, config: Config) {
   // 创建日志记录器
   const logger = new Logger('mcid-bot')
+  
+  // 交互型绑定会话管理
+  const bindingSessions = new Map<string, BindingSession>()
+  const BINDING_SESSION_TIMEOUT = 3 * 60 * 1000 // 3分钟超时
   
   // 日志辅助函数，根据debugMode控制输出
   const logDebug = (context: string, message: string): void => {
@@ -632,6 +648,113 @@ export function apply(ctx: Context, config: Config) {
   
   // 创建RCON限流器实例
   const rconRateLimiter = new RateLimiter(10, 3000); // 3秒内最多10个请求
+  
+  // 会话管理辅助函数
+  const createBindingSession = (userId: string, channelId: string): void => {
+    const sessionKey = `${userId}_${channelId}`
+    
+    // 如果已有会话，先清理
+    const existingSession = bindingSessions.get(sessionKey)
+    if (existingSession) {
+      clearTimeout(existingSession.timeout)
+      bindingSessions.delete(sessionKey)
+    }
+    
+    // 创建超时定时器
+    const timeout = setTimeout(() => {
+      bindingSessions.delete(sessionKey)
+      // 发送超时消息
+      ctx.bots.forEach(bot => {
+        bot.sendMessage(channelId, [h.text('绑定会话已超时，请重新开始绑定流程')]).catch(() => {})
+      })
+      logger.info(`[交互绑定] QQ(${normalizeQQId(userId)})的绑定会话因超时被清理`)
+    }, BINDING_SESSION_TIMEOUT)
+    
+    // 创建新会话
+    const session: BindingSession = {
+      userId: normalizeQQId(userId),
+      channelId,
+      state: 'waiting_mc_username',
+      startTime: Date.now(),
+      timeout
+    }
+    
+    bindingSessions.set(sessionKey, session)
+    logger.info(`[交互绑定] 为QQ(${normalizeQQId(userId)})创建了新的绑定会话`)
+  }
+  
+  const getBindingSession = (userId: string, channelId: string): BindingSession | null => {
+    const sessionKey = `${normalizeQQId(userId)}_${channelId}`
+    return bindingSessions.get(sessionKey) || null
+  }
+  
+  const updateBindingSession = (userId: string, channelId: string, updates: Partial<BindingSession>): void => {
+    const sessionKey = `${normalizeQQId(userId)}_${channelId}`
+    const session = bindingSessions.get(sessionKey)
+    if (session) {
+      Object.assign(session, updates)
+    }
+  }
+  
+  const removeBindingSession = (userId: string, channelId: string): void => {
+    const sessionKey = `${normalizeQQId(userId)}_${channelId}`
+    const session = bindingSessions.get(sessionKey)
+    if (session) {
+      clearTimeout(session.timeout)
+      bindingSessions.delete(sessionKey)
+      logger.info(`[交互绑定] 移除了QQ(${normalizeQQId(userId)})的绑定会话`)
+    }
+  }
+
+  // 检查是否为无关输入
+  const checkIrrelevantInput = (bindingSession: BindingSession, content: string): boolean => {
+    if (!content) return false
+    
+    // 常见的聊天用语或明显无关的内容
+    const chatKeywords = ['你好', 'hello', 'hi', '在吗', '在不在', '怎么样', '什么', '为什么', '好的', '谢谢', '哈哈', '呵呵']
+    const lowercaseContent = content.toLowerCase()
+    
+    // 检查是否包含明显的聊天用语
+    if (chatKeywords.some(keyword => lowercaseContent.includes(keyword))) {
+      return true
+    }
+    
+    if (bindingSession.state === 'waiting_mc_username') {
+      // MC用户名检查
+      // 长度明显不符合MC用户名规范（3-16位）
+      if (content.length < 2 || content.length > 20) {
+        return true
+      }
+      // 包含中文或其他明显不是MC用户名的字符
+      if (/[\u4e00-\u9fa5]/.test(content) || content.includes(' ') || content.includes('@')) {
+        return true
+      }
+      // 如果是明显的指令格式
+      if (content.startsWith('.') || content.startsWith('/') || content.startsWith('mcid') || content.startsWith('buid')) {
+        return true
+      }
+    } else if (bindingSession.state === 'waiting_buid') {
+      // B站UID检查
+      // 移除UID:前缀后检查
+      let actualContent = content
+      if (content.toLowerCase().startsWith('uid:')) {
+        actualContent = content.substring(4)
+      }
+      // 如果不是纯数字且不是跳过命令
+      if (!/^\d+$/.test(actualContent) && content !== '跳过' && content !== 'skip') {
+        // 检查是否明显是聊天内容（包含字母、中文、空格等）
+        if (/[a-zA-Z\u4e00-\u9fa5\s]/.test(content) && !content.toLowerCase().startsWith('uid:')) {
+          return true
+        }
+        // 如果是明显的指令格式
+        if (content.startsWith('.') || content.startsWith('/') || content.startsWith('mcid') || content.startsWith('buid')) {
+          return true
+        }
+      }
+    }
+    
+    return false
+  }
   
   // 根据配置获取命令前缀
   const getCommandPrefix = (): string => {
@@ -1831,6 +1954,271 @@ export function apply(ctx: Context, config: Config) {
     })
   }
 
+  // 交互型绑定会话处理中间件
+  ctx.middleware(async (session, next) => {
+    try {
+      // 检查是否有进行中的绑定会话
+      const bindingSession = getBindingSession(session.userId, session.channelId)
+      if (!bindingSession) {
+        return next()
+      }
+      
+      const normalizedUserId = normalizeQQId(session.userId)
+      const content = session.content?.trim()
+      
+      // 处理取消命令
+      if (content === '取消' || content === 'cancel') {
+        removeBindingSession(session.userId, session.channelId)
+        logger.info(`[交互绑定] QQ(${normalizedUserId})手动取消了绑定会话`)
+        await sendMessage(session, [h.text('❌ 绑定会话已取消')])
+        return
+      }
+      
+      // 检查是否为明显无关的输入
+      const isIrrelevantInput = checkIrrelevantInput(bindingSession, content)
+      if (isIrrelevantInput) {
+        const currentCount = bindingSession.invalidInputCount || 0
+        const newCount = currentCount + 1
+        
+        updateBindingSession(session.userId, session.channelId, {
+          invalidInputCount: newCount
+        })
+        
+        if (newCount === 1) {
+          // 第1次无关输入，提醒检查
+          const expectedInput = bindingSession.state === 'waiting_mc_username' ? 'MC用户名' : 'B站UID'
+          await sendMessage(session, [h.text(`🤔 您当前正在进行绑定流程，需要输入${expectedInput}\n\n如果您想取消绑定，请发送"取消"`)])
+          return
+        } else if (newCount >= 2) {
+          // 第2次无关输入，建议取消
+          removeBindingSession(session.userId, session.channelId)
+          logger.info(`[交互绑定] QQ(${normalizedUserId})因多次无关输入自动取消绑定会话`)
+          await sendMessage(session, [h.text('🔄 检测到您可能不想继续绑定流程，已自动取消绑定会话\n\n如需重新绑定，请使用 ' + formatCommand('mcid 绑定') + ' 命令')])
+          return
+        }
+      }
+      
+      // 根据当前状态处理用户输入
+      if (bindingSession.state === 'waiting_mc_username') {
+        // 处理MC用户名输入
+        await handleMcUsernameInput(session, bindingSession, content)
+        return
+      } else if (bindingSession.state === 'waiting_buid') {
+        // 处理B站UID输入
+        await handleBuidInput(session, bindingSession, content)
+        return
+      }
+      
+      return next()
+    } catch (error) {
+      const normalizedUserId = normalizeQQId(session.userId)
+      logger.error(`[交互绑定] QQ(${normalizedUserId})的会话处理出错: ${error.message}`)
+      removeBindingSession(session.userId, session.channelId)
+      await sendMessage(session, [h.text('绑定过程中出现错误，会话已重置')])
+      return
+    }
+  })
+
+  // 处理MC用户名输入
+  const handleMcUsernameInput = async (session: Session, bindingSession: BindingSession, content: string): Promise<void> => {
+    const normalizedUserId = normalizeQQId(session.userId)
+    
+    // 验证用户名格式
+    if (!content || !/^[a-zA-Z0-9_]{3,16}$/.test(content)) {
+      logger.warn(`[交互绑定] QQ(${normalizedUserId})输入的MC用户名"${content}"格式无效`)
+      await sendMessage(session, [h.text('❌ 用户名格式无效\n\n请输入有效的MC用户名（3-16位字母、数字、下划线）')])
+      return
+    }
+    
+    // 验证用户名是否存在
+    const profile = await validateUsername(content)
+    if (!profile) {
+      logger.warn(`[交互绑定] QQ(${normalizedUserId})输入的MC用户名"${content}"不存在`)
+      await sendMessage(session, [h.text(`❌ 用户名 ${content} 不存在\n\n请输入正确的MC用户名`)])
+      return
+    }
+    
+    const username = profile.name
+    const uuid = profile.id
+    
+    // 检查用户是否已绑定MC账号
+    const existingBind = await getMcBindByQQId(normalizedUserId)
+    if (existingBind && existingBind.mcUsername && !existingBind.mcUsername.startsWith('_temp_')) {
+      // 检查冷却时间
+      if (!await isAdmin(session.userId) && !checkCooldown(existingBind.lastModified, 3)) {
+        const days = config.cooldownDays * 3
+        const now = new Date()
+        const diffTime = now.getTime() - existingBind.lastModified.getTime()
+        const passedDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
+        const remainingDays = days - passedDays
+        
+        removeBindingSession(session.userId, session.channelId)
+        await sendMessage(session, [h.text(`❌ 您已绑定MC账号: ${existingBind.mcUsername}\n\n如需修改，请在冷却期结束后(还需${remainingDays}天)使用 ${formatCommand('mcid change')} 命令或联系管理员`)])
+        return
+      }
+    }
+    
+    // 检查用户名是否已被其他人绑定
+    if (await checkUsernameExists(username, session.userId)) {
+      logger.warn(`[交互绑定] MC用户名"${username}"已被其他用户绑定`)
+      await sendMessage(session, [h.text(`❌ 用户名 ${username} 已被其他用户绑定\n\n请输入其他MC用户名`)])
+      return
+    }
+    
+    // 绑定MC账号
+    const bindResult = await createOrUpdateMcBind(session.userId, username, uuid)
+    if (!bindResult) {
+      logger.error(`[交互绑定] QQ(${normalizedUserId})绑定MC账号失败`)
+      removeBindingSession(session.userId, session.channelId)
+      await sendMessage(session, [h.text('❌ 绑定失败，数据库操作出错\n\n请联系管理员或稍后重试')])
+      return
+    }
+    
+    logger.info(`[交互绑定] QQ(${normalizedUserId})成功绑定MC账号: ${username}`)
+    
+    // 更新会话状态
+    updateBindingSession(session.userId, session.channelId, {
+      state: 'waiting_buid',
+      mcUsername: username,
+      mcUuid: uuid
+    })
+    
+    // 根据配置决定显示哪种图像
+    let mcAvatarUrl = null
+    if (config?.showAvatar) {
+      if (config?.showMcSkin) {
+        mcAvatarUrl = getStarlightSkinUrl(username)
+      } else {
+        mcAvatarUrl = getCrafatarUrl(uuid)
+      }
+    }
+    
+    const formattedUuid = formatUuid(uuid)
+    
+    // 发送MC绑定成功消息和B站UID输入提示
+    await sendMessage(session, [
+      h.text(`✅ MC账号绑定成功！\n\n用户名: ${username}\nUUID: ${formattedUuid}\n\n现在请发送您的B站UID...\n\n💡 提示：\n- 支持格式：12345 或 UID:12345\n- 发送"跳过"可跳过B站绑定\n- 发送"取消"可退出绑定流程`),
+      ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : [])
+    ])
+  }
+
+
+
+  // 处理B站UID输入
+  const handleBuidInput = async (session: Session, bindingSession: BindingSession, content: string): Promise<void> => {
+    const normalizedUserId = normalizeQQId(session.userId)
+    
+    // 处理跳过B站绑定
+    if (content === '跳过' || content === 'skip') {
+      removeBindingSession(session.userId, session.channelId)
+      logger.info(`[交互绑定] QQ(${normalizedUserId})跳过了B站账号绑定`)
+      await sendMessage(session, [h.text('✅ 交互式绑定完成！\n\n您已成功绑定MC账号，B站账号绑定已跳过\n可以随时使用 ' + formatCommand('buid bind <UID>') + ' 命令单独绑定B站账号')])
+      return
+    }
+    
+    // 解析UID格式
+    let actualUid = content
+    if (content && content.toLowerCase().startsWith('uid:')) {
+      actualUid = content.substring(4)
+    }
+    
+    // 验证UID格式
+    if (!actualUid || !/^\d+$/.test(actualUid)) {
+      logger.warn(`[交互绑定] QQ(${normalizedUserId})输入的B站UID"${content}"格式无效`)
+      await sendMessage(session, [h.text('❌ UID格式无效\n\n请输入正确的B站UID（纯数字或UID:数字格式）\n或发送"跳过"跳过B站绑定')])
+      return
+    }
+    
+    // 检查UID是否已被绑定
+    if (await checkBuidExists(actualUid, session.userId)) {
+      logger.warn(`[交互绑定] B站UID"${actualUid}"已被其他用户绑定`)
+      await sendMessage(session, [h.text(`❌ UID ${actualUid} 已被其他用户绑定\n\n请输入其他B站UID或发送"跳过"跳过B站绑定`)])
+      return
+    }
+    
+    // 验证UID是否存在
+    const buidUser = await validateBUID(actualUid)
+    if (!buidUser) {
+      logger.warn(`[交互绑定] QQ(${normalizedUserId})输入的B站UID"${actualUid}"不存在`)
+      await sendMessage(session, [h.text(`❌ 无法验证UID: ${actualUid}\n\n该用户可能不存在或未被发现\n建议去直播间逛一圈，发个弹幕后再绑定\n或发送"跳过"跳过B站绑定`)])
+      return
+    }
+    
+    // 绑定B站账号
+    const bindResult = await createOrUpdateBuidBind(session.userId, buidUser)
+    if (!bindResult) {
+      logger.error(`[交互绑定] QQ(${normalizedUserId})绑定B站账号失败`)
+      removeBindingSession(session.userId, session.channelId)
+      await sendMessage(session, [h.text('❌ B站账号绑定失败，数据库操作出错\n\n但您的MC账号已成功绑定\n可稍后使用 ' + formatCommand('buid bind <UID>') + ' 命令单独绑定B站账号')])
+      return
+    }
+    
+    logger.info(`[交互绑定] QQ(${normalizedUserId})成功绑定B站UID: ${actualUid}`)
+    
+    // 清理会话
+    removeBindingSession(session.userId, session.channelId)
+    
+    // 自动群昵称设置功能 - 使用OneBot API
+    try {
+      const newNickname = `${buidUser.username}（ID：${bindingSession.mcUsername}）`
+      const targetGroupId = '931805503' // 指定的群ID
+      
+      if (session.bot.internal) {
+        let groupsToUpdate = []
+        
+        if (session.isDirect) {
+          // 私聊环境：在指定群里设置昵称
+          groupsToUpdate.push(targetGroupId)
+          logger.info(`[交互绑定] QQ(${normalizedUserId})私聊绑定，将在群${targetGroupId}中设置昵称`)
+        } else {
+          // 群聊环境：在当前群设置昵称，如果不是指定群还要在指定群也设置
+          groupsToUpdate.push(session.channelId)
+          if (session.channelId !== targetGroupId) {
+            groupsToUpdate.push(targetGroupId)
+          }
+          logger.info(`[交互绑定] QQ(${normalizedUserId})群聊绑定，将在群${groupsToUpdate.join(', ')}中设置昵称`)
+        }
+        
+        // 为每个群设置昵称
+        for (const groupId of groupsToUpdate) {
+          try {
+            await session.bot.internal.setGroupCard({
+              group_id: groupId,
+              user_id: session.userId,
+              card: newNickname
+            })
+            logger.info(`[交互绑定] 成功在群${groupId}中将QQ(${normalizedUserId})群昵称设置为: ${newNickname}`)
+          } catch (groupError) {
+            logger.warn(`[交互绑定] 在群${groupId}中设置QQ(${normalizedUserId})群昵称失败: ${groupError.message}`)
+          }
+        }
+      } else {
+        logger.debug(`[交互绑定] QQ(${normalizedUserId})bot不支持OneBot内部API，跳过自动群昵称设置`)
+      }
+    } catch (renameError) {
+      logger.warn(`[交互绑定] QQ(${normalizedUserId})自动群昵称设置失败: ${renameError.message}`)
+      // 群昵称设置失败不影响主流程，只记录日志
+    }
+    
+    // 发送完整的绑定成功消息
+    const buidInfo = `B站UID: ${buidUser.uid}\n用户名: ${buidUser.username}`
+    let extraInfo = ''
+    if (buidUser.guard_level > 0) {
+      extraInfo += `\n舰长等级: ${buidUser.guard_level_text} (${buidUser.guard_level})`
+    }
+    if (buidUser.medal) {
+      extraInfo += `\n粉丝牌: ${buidUser.medal.name} Lv.${buidUser.medal.level}`
+    }
+    if (buidUser.wealthMedalLevel > 0) {
+      extraInfo += `\n荣耀等级: ${buidUser.wealthMedalLevel}`
+    }
+    
+    await sendMessage(session, [
+      h.text(`🎉 交互式绑定完成！\n\n您已成功绑定：\n✅ MC账号: ${bindingSession.mcUsername}\n✅ B站账号: ${buidUser.username}\n\n${buidInfo}${extraInfo}`),
+      ...(config?.showAvatar ? [h.image(`https://workers.vrp.moe/bilibili/avatar/${buidUser.uid}?size=160`)] : [])
+    ])
+  }
+
   // 帮助函数：转义正则表达式中的特殊字符
   const escapeRegExp = (string: string): string => {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -2474,6 +2862,85 @@ export function apply(ctx: Context, config: Config) {
         const normalizedUserId = normalizeQQId(session.userId)
         const targetInfo = target ? `为QQ(${normalizeQQId(target)})` : ''
         logger.error(`[解绑] QQ(${normalizedUserId})${targetInfo}解绑MC账号失败: ${error.message}`)
+        return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
+      }
+    })
+
+  // 交互型绑定命令
+  cmd.subcommand('.绑定', '交互式绑定流程')
+    .alias('interact')
+    .action(async ({ session }) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        const channelId = session.channelId
+        
+        logger.info(`[交互绑定] QQ(${normalizedUserId})开始交互式绑定流程`)
+        
+        // 检查是否已有进行中的会话
+        const existingSession = getBindingSession(session.userId, channelId)
+        if (existingSession) {
+          logger.warn(`[交互绑定] QQ(${normalizedUserId})已有进行中的绑定会话`)
+          return sendMessage(session, [h.text('您已有进行中的绑定会话，请先完成当前绑定或等待会话超时')])
+        }
+        
+        // 检查用户当前绑定状态
+        const existingBind = await getMcBindByQQId(normalizedUserId)
+        
+        // 如果两个账号都已绑定，不需要进入绑定流程
+        if (existingBind && existingBind.mcUsername && existingBind.buidUid) {
+          logger.info(`[交互绑定] QQ(${normalizedUserId})已完成全部绑定`)
+          
+          // 显示当前绑定信息
+          let bindInfo = `您已完成全部账号绑定：\n✅ MC账号: ${existingBind.mcUsername}\n✅ B站账号: ${existingBind.buidUsername} (UID: ${existingBind.buidUid})`
+          
+          if (existingBind.guardLevel > 0) {
+            bindInfo += `\n舰长等级: ${existingBind.guardLevelText}`
+          }
+          if (existingBind.medalName) {
+            bindInfo += `\n粉丝牌: ${existingBind.medalName} Lv.${existingBind.medalLevel}`
+          }
+          
+          bindInfo += `\n\n如需修改绑定信息，请使用：\n- ${formatCommand('mcid change <新用户名>')} 修改MC账号\n- ${formatCommand('buid bind <新UID>')} 修改B站账号`
+          
+          return sendMessage(session, [h.text(bindInfo)])
+        }
+        
+        // 如果已绑定MC但未绑定B站，直接进入B站绑定流程
+        if (existingBind && existingBind.mcUsername && !existingBind.buidUid) {
+          logger.info(`[交互绑定] QQ(${normalizedUserId})已绑定MC，进入B站绑定流程`)
+          
+          // 创建绑定会话，状态直接设为等待B站UID
+          const timeout = setTimeout(() => {
+            bindingSessions.delete(`${normalizedUserId}_${channelId}`)
+            ctx.bots.forEach(bot => {
+              bot.sendMessage(channelId, [h.text('绑定会话已超时，请重新开始绑定流程')]).catch(() => {})
+            })
+            logger.info(`[交互绑定] QQ(${normalizedUserId})的绑定会话因超时被清理`)
+          }, BINDING_SESSION_TIMEOUT)
+          
+          const sessionData: BindingSession = {
+            userId: session.userId,
+            channelId: channelId,
+            state: 'waiting_buid',
+            startTime: Date.now(),
+            timeout: timeout,
+            mcUsername: existingBind.mcUsername,
+            mcUuid: existingBind.mcUuid
+          }
+          
+          bindingSessions.set(`${normalizedUserId}_${channelId}`, sessionData)
+          
+          return sendMessage(session, [h.text(`🎮 您已绑定MC账号: ${existingBind.mcUsername}\n\n现在请发送您的B站UID...\n\n💡 提示：\n- 支持格式：12345 或 UID:12345\n- 发送"跳过"可跳过B站绑定\n- 发送"取消"可退出绑定流程`)])
+        }
+        
+        // 如果未绑定MC账号，从MC绑定开始
+        createBindingSession(session.userId, channelId)
+        
+        // 发送欢迎消息和MC用户名输入提示
+        return sendMessage(session, [h.text(`🎮 开始交互式绑定流程\n\n请发送您的MC用户名...\n\n💡 提示：\n- 用户名格式：3-16位字母、数字、下划线\n- 发送"取消"可退出绑定流程`)])
+      } catch (error) {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logger.error(`[交互绑定] QQ(${normalizedUserId})开始交互式绑定失败: ${error.message}`)
         return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
       }
     })
@@ -4748,6 +5215,85 @@ export function apply(ctx: Context, config: Config) {
       }
     })
 
+  // 重命名标签
+  tagCmd.subcommand('.rename <oldTagName:string> <newTagName:string>', '[管理员]重命名标签')
+    .action(async ({ session }, oldTagName, newTagName) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        
+        // 检查权限
+        if (!await isAdmin(session.userId)) {
+          logger.warn(`[标签] 权限不足: QQ(${normalizedUserId})不是管理员，无法重命名标签`)
+          return sendMessage(session, [h.text('只有管理员才能重命名标签')])
+        }
+        
+        // 检查参数
+        if (!oldTagName || !newTagName) {
+          logger.warn(`[标签] QQ(${normalizedUserId})参数不完整`)
+          return sendMessage(session, [h.text('请提供旧标签名和新标签名')])
+        }
+        
+        // 验证新标签名称格式（只允许字母、数字、中文、下划线和连字符）
+        if (!/^[\u4e00-\u9fa5a-zA-Z0-9_-]+$/.test(newTagName)) {
+          logger.warn(`[标签] QQ(${normalizedUserId})提供的新标签名称"${newTagName}"格式无效`)
+          return sendMessage(session, [h.text('新标签名称只能包含中文、字母、数字、下划线和连字符')])
+        }
+        
+        // 检查旧标签是否存在
+        const allBinds = await ctx.database.get('mcidbind', {})
+        const usersWithOldTag = allBinds.filter(bind => 
+          bind.tags && bind.tags.includes(oldTagName)
+        )
+        
+        if (usersWithOldTag.length === 0) {
+          logger.info(`[标签] 标签"${oldTagName}"不存在，无需重命名`)
+          return sendMessage(session, [h.text(`标签"${oldTagName}"不存在`)])
+        }
+        
+        // 检查新标签是否已存在
+        const usersWithNewTag = allBinds.filter(bind => 
+          bind.tags && bind.tags.includes(newTagName)
+        )
+        
+        if (usersWithNewTag.length > 0) {
+          logger.warn(`[标签] 新标签"${newTagName}"已存在，无法重命名`)
+          return sendMessage(session, [h.text(`新标签"${newTagName}"已存在，请选择其他名称`)])
+        }
+        
+        logger.info(`[标签] 管理员QQ(${normalizedUserId})开始将标签"${oldTagName}"重命名为"${newTagName}"`)
+        await sendMessage(session, [h.text(`找到${usersWithOldTag.length}个用户有标签"${oldTagName}"，开始重命名为"${newTagName}"...`)])
+        
+        // 统计信息
+        let successCount = 0
+        let failCount = 0
+        
+        // 批量重命名标签
+        for (const bind of usersWithOldTag) {
+          try {
+            // 将旧标签替换为新标签
+            const newTags = bind.tags.map(tag => tag === oldTagName ? newTagName : tag)
+            await ctx.database.set('mcidbind', { qqId: bind.qqId }, { tags: newTags })
+            
+            successCount++
+            logger.debug(`[标签] 成功为用户QQ(${bind.qqId})将标签"${oldTagName}"重命名为"${newTagName}"`)
+          } catch (error) {
+            failCount++
+            logger.error(`[标签] 为用户QQ(${bind.qqId})重命名标签失败: ${error.message}`)
+          }
+        }
+        
+        // 生成结果报告
+        const resultMessage = `标签重命名完成\n"${oldTagName}" → "${newTagName}"\n共处理${usersWithOldTag.length}个用户\n✅ 成功: ${successCount} 个\n❌ 失败: ${failCount} 个`
+        
+        logger.info(`[标签] 重命名完成: 管理员QQ(${normalizedUserId})将标签"${oldTagName}"重命名为"${newTagName}"，处理${usersWithOldTag.length}个用户，成功: ${successCount}，失败: ${failCount}`)
+        return sendMessage(session, [h.text(resultMessage)])
+      } catch (error) {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logger.error(`[标签] QQ(${normalizedUserId})重命名标签失败: ${error.message}`)
+        return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
+      }
+    })
+
   // 删除所有用户的某个标签
   tagCmd.subcommand('.deleteall <tagName:string>', '[主人]删除所有用户的某个标签')
     .action(async ({ session }, tagName) => {
@@ -4921,7 +5467,14 @@ export function apply(ctx: Context, config: Config) {
       let groupMessage = `🎉 天选开奖结果通知\n\n`
       groupMessage += `📅 开奖时间: ${lotteryTime}\n`
       groupMessage += `🎁 奖品名称: ${lotteryData.reward_name}\n`
-      groupMessage += `📊 奖品数量: ${lotteryData.reward_num}个\n\n`
+      groupMessage += `📊 奖品数量: ${lotteryData.reward_num}个\n`
+      groupMessage += `🎲 总中奖人数: ${stats.totalWinners}人`
+      
+      // 添加未绑定用户说明
+      if (stats.notBoundCount > 0) {
+        groupMessage += `（其中${stats.notBoundCount}人未绑定跳过）`
+      }
+      groupMessage += `\n\n`
       
       // 如果有匹配的用户，显示详细信息
       if (stats.matchedUsers.length > 0) {

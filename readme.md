@@ -4,6 +4,7 @@
 
 ### Minecraft账号相关
 - `mcid bind <用户名>` 绑定Minecraft账号
+- `mcid 绑定` 交互式绑定流程（引导式绑定MC账号和B站账号）
 - `mcid query` 查询自己绑定的Minecraft账号
 - `mcid change <用户名>` 修改绑定的Minecraft账号
 - `mcid unbind` 解绑Minecraft账号
@@ -41,6 +42,7 @@
 - `mcid tag remove <标签名> <目标用户...>` 移除用户标签（支持批量，支持QQ号和@用户）
 - `mcid tag list [目标用户]` 查看用户的所有标签或查看所有标签统计（支持QQ号和@用户）
 - `mcid tag find <标签名>` 查找有指定标签的所有用户
+- `mcid tag rename <旧标签名> <新标签名>` 重命名标签（管理员权限）
 
 ## 主人命令
 
