@@ -24,6 +24,8 @@ export interface Config {
   zminfoApiUrl: string
   // 天选播报配置
   enableLotteryBroadcast: boolean
+  // 自动群昵称设置目标群
+  autoNicknameGroupId: string
 }
 
 // 服务器配置接口
@@ -77,6 +79,9 @@ export const Config: Schema<Config> = Schema.object({
   enableLotteryBroadcast: Schema.boolean()
     .description('是否启用天选开奖播报功能')
     .default(false),
+  autoNicknameGroupId: Schema.string()
+    .description('自动群昵称设置目标群ID')
+    .default('931805503'),
   servers: Schema.array(Schema.object({
     id: Schema.string()
       .description('服务器唯一ID（不允许重复）')
@@ -2161,9 +2166,9 @@ export function apply(ctx: Context, config: Config) {
     // 自动群昵称设置功能 - 使用OneBot API
     try {
       const newNickname = `${buidUser.username}（ID：${bindingSession.mcUsername}）`
-      const targetGroupId = '931805503' // 指定的群ID
+      const targetGroupId = config.autoNicknameGroupId // 使用配置的群ID
       
-      if (session.bot.internal) {
+      if (session.bot.internal && targetGroupId) {
         let groupsToUpdate = []
         
         // 只在指定群设置昵称
@@ -2179,8 +2184,10 @@ export function apply(ctx: Context, config: Config) {
             logger.warn(`[交互绑定] 在群${groupId}中设置QQ(${normalizedUserId})群昵称失败: ${groupError.message}`)
           }
         }
-      } else {
+      } else if (!session.bot.internal) {
         logger.debug(`[交互绑定] QQ(${normalizedUserId})bot不支持OneBot内部API，跳过自动群昵称设置`)
+      } else if (!targetGroupId) {
+        logger.debug(`[交互绑定] QQ(${normalizedUserId})未配置自动群昵称设置目标群，跳过群昵称设置`)
       }
     } catch (renameError) {
       logger.warn(`[交互绑定] QQ(${normalizedUserId})自动群昵称设置失败: ${renameError.message}`)

@@ -123,6 +123,7 @@ mcid whitelist remove 生存服 VIP
 | showAvatar | boolean | false | 是否显示头像图片（MC用头图，B站用头像） |
 | showMcSkin | boolean | false | 是否使用MC皮肤渲染图（需要先开启showAvatar） |
 | zminfoApiUrl | string | 'http://zminfo-api.wittf.ink' | ZMINFO API地址，用于获取B站用户信息 |
+| autoNicknameGroupId | string | '931805503' | 自动群昵称设置目标群ID，交互式绑定完成后自动设置群昵称 |
 | servers | array | [] | Minecraft服务器配置列表 |
 
 ### 服务器配置项
