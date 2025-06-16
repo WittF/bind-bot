@@ -775,8 +775,8 @@ export function apply(ctx: Context, config: Config) {
       return true
     }
     
-    // 检查是否为纯表情或数字串（可能是聊天内容）
-    if (/^[0-9\s]*$/.test(content) && content.length > 6) {
+    // 检查是否为纯数字串（可能是聊天内容，但排除有效的UID）
+    if (/^[0-9\s]*$/.test(content) && content.length > 15) {
       return true
     }
     
@@ -1442,7 +1442,12 @@ export function apply(ctx: Context, config: Config) {
       // 只在自动撤回时间大于0和存在bot对象时处理撤回
       if (config.autoRecallTime > 0 && session.bot) {
         // 处理撤回用户消息 - 只在群聊中且开启了用户消息撤回时
-        if (config.recallUserMessage && isGroupMessage && session.messageId) {
+        // 但如果用户在绑定会话中发送聊天消息，不撤回
+        const bindingSession = getBindingSession(session.userId, session.channelId)
+        const shouldNotRecallUserMessage = bindingSession && session.content && 
+          checkIrrelevantInput(bindingSession, session.content.trim())
+        
+        if (config.recallUserMessage && isGroupMessage && session.messageId && !shouldNotRecallUserMessage) {
           setTimeout(async () => {
             try {
               await session.bot.deleteMessage(session.channelId, session.messageId)
@@ -1457,6 +1462,8 @@ export function apply(ctx: Context, config: Config) {
           if (config.debugMode) {
             logDebug('消息', `已设置 ${config.autoRecallTime} 秒后自动撤回用户QQ(${normalizedQQId})的群聊指令消息 ${session.messageId}`)
           }
+        } else if (shouldNotRecallUserMessage && config.debugMode) {
+          logDebug('消息', `QQ(${normalizedQQId})在绑定会话中发送聊天消息，跳过撤回用户消息`)
         }
         
         // 处理撤回机器人消息 - 只在群聊中撤回机器人自己的消息
