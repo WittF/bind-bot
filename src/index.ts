@@ -81,7 +81,7 @@ export const Config: Schema<Config> = Schema.object({
     .default(false),
   autoNicknameGroupId: Schema.string()
     .description('自动群昵称设置目标群ID')
-    .default('931805503'),
+    .default('123456789'),
   servers: Schema.array(Schema.object({
     id: Schema.string()
       .description('服务器唯一ID（不允许重复）')
@@ -712,14 +712,19 @@ export function apply(ctx: Context, config: Config) {
   }
 
   // 自动群昵称设置功能
-  const autoSetGroupNickname = async (session: Session, mcUsername: string, buidUsername: string): Promise<void> => {
+  const autoSetGroupNickname = async (session: Session, mcUsername: string | null, buidUsername: string, targetUserId?: string): Promise<void> => {
     try {
-      const normalizedUserId = normalizeQQId(session.userId)
-      const newNickname = `${buidUsername}（ID:${mcUsername}）`
+      // 如果指定了目标用户ID，使用目标用户ID，否则使用session的用户ID
+      const actualUserId = targetUserId || session.userId
+      const normalizedUserId = normalizeQQId(actualUserId)
+      
+      // 根据MC绑定状态设置不同的格式
+      const mcInfo = mcUsername || "未绑定"
+      const newNickname = `${buidUsername}（ID:${mcInfo}）`
       const targetGroupId = config.autoNicknameGroupId
       
       if (session.bot.internal && targetGroupId) {
-        await session.bot.internal.setGroupCard(targetGroupId, session.userId, newNickname)
+        await session.bot.internal.setGroupCard(targetGroupId, actualUserId, newNickname)
         logger.info(`[群昵称设置] 成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称设置为: ${newNickname}`)
       } else if (!session.bot.internal) {
         logger.debug(`[群昵称设置] QQ(${normalizedUserId})bot不支持OneBot内部API，跳过自动群昵称设置`)
@@ -727,7 +732,8 @@ export function apply(ctx: Context, config: Config) {
         logger.debug(`[群昵称设置] QQ(${normalizedUserId})未配置自动群昵称设置目标群，跳过群昵称设置`)
       }
     } catch (error) {
-      const normalizedUserId = normalizeQQId(session.userId)
+      const actualUserId = targetUserId || session.userId
+      const normalizedUserId = normalizeQQId(actualUserId)
       logger.warn(`[群昵称设置] QQ(${normalizedUserId})自动群昵称设置失败: ${error.message}`)
     }
   }
@@ -863,6 +869,81 @@ export function apply(ctx: Context, config: Config) {
   ctx.on('dispose', async () => {
     logger.info('[RCON管理器] 插件卸载，关闭所有RCON连接');
     await rconManager.closeAll();
+  });
+
+  // 监听群成员加入事件，自动启动绑定流程
+  ctx.on('guild-member-added', async (session) => {
+    try {
+      // 只处理指定群的成员加入
+      if (session.channelId !== config.autoNicknameGroupId) {
+        return;
+      }
+      
+      const normalizedUserId = normalizeQQId(session.userId);
+      logger.info(`[新人绑定] 用户QQ(${normalizedUserId})加入群聊，准备发送绑定提醒`);
+      
+      // 检查用户是否已有绑定记录
+      const existingBind = await getMcBindByQQId(normalizedUserId);
+      
+      // 如果用户已完成全部绑定，不需要提醒
+      if (existingBind && existingBind.mcUsername && existingBind.buidUid) {
+        logger.info(`[新人绑定] 用户QQ(${normalizedUserId})已完成全部绑定，跳过提醒`);
+        return;
+      }
+      
+      // 发送欢迎消息
+      let welcomeMessage = `🎉 欢迎新成员 ${h.at(session.userId)} 加入群聊！\n\n`;
+      
+      if (!existingBind || (!existingBind.mcUsername && !existingBind.buidUid)) {
+        // 完全未绑定，自动启动交互式绑定
+        welcomeMessage += `📋 为了更好的群聊体验，系统将自动为您启动账号绑定流程...\n\n`;
+        welcomeMessage += `⚠️ 重要提醒：若在管理员多次提醒后仍不配合绑定账号信息，将按群规进行相应处理。`;
+        
+        await session.bot.sendMessage(session.channelId, welcomeMessage);
+        logger.info(`[新人绑定] 为新成员QQ(${normalizedUserId})自动启动交互式绑定流程`);
+        
+        // 创建绑定会话并发送初始提示
+        createBindingSession(session.userId, session.channelId);
+        const bindingSession = getBindingSession(session.userId, session.channelId);
+        bindingSession.state = 'waiting_mc_username';
+        
+        await sendMessage(session, [
+          h.text(`🎮 开始交互式绑定流程\n\n请选择绑定方式：\n1️⃣ 发送您的MC用户名进行MC绑定\n2️⃣ 发送"跳过"直接绑定B站账号`)
+        ]);
+        
+      } else if (existingBind.mcUsername && !existingBind.buidUid) {
+        // 只绑定了MC，未绑定B站 - 自动启动B站绑定
+        welcomeMessage += `📋 检测到您已绑定MC账号(${existingBind.mcUsername})，但尚未绑定B站账号\n`;
+        welcomeMessage += `系统将自动为您启动B站账号绑定流程...\n\n`;
+        welcomeMessage += `⚠️ 重要提醒：若在管理员多次提醒后仍不配合绑定B站账号信息，将按群规进行相应处理。`;
+        
+        await session.bot.sendMessage(session.channelId, welcomeMessage);
+        logger.info(`[新人绑定] 为新成员QQ(${normalizedUserId})自动启动B站绑定流程`);
+        
+        // 创建绑定会话，直接进入B站绑定步骤
+        createBindingSession(session.userId, session.channelId);
+        const bindingSession = getBindingSession(session.userId, session.channelId);
+        bindingSession.state = 'waiting_buid';
+        bindingSession.mcUsername = existingBind.mcUsername;
+        
+        await sendMessage(session, [
+          h.text(`🔗 请输入您的B站UID进行绑定\n\n获取方式：打开B站个人主页，地址栏中的数字即为UID\n例如：https://space.bilibili.com/123456 中的 123456`)
+        ]);
+        
+      } else if (!existingBind.mcUsername && existingBind.buidUid) {
+        // 只绑定了B站，未绑定MC - 仅发送提醒
+        welcomeMessage += `📋 检测到您已绑定B站账号，但尚未绑定MC账号\n`;
+        welcomeMessage += `• 可使用 ${formatCommand('mcid bind <MC用户名>')} 绑定MC账号`;
+        
+        await session.bot.sendMessage(session.channelId, welcomeMessage);
+        logger.info(`[新人绑定] 新成员QQ(${normalizedUserId})已绑定B站但未绑定MC，已发送绑定提醒`);
+      }
+      
+      logger.info(`[新人绑定] 已处理新成员QQ(${normalizedUserId})的入群事件`);
+      
+    } catch (error) {
+      logger.error(`[新人绑定] 处理新成员加入失败: ${error.message}`);
+    }
   });
 
   // 注册天选开奖 Webhook
@@ -1947,13 +2028,13 @@ export function apply(ctx: Context, config: Config) {
       // 尝试识别以机器人昵称开头的mcid或buid命令
       let matchedCommand = null
       
-      // 1. 尝试匹配原始的botNickname格式（支持mcid和buid命令）
-      const regularPrefixRegex = new RegExp(`^${escapeRegExp(botNickname)}\\s+((mcid|buid)\\s+.*)$`, 'i')
+      // 1. 尝试匹配原始的botNickname格式（支持mcid、buid和绑定命令）
+      const regularPrefixRegex = new RegExp(`^${escapeRegExp(botNickname)}\\s+((mcid|buid|绑定|bind)\\s*.*)$`, 'i')
       const regularMatch = content.match(regularPrefixRegex)
       
       // 2. 如果botNickname不包含@，也尝试匹配带@的版本
       const atPrefixRegex = !botNickname.startsWith('@') ? 
-        new RegExp(`^@${escapeRegExp(botNickname)}\\s+((mcid|buid)\\s+.*)$`, 'i') : 
+        new RegExp(`^@${escapeRegExp(botNickname)}\\s+((mcid|buid|绑定|bind)\\s*.*)$`, 'i') : 
         null
       
       if (regularMatch && regularMatch[1]) {
@@ -1967,7 +2048,15 @@ export function apply(ctx: Context, config: Config) {
       
       // 如果找到匹配的命令，执行它
       if (matchedCommand) {
-        const commandType = matchedCommand.startsWith('mcid') ? 'mcid' : 'buid'
+        let commandType = 'unknown'
+        if (matchedCommand.startsWith('mcid')) {
+          commandType = 'mcid'
+        } else if (matchedCommand.startsWith('buid')) {
+          commandType = 'buid'
+        } else if (matchedCommand.startsWith('绑定') || matchedCommand.startsWith('bind')) {
+          commandType = '绑定'
+        }
+        
         logger.info(`[前缀匹配] 成功识别${commandType}命令，原始消息: "${content}"，执行命令: "${matchedCommand}"`)
         
         // 使用session.execute方法主动触发命令执行
@@ -1999,12 +2088,12 @@ export function apply(ctx: Context, config: Config) {
       if (content === '取消' || content === 'cancel') {
         removeBindingSession(session.userId, session.channelId)
         logger.info(`[交互绑定] QQ(${normalizedUserId})手动取消了绑定会话`)
-        await sendMessage(session, [h.text('❌ 绑定会话已取消')])
+        await sendMessage(session, [h.text('❌ 绑定会话已取消\n\n📋 温馨提醒：请按群规设置合适的群昵称。若在管理员多次提醒后仍不配合绑定账号信息或按规修改群昵称，将按群规进行相应处理。')])
         return
       }
       
-      // 检查是否在绑定过程中使用了其他绑定相关命令
-      if (content && (
+      // 检查是否在绑定过程中使用了其他绑定相关命令（排除跳过选项）
+      if (content && content !== '跳过' && content !== 'skip' && (
         content.includes('绑定') || 
         content.includes('bind') || 
         content.includes('mcid') || 
@@ -2036,7 +2125,7 @@ export function apply(ctx: Context, config: Config) {
           // 第2次无关输入，建议取消
           removeBindingSession(session.userId, session.channelId)
           logger.info(`[交互绑定] QQ(${normalizedUserId})因多次无关输入自动取消绑定会话`)
-          await sendMessage(session, [h.text('🔄 检测到您可能不想继续绑定流程，已自动取消绑定会话\n\n如需重新绑定，请使用 ' + formatCommand('mcid 绑定') + ' 命令')])
+          await sendMessage(session, [h.text('🔄 检测到您可能不想继续绑定流程，已自动取消绑定会话\n\n📋 温馨提醒：请按群规设置合适的群昵称。若在管理员多次提醒后仍不配合绑定账号信息或按规修改群昵称，将按群规进行相应处理。\n\n如需重新绑定，请使用 ' + formatCommand('mcid 绑定') + ' 命令')])
           return
         }
       }
@@ -2066,10 +2155,23 @@ export function apply(ctx: Context, config: Config) {
   const handleMcUsernameInput = async (session: Session, bindingSession: BindingSession, content: string): Promise<void> => {
     const normalizedUserId = normalizeQQId(session.userId)
     
+    // 处理跳过MC绑定，直接进入B站绑定流程
+    if (content === '跳过' || content === 'skip') {
+      updateBindingSession(session.userId, session.channelId, {
+        state: 'waiting_buid',
+        mcUsername: undefined,
+        mcUuid: undefined
+      })
+      
+      logger.info(`[交互绑定] QQ(${normalizedUserId})跳过了MC账号绑定，直接进入B站绑定流程`)
+      await sendMessage(session, [h.text('✅ 已跳过MC绑定\n请发送您的B站UID')])
+      return
+    }
+    
     // 验证用户名格式
     if (!content || !/^[a-zA-Z0-9_]{3,16}$/.test(content)) {
       logger.warn(`[交互绑定] QQ(${normalizedUserId})输入的MC用户名"${content}"格式无效`)
-      await sendMessage(session, [h.text('❌ 用户名格式无效，请重新输入')])
+      await sendMessage(session, [h.text('❌ 用户名格式无效，请重新输入\n或发送"跳过"直接绑定B站账号')])
       return
     }
     
@@ -2077,7 +2179,7 @@ export function apply(ctx: Context, config: Config) {
     const profile = await validateUsername(content)
     if (!profile) {
       logger.warn(`[交互绑定] QQ(${normalizedUserId})输入的MC用户名"${content}"不存在`)
-      await sendMessage(session, [h.text(`❌ 用户名 ${content} 不存在`)])
+      await sendMessage(session, [h.text(`❌ 用户名 ${content} 不存在\n请重新输入或发送"跳过"直接绑定B站账号`)])
       return
     }
     
@@ -2104,7 +2206,7 @@ export function apply(ctx: Context, config: Config) {
     // 检查用户名是否已被其他人绑定
     if (await checkUsernameExists(username, session.userId)) {
       logger.warn(`[交互绑定] MC用户名"${username}"已被其他用户绑定`)
-      await sendMessage(session, [h.text(`❌ 用户名 ${username} 已被其他用户绑定\n\n请输入其他MC用户名`)])
+      await sendMessage(session, [h.text(`❌ 用户名 ${username} 已被其他用户绑定\n\n请输入其他MC用户名或发送"跳过"直接绑定B站账号`)])
       return
     }
     
@@ -2151,14 +2253,6 @@ export function apply(ctx: Context, config: Config) {
   const handleBuidInput = async (session: Session, bindingSession: BindingSession, content: string): Promise<void> => {
     const normalizedUserId = normalizeQQId(session.userId)
     
-    // 处理跳过B站绑定
-    if (content === '跳过' || content === 'skip') {
-      removeBindingSession(session.userId, session.channelId)
-      logger.info(`[交互绑定] QQ(${normalizedUserId})跳过了B站账号绑定`)
-      await sendMessage(session, [h.text('✅ 交互式绑定完成！\n\n您已成功绑定MC账号，B站账号绑定已跳过\n可以随时使用 ' + formatCommand('buid bind <UID>') + ' 命令单独绑定B站账号')])
-      return
-    }
-    
     // 解析UID格式
     let actualUid = content
     if (content && content.toLowerCase().startsWith('uid:')) {
@@ -2175,7 +2269,7 @@ export function apply(ctx: Context, config: Config) {
     // 检查UID是否已被绑定
     if (await checkBuidExists(actualUid, session.userId)) {
       logger.warn(`[交互绑定] B站UID"${actualUid}"已被其他用户绑定`)
-      await sendMessage(session, [h.text(`❌ UID ${actualUid} 已被其他用户绑定\n\n请输入其他B站UID或发送"跳过"跳过B站绑定`)])
+      await sendMessage(session, [h.text(`❌ UID ${actualUid} 已被其他用户绑定\n\n请输入其他B站UID`)])
       return
     }
     
@@ -2183,7 +2277,7 @@ export function apply(ctx: Context, config: Config) {
     const buidUser = await validateBUID(actualUid)
     if (!buidUser) {
       logger.warn(`[交互绑定] QQ(${normalizedUserId})输入的B站UID"${actualUid}"不存在`)
-      await sendMessage(session, [h.text(`❌ 无法验证UID: ${actualUid}\n\n该用户可能不存在或未被发现\n建议去直播间逛一圈，发个弹幕后再绑定\n或发送"跳过"跳过B站绑定`)])
+      await sendMessage(session, [h.text(`❌ 无法验证UID: ${actualUid}\n\n该用户可能不存在或未被发现\n你可以去直播间逛一圈，发个弹幕后重试绑定`)])
       return
     }
     
@@ -2192,7 +2286,10 @@ export function apply(ctx: Context, config: Config) {
     if (!bindResult) {
       logger.error(`[交互绑定] QQ(${normalizedUserId})绑定B站账号失败`)
       removeBindingSession(session.userId, session.channelId)
-      await sendMessage(session, [h.text('❌ B站账号绑定失败，数据库操作出错\n\n但您的MC账号已成功绑定\n可稍后使用 ' + formatCommand('buid bind <UID>') + ' 命令单独绑定B站账号')])
+      
+      // 根据是否有MC绑定提供不同的提示
+      const mcStatus = bindingSession.mcUsername ? `您的MC账号${bindingSession.mcUsername}已成功绑定\n` : ''
+      await sendMessage(session, [h.text(`❌ B站账号绑定失败，数据库操作出错\n\n${mcStatus}可稍后使用 ${formatCommand('buid bind <UID>')} 命令单独绑定B站账号`)])
       return
     }
     
@@ -2201,32 +2298,12 @@ export function apply(ctx: Context, config: Config) {
     // 清理会话
     removeBindingSession(session.userId, session.channelId)
     
-    // 自动群昵称设置功能 - 使用OneBot API
+    // 自动群昵称设置功能 - 使用新的autoSetGroupNickname函数
     try {
-      const newNickname = `${buidUser.username}（ID:${bindingSession.mcUsername}）`
-      const targetGroupId = config.autoNicknameGroupId // 使用配置的群ID
-      
-      if (session.bot.internal && targetGroupId) {
-        let groupsToUpdate = []
-        
-        // 只在指定群设置昵称
-        groupsToUpdate.push(targetGroupId)
-        logger.info(`[交互绑定] QQ(${normalizedUserId})绑定完成，将在群${targetGroupId}中设置昵称`)
-        
-        // 为每个群设置昵称
-        for (const groupId of groupsToUpdate) {
-          try {
-            await session.bot.internal.setGroupCard(groupId, session.userId, newNickname)
-            logger.info(`[交互绑定] 成功在群${groupId}中将QQ(${normalizedUserId})群昵称设置为: ${newNickname}`)
-          } catch (groupError) {
-            logger.warn(`[交互绑定] 在群${groupId}中设置QQ(${normalizedUserId})群昵称失败: ${groupError.message}`)
-          }
-        }
-      } else if (!session.bot.internal) {
-        logger.debug(`[交互绑定] QQ(${normalizedUserId})bot不支持OneBot内部API，跳过自动群昵称设置`)
-      } else if (!targetGroupId) {
-        logger.debug(`[交互绑定] QQ(${normalizedUserId})未配置自动群昵称设置目标群，跳过群昵称设置`)
-      }
+      // 检查是否有有效的MC用户名（不是临时用户名）
+      const mcName = bindingSession.mcUsername && !bindingSession.mcUsername.startsWith('_temp_') ? bindingSession.mcUsername : null
+      await autoSetGroupNickname(session, mcName, buidUser.username)
+      logger.info(`[交互绑定] QQ(${normalizedUserId})绑定完成，已设置群昵称`)
     } catch (renameError) {
       logger.warn(`[交互绑定] QQ(${normalizedUserId})自动群昵称设置失败: ${renameError.message}`)
       // 群昵称设置失败不影响主流程，只记录日志
@@ -2245,8 +2322,17 @@ export function apply(ctx: Context, config: Config) {
       extraInfo += `\n荣耀等级: ${buidUser.wealthMedalLevel}`
     }
     
+    // 准备完成消息
+    const mcInfo = bindingSession.mcUsername ? `MC: ${bindingSession.mcUsername}` : 'MC: 未绑定'
+    let extraTip = ''
+    
+    // 如果用户跳过了MC绑定，提供后续绑定的指引
+    if (!bindingSession.mcUsername) {
+      extraTip = `\n\n💡 您可以随时使用 ${formatCommand('mcid bind <用户名>')} 绑定MC账号`
+    }
+    
     await sendMessage(session, [
-      h.text(`🎉 绑定完成！\nMC: ${bindingSession.mcUsername}\nB站: ${buidUser.username}${extraInfo}`),
+      h.text(`🎉 绑定完成！\n${mcInfo}\nB站: ${buidUser.username}${extraInfo}${extraTip}`),
       ...(config?.showAvatar ? [h.image(`https://workers.vrp.moe/bilibili/avatar/${buidUser.uid}?size=160`)] : [])
     ])
   }
@@ -2347,11 +2433,13 @@ export function apply(ctx: Context, config: Config) {
           
           logger.info(`[查询] QQ(${normalizedTargetId})的MC账号信息：用户名=${updatedBind.mcUsername}, UUID=${updatedBind.mcUuid}`)
           
-          // 如果MC和B站都已绑定，进行自动群昵称设置
-          if (updatedBind.mcUsername && updatedBind.buidUid && updatedBind.buidUsername) {
-            await autoSetGroupNickname(session, updatedBind.mcUsername, updatedBind.buidUsername)
-          } else if (!updatedBind.buidUid) {
-            // 如果未绑定B站账号，提示绑定
+          // 如果已绑定B站账号，进行自动群昵称设置（设置被查询用户的群昵称）
+          if (updatedBind.buidUid && updatedBind.buidUsername) {
+            // 传递MC用户名（如果有的话）和B站用户名
+            const mcName = updatedBind.mcUsername && !updatedBind.mcUsername.startsWith('_temp_') ? updatedBind.mcUsername : null
+            await autoSetGroupNickname(session, mcName, updatedBind.buidUsername, normalizedTargetId)
+          } else {
+            // 如果未绑定B站账号，跳过群昵称设置
             logger.info(`[查询] QQ(${normalizedTargetId})未绑定B站账号，跳过群昵称设置`)
           }
           
@@ -2454,11 +2542,13 @@ export function apply(ctx: Context, config: Config) {
         
         logger.info(`[查询] QQ(${normalizedUserId})的MC账号信息：用户名=${updatedBind.mcUsername}, UUID=${updatedBind.mcUuid}`)
         
-        // 如果MC和B站都已绑定，进行自动群昵称设置
-        if (updatedBind.mcUsername && updatedBind.buidUid && updatedBind.buidUsername) {
-          await autoSetGroupNickname(session, updatedBind.mcUsername, updatedBind.buidUsername)
-        } else if (!updatedBind.buidUid) {
-          // 如果未绑定B站账号，在消息中提示
+        // 如果已绑定B站账号，进行自动群昵称设置
+        if (updatedBind.buidUid && updatedBind.buidUsername) {
+          // 传递MC用户名（如果有的话）和B站用户名
+          const mcName = updatedBind.mcUsername && !updatedBind.mcUsername.startsWith('_temp_') ? updatedBind.mcUsername : null
+          await autoSetGroupNickname(session, mcName, updatedBind.buidUsername)
+        } else {
+          // 如果未绑定B站账号，跳过群昵称设置
           logger.info(`[查询] QQ(${normalizedUserId})未绑定B站账号，跳过群昵称设置`)
         }
         
@@ -2917,14 +3007,87 @@ export function apply(ctx: Context, config: Config) {
     })
 
   // 交互型绑定命令
-  ctx.command('绑定', '交互式绑定流程')
+  ctx.command('绑定 [target:string]', '交互式绑定流程')
     .alias('bind')
     .alias('interact')
-    .action(async ({ session }) => {
+    .action(async ({ session }, target) => {
       try {
         const normalizedUserId = normalizeQQId(session.userId)
         const channelId = session.channelId
         
+        // 如果指定了目标用户（管理员功能）
+        if (target) {
+          // 检查权限
+          if (!await isAdmin(session.userId)) {
+            logger.warn(`[交互绑定] 权限不足: QQ(${normalizedUserId})不是管理员，无法为他人启动绑定`)
+            return sendMessage(session, [h.text('只有管理员才能为其他用户启动绑定流程')])
+          }
+          
+          const normalizedTargetId = normalizeQQId(target)
+          logger.info(`[交互绑定] 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})启动交互式绑定流程`)
+          
+          // 检查目标用户是否已有进行中的会话
+          const existingTargetSession = getBindingSession(target, channelId)
+          if (existingTargetSession) {
+            logger.warn(`[交互绑定] QQ(${normalizedTargetId})已有进行中的绑定会话`)
+            return sendMessage(session, [h.text(`用户 ${normalizedTargetId} 已有进行中的绑定会话`)])
+          }
+          
+          // 检查目标用户当前绑定状态
+          const targetBind = await getMcBindByQQId(normalizedTargetId)
+          
+          // 如果两个账号都已绑定，不需要进入绑定流程
+          if (targetBind && targetBind.mcUsername && targetBind.buidUid) {
+            logger.info(`[交互绑定] QQ(${normalizedTargetId})已完成全部绑定`)
+            
+            // 显示当前绑定信息
+            let bindInfo = `用户 ${normalizedTargetId} 已完成全部账号绑定：\n✅ MC账号: ${targetBind.mcUsername}\n✅ B站账号: ${targetBind.buidUsername} (UID: ${targetBind.buidUid})`
+            
+            if (targetBind.guardLevel > 0) {
+              bindInfo += `\n舰长等级: ${targetBind.guardLevelText}`
+            }
+            if (targetBind.medalName) {
+              bindInfo += `\n粉丝牌: ${targetBind.medalName} Lv.${targetBind.medalLevel}`
+            }
+            
+            return sendMessage(session, [h.text(bindInfo)])
+          }
+          
+          // 为目标用户创建绑定会话
+          createBindingSession(target, channelId)
+          
+          // 如果已绑定MC但未绑定B站，直接进入B站绑定流程
+          if (targetBind && targetBind.mcUsername && !targetBind.buidUid) {
+            logger.info(`[交互绑定] QQ(${normalizedTargetId})已绑定MC，进入B站绑定流程`)
+            
+            // 更新会话状态
+            updateBindingSession(target, channelId, {
+              state: 'waiting_buid',
+              mcUsername: targetBind.mcUsername,
+              mcUuid: targetBind.mcUuid
+            })
+            
+            // 通知目标用户
+            await sendMessage(session, [h.text(`已为用户 ${normalizedTargetId} 启动B站绑定流程`)])
+            
+            // 向目标用户发送提示（尝试@他们）
+            return sendMessage(session, [
+              h.at(target),
+              h.text(` 管理员为您启动了B站绑定流程\n🎮 已绑定MC: ${targetBind.mcUsername}\n请发送您的B站UID`)
+            ])
+          }
+          
+          // 未绑定MC账号，让目标用户选择绑定方式
+          await sendMessage(session, [h.text(`已为用户 ${normalizedTargetId} 启动交互式绑定流程`)])
+          
+          // 向目标用户发送提示（尝试@他们）
+          return sendMessage(session, [
+            h.at(target),
+            h.text(` 管理员为您启动了账号绑定流程\n🎮 请选择绑定方式：\n1. 发送您的MC用户名进行MC绑定\n2. 发送"跳过"直接绑定B站账号`)
+          ])
+        }
+        
+        // 为自己启动绑定流程
         logger.info(`[交互绑定] QQ(${normalizedUserId})开始交互式绑定流程`)
         
         // 检查是否已有进行中的会话
@@ -2984,11 +3147,11 @@ export function apply(ctx: Context, config: Config) {
           return sendMessage(session, [h.text(`🎮 已绑定MC: ${existingBind.mcUsername}\n请发送您的B站UID`)])
         }
         
-        // 如果未绑定MC账号，从MC绑定开始
+        // 如果未绑定MC账号，让用户选择绑定方式
         createBindingSession(session.userId, channelId)
         
-        // 发送简化的MC用户名输入提示
-        return sendMessage(session, [h.text(`🎮 请发送您的MC用户名`)])
+        // 发送绑定选项提示
+        return sendMessage(session, [h.text(`🎮 请选择绑定方式：\n1. 发送您的MC用户名进行MC绑定\n2. 发送"跳过"直接绑定B站账号`)])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
         logger.error(`[交互绑定] QQ(${normalizedUserId})开始交互式绑定失败: ${error.message}`)
@@ -3257,12 +3420,8 @@ export function apply(ctx: Context, config: Config) {
             return sendMessage(session, [h.text('只有管理员才能为其他用户绑定BUID')])
           }
 
-          // 检查目标用户是否已绑定MC账号
+          // 获取目标用户当前绑定状态（允许没有MC绑定）
           const targetBind = await getMcBindByQQId(normalizedTargetId)
-          if (!targetBind || !targetBind.mcUsername || targetBind.mcUsername.startsWith('_temp_')) {
-            logWarn('BUID绑定', `QQ(${normalizedTargetId})尚未绑定MC账号，无法绑定BUID`)
-            return sendMessage(session, [h.text(`用户 ${normalizedTargetId} 尚未绑定MC账号，请先绑定MC账号后再绑定B站UID`)])
-          }
 
           // 检查UID是否已被除目标用户以外的其他用户绑定
           if (await checkBuidExists(actualUid, target)) {
@@ -3287,18 +3446,28 @@ export function apply(ctx: Context, config: Config) {
           
           logOperation('为他人绑定BUID', normalizedUserId, true, `为QQ(${normalizedTargetId})绑定BUID: ${actualUid}(${buidUser.username})`)
           
+          // 获取目标用户最新的绑定信息并尝试设置群昵称
+          try {
+            const latestTargetBind = await getMcBindByQQId(normalizedTargetId)
+            if (latestTargetBind) {
+              // 检查是否有有效的MC用户名（不是临时用户名）
+              const mcName = latestTargetBind.mcUsername && !latestTargetBind.mcUsername.startsWith('_temp_') ? latestTargetBind.mcUsername : null
+              await autoSetGroupNickname(session, mcName, buidUser.username, normalizedTargetId)
+              logger.info(`[绑定] 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})B站绑定完成，已尝试设置群昵称`)
+            }
+          } catch (renameError) {
+            logger.warn(`[绑定] 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})B站绑定后群昵称设置失败: ${renameError.message}`)
+            // 群昵称设置失败不影响主流程，只记录日志
+          }
+          
           return sendMessage(session, [h.text(`已成功为用户 ${normalizedTargetId} 绑定B站账号\n用户名: ${buidUser.username}\nUID: ${actualUid}\n${buidUser.guard_level > 0 ? `舰长等级: ${buidUser.guard_level_text}\n` : ''}${buidUser.medal ? `粉丝牌: ${buidUser.medal.name} Lv.${buidUser.medal.level}` : ''}`)])
         }
         
         // 为自己绑定BUID
         logDebug('BUID绑定', `QQ(${normalizedUserId})尝试绑定BUID: ${actualUid}`)
         
-        // 检查用户是否已绑定MC账号
+        // 获取用户当前绑定状态（允许没有MC绑定）
         const selfBind = await getMcBindByQQId(normalizedUserId)
-        if (!selfBind || !selfBind.mcUsername || selfBind.mcUsername.startsWith('_temp_')) {
-          logWarn('BUID绑定', `QQ(${normalizedUserId})尚未绑定MC账号，无法绑定BUID`)
-          return sendMessage(session, [h.text(`您尚未绑定MC账号，请先使用 ` + formatCommand('mcid bind <用户名>') + ` 绑定MC账号后再绑定B站UID`)])
-        }
         
         // 检查用户是否已绑定BUID
         if (selfBind && selfBind.buidUid) {
@@ -3338,6 +3507,20 @@ export function apply(ctx: Context, config: Config) {
         }
         
         logOperation('绑定BUID', normalizedUserId, true, `绑定BUID: ${actualUid}(${buidUser.username})`)
+        
+        // 获取最新的绑定信息并尝试设置群昵称
+        try {
+          const latestBind = await getMcBindByQQId(normalizedUserId)
+          if (latestBind) {
+            // 检查是否有有效的MC用户名（不是临时用户名）
+            const mcName = latestBind.mcUsername && !latestBind.mcUsername.startsWith('_temp_') ? latestBind.mcUsername : null
+            await autoSetGroupNickname(session, mcName, buidUser.username)
+            logger.info(`[绑定] QQ(${normalizedUserId})B站绑定完成，已尝试设置群昵称`)
+          }
+        } catch (renameError) {
+          logger.warn(`[绑定] QQ(${normalizedUserId})B站绑定后群昵称设置失败: ${renameError.message}`)
+          // 群昵称设置失败不影响主流程，只记录日志
+        }
         
         logger.info(`[绑定] QQ(${normalizedUserId})成功绑定B站UID(${actualUid})`)
         return sendMessage(session, [
