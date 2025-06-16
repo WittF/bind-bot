@@ -743,11 +743,22 @@ export function apply(ctx: Context, config: Config) {
     if (!content) return false
     
     // 常见的聊天用语或明显无关的内容
-    const chatKeywords = ['你好', 'hello', 'hi', '在吗', '在不在', '怎么样', '什么', '为什么', '好的', '谢谢', '哈哈', '呵呵']
+    const chatKeywords = ['你好', 'hello', 'hi', '在吗', '在不在', '怎么样', '什么', '为什么', '好的', '谢谢', '哈哈', '呵呵', '早上好', '晚上好', '晚安', '再见', '拜拜', '666', '牛', '厉害', '真的吗', '不是吧', '哇', '哦', '嗯', '好吧', '行', '可以', '没事', '没问题', '没关系']
     const lowercaseContent = content.toLowerCase()
     
     // 检查是否包含明显的聊天用语
     if (chatKeywords.some(keyword => lowercaseContent.includes(keyword))) {
+      return true
+    }
+    
+    // 检查是否为明显的聊天模式（多个连续的标点符号、表情等）
+    if (/[！？。，；：""''（）【】〈〉《》「」『』〔〕〖〗〘〙〚〛]{2,}/.test(content) || 
+        /[!?.,;:"'()[\]<>{}]{3,}/.test(content)) {
+      return true
+    }
+    
+    // 检查是否为纯表情或数字串（可能是聊天内容）
+    if (/^[0-9\s]*$/.test(content) && content.length > 6) {
       return true
     }
     
@@ -2121,17 +2132,40 @@ export function apply(ctx: Context, config: Config) {
           invalidInputCount: newCount
         })
         
-        if (newCount === 1) {
-          // 第1次无关输入，提醒检查
-          const expectedInput = bindingSession.state === 'waiting_mc_username' ? 'MC用户名' : 'B站UID'
-          await sendMessage(session, [h.text(`🤔 您当前正在进行绑定流程，需要输入${expectedInput}\n\n如果您想取消绑定，请发送"取消"`)])
-          return
-        } else if (newCount >= 2) {
-          // 第2次无关输入，建议取消
-          removeBindingSession(session.userId, session.channelId)
-          logger.info(`[交互绑定] QQ(${normalizedUserId})因多次无关输入自动取消绑定会话`)
-          await sendMessage(session, [h.text('🔄 检测到您可能不想继续绑定流程，已自动取消绑定会话\n\n📋 温馨提醒：请按群规设置合适的群昵称。若在管理员多次提醒后仍不配合绑定账号信息或按规修改群昵称，将按群规进行相应处理。\n\n如需重新绑定，请使用 ' + formatCommand('mcid 绑定') + ' 命令')])
-          return
+        // 检查是否为明显的聊天内容
+        const chatKeywords = ['你好', 'hello', 'hi', '在吗', '在不在', '怎么样', '什么', '为什么', '好的', '谢谢', '哈哈', '呵呵', '早上好', '晚上好', '晚安', '再见', '拜拜', '666', '牛', '厉害', '真的吗', '不是吧', '哇', '哦', '嗯', '好吧', '行', '可以', '没事', '没问题', '没关系']
+        const isChatMessage = chatKeywords.some(keyword => content.toLowerCase().includes(keyword)) ||
+                              /[！？。，；：""''（）【】〈〉《》「」『』〔〕〖〗〘〙〚〛]{2,}/.test(content) ||
+                              /[!?.,;:"'()[\]<>{}]{3,}/.test(content)
+        
+        if (isChatMessage) {
+          // 对于聊天消息，更快地取消绑定会话，避免持续打扰
+          if (newCount >= 2) {
+            removeBindingSession(session.userId, session.channelId)
+            logger.info(`[交互绑定] QQ(${normalizedUserId})持续发送聊天消息，自动取消绑定会话避免打扰`)
+            // 对于聊天取消，给一个更温和的提示，且不发送群规警告
+            await sendMessage(session, [h.text(`💬 看起来您在聊天，绑定流程已自动取消\n\n如需绑定账号，请随时使用 ${formatCommand('绑定')} 命令重新开始`)])
+            return
+          } else {
+            // 第一次聊天消息，给温和提醒
+            const expectedInput = bindingSession.state === 'waiting_mc_username' ? 'MC用户名' : 'B站UID'
+            await sendMessage(session, [h.text(`💭 您当前正在进行账号绑定，需要输入${expectedInput}\n\n如不需要绑定，请发送"取消"，或继续聊天我们会自动取消绑定流程`)])
+            return
+          }
+        } else {
+          // 对于非聊天的无关输入，使用原来的逻辑
+          if (newCount === 1) {
+            // 第1次无关输入，提醒检查
+            const expectedInput = bindingSession.state === 'waiting_mc_username' ? 'MC用户名' : 'B站UID'
+            await sendMessage(session, [h.text(`🤔 您当前正在进行绑定流程，需要输入${expectedInput}\n\n如果您想取消绑定，请发送"取消"`)])
+            return
+          } else if (newCount >= 2) {
+            // 第2次无关输入，建议取消
+            removeBindingSession(session.userId, session.channelId)
+            logger.info(`[交互绑定] QQ(${normalizedUserId})因多次无关输入自动取消绑定会话`)
+            await sendMessage(session, [h.text('🔄 检测到您可能不想继续绑定流程，已自动取消绑定会话\n\n📋 温馨提醒：请按群规设置合适的群昵称。若在管理员多次提醒后仍不配合绑定账号信息或按规修改群昵称，将按群规进行相应处理。\n\n如需重新绑定，请使用 ' + formatCommand('绑定') + ' 命令')])
+            return
+          }
         }
       }
       
