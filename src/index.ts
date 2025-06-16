@@ -711,6 +711,27 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
+  // 自动群昵称设置功能
+  const autoSetGroupNickname = async (session: Session, mcUsername: string, buidUsername: string): Promise<void> => {
+    try {
+      const normalizedUserId = normalizeQQId(session.userId)
+      const newNickname = `${buidUsername}（ID:${mcUsername}）`
+      const targetGroupId = config.autoNicknameGroupId
+      
+      if (session.bot.internal && targetGroupId) {
+        await session.bot.internal.setGroupCard(targetGroupId, session.userId, newNickname)
+        logger.info(`[群昵称设置] 成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称设置为: ${newNickname}`)
+      } else if (!session.bot.internal) {
+        logger.debug(`[群昵称设置] QQ(${normalizedUserId})bot不支持OneBot内部API，跳过自动群昵称设置`)
+      } else if (!targetGroupId) {
+        logger.debug(`[群昵称设置] QQ(${normalizedUserId})未配置自动群昵称设置目标群，跳过群昵称设置`)
+      }
+    } catch (error) {
+      const normalizedUserId = normalizeQQId(session.userId)
+      logger.warn(`[群昵称设置] QQ(${normalizedUserId})自动群昵称设置失败: ${error.message}`)
+    }
+  }
+
   // 检查是否为无关输入
   const checkIrrelevantInput = (bindingSession: BindingSession, content: string): boolean => {
     if (!content) return false
@@ -1493,7 +1514,7 @@ export function apply(ctx: Context, config: Config) {
     }
   }
   
-  // 删除MCIDBIND表中的绑定信息
+  // 删除MCIDBIND表中的绑定信息 (同时解绑MC和B站账号)
   const deleteMcBind = async (userId: string): Promise<boolean> => {
     try {
       // 验证输入参数
@@ -1512,12 +1533,15 @@ export function apply(ctx: Context, config: Config) {
       const bind = await getMcBindByQQId(normalizedQQId)
       
       if (bind) {
-        // 删除绑定记录
+        // 删除整个绑定记录，包括MC和B站账号
         const result = await ctx.database.remove('mcidbind', { qqId: normalizedQQId })
         
         // 检查是否真正删除成功
         if (result) {
-          logger.info(`[MCIDBIND] 删除绑定: QQ=${normalizedQQId}, MC用户名=${bind.mcUsername}`)
+          let logMessage = `[MCIDBIND] 删除绑定: QQ=${normalizedQQId}`
+          if (bind.mcUsername) logMessage += `, MC用户名=${bind.mcUsername}`
+          if (bind.buidUid) logMessage += `, B站UID=${bind.buidUid}(${bind.buidUsername})`
+          logger.info(logMessage)
           return true
         } else {
           logger.warn(`[MCIDBIND] 删除绑定异常: QQ=${normalizedQQId}, 可能未实际删除`)
@@ -1979,6 +2003,20 @@ export function apply(ctx: Context, config: Config) {
         return
       }
       
+      // 检查是否在绑定过程中使用了其他绑定相关命令
+      if (content && (
+        content.includes('绑定') || 
+        content.includes('bind') || 
+        content.includes('mcid') || 
+        content.includes('buid') ||
+        content.startsWith('.') ||
+        content.startsWith('/')
+      )) {
+        const currentState = bindingSession.state === 'waiting_mc_username' ? 'MC用户名' : 'B站UID'
+        await sendMessage(session, [h.text(`🔄 您正在进行交互式绑定，请继续输入${currentState}\n\n如需取消当前绑定，请发送"取消"`)])
+        return
+      }
+      
       // 检查是否为明显无关的输入
       const isIrrelevantInput = checkIrrelevantInput(bindingSession, content)
       if (isIrrelevantInput) {
@@ -2165,7 +2203,7 @@ export function apply(ctx: Context, config: Config) {
     
     // 自动群昵称设置功能 - 使用OneBot API
     try {
-      const newNickname = `${buidUser.username}（ID：${bindingSession.mcUsername}）`
+      const newNickname = `${buidUser.username}（ID:${bindingSession.mcUsername}）`
       const targetGroupId = config.autoNicknameGroupId // 使用配置的群ID
       
       if (session.bot.internal && targetGroupId) {
@@ -2309,6 +2347,14 @@ export function apply(ctx: Context, config: Config) {
           
           logger.info(`[查询] QQ(${normalizedTargetId})的MC账号信息：用户名=${updatedBind.mcUsername}, UUID=${updatedBind.mcUuid}`)
           
+          // 如果MC和B站都已绑定，进行自动群昵称设置
+          if (updatedBind.mcUsername && updatedBind.buidUid && updatedBind.buidUsername) {
+            await autoSetGroupNickname(session, updatedBind.mcUsername, updatedBind.buidUsername)
+          } else if (!updatedBind.buidUid) {
+            // 如果未绑定B站账号，提示绑定
+            logger.info(`[查询] QQ(${normalizedTargetId})未绑定B站账号，跳过群昵称设置`)
+          }
+          
           // 按照用户期望的顺序发送消息：MC账号信息 -> MC头图 -> B站账号信息 -> B站头像
           const messageElements = [
             h.text(`用户 ${normalizedTargetId} 的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}`),
@@ -2407,6 +2453,14 @@ export function apply(ctx: Context, config: Config) {
         }
         
         logger.info(`[查询] QQ(${normalizedUserId})的MC账号信息：用户名=${updatedBind.mcUsername}, UUID=${updatedBind.mcUuid}`)
+        
+        // 如果MC和B站都已绑定，进行自动群昵称设置
+        if (updatedBind.mcUsername && updatedBind.buidUid && updatedBind.buidUsername) {
+          await autoSetGroupNickname(session, updatedBind.mcUsername, updatedBind.buidUsername)
+        } else if (!updatedBind.buidUid) {
+          // 如果未绑定B站账号，在消息中提示
+          logger.info(`[查询] QQ(${normalizedUserId})未绑定B站账号，跳过群昵称设置`)
+        }
         
         // 按照用户期望的顺序发送消息：MC账号信息 -> MC头图 -> B站账号信息 -> B站头像
         const messageElements = [
@@ -2825,12 +2879,13 @@ export function apply(ctx: Context, config: Config) {
           }
 
           const oldUsername = targetBind.mcUsername
+          const oldBuidInfo = targetBind.buidUid ? ` 和 B站账号: ${targetBind.buidUsername}(${targetBind.buidUid})` : ''
           
           // 删除绑定记录
           await deleteMcBind(target)
           
-          logger.info(`[解绑] 成功: 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})解绑MC账号: ${oldUsername}`)
-          return sendMessage(session, [h.text(`已成功为用户 ${normalizedTargetId} 解绑MC账号: ${oldUsername}`)])
+          logger.info(`[解绑] 成功: 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})解绑MC账号: ${oldUsername}${oldBuidInfo}`)
+          return sendMessage(session, [h.text(`已成功为用户 ${normalizedTargetId} 解绑MC账号: ${oldUsername}${oldBuidInfo}`)])
         }
         
         // 为自己解绑MC账号
@@ -2846,12 +2901,13 @@ export function apply(ctx: Context, config: Config) {
 
         // 移除冷却时间检查，解绑操作不受冷却时间限制
         const oldUsername = selfBind.mcUsername
+        const oldBuidInfo = selfBind.buidUid ? ` 和 B站账号: ${selfBind.buidUsername}(${selfBind.buidUid})` : ''
         
         // 删除绑定记录
         await deleteMcBind(normalizedUserId)
         
-        logger.info(`[解绑] 成功: QQ(${normalizedUserId})解绑MC账号: ${oldUsername}`)
-        return sendMessage(session, [h.text(`已成功解绑MC账号: ${oldUsername}`)])
+        logger.info(`[解绑] 成功: QQ(${normalizedUserId})解绑MC账号: ${oldUsername}${oldBuidInfo}`)
+        return sendMessage(session, [h.text(`已成功解绑MC账号: ${oldUsername}${oldBuidInfo}`)])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
         const targetInfo = target ? `为QQ(${normalizeQQId(target)})` : ''
