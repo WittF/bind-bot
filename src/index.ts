@@ -1438,10 +1438,14 @@ export function apply(ctx: Context, config: Config) {
       // 只在自动撤回时间大于0和存在bot对象时处理撤回
       if (config.autoRecallTime > 0 && session.bot) {
         // 处理撤回用户消息 - 只在群聊中且开启了用户消息撤回时
-        // 但如果用户在绑定会话中发送聊天消息，不撤回
+        // 但如果用户在绑定会话中发送聊天消息（不包括指令），不撤回
         const bindingSession = getBindingSession(session.userId, session.channelId)
+        const isBindingCommand = session.content && (
+          session.content.trim() === '绑定' ||
+          session.content.includes('@') && session.content.includes('绑定')
+        )
         const shouldNotRecallUserMessage = bindingSession && session.content && 
-          checkIrrelevantInput(bindingSession, session.content.trim())
+          !isBindingCommand && checkIrrelevantInput(bindingSession, session.content.trim())
         
         if (config.recallUserMessage && isGroupMessage && session.messageId && !shouldNotRecallUserMessage) {
           setTimeout(async () => {
@@ -2787,6 +2791,23 @@ export function apply(ctx: Context, config: Config) {
           
           logOperation('为他人绑定MC账号', normalizedUserId, true, `为QQ(${normalizedTargetId})绑定MC账号: ${username}(${uuid})`)
           
+          // 获取目标用户最新绑定信息，检查B站绑定状态
+          let targetBuidStatus = ''
+          try {
+            const latestTargetBind = await getMcBindByQQId(normalizedTargetId)
+            if (latestTargetBind && latestTargetBind.buidUid && latestTargetBind.buidUsername) {
+              // 如果目标用户已绑定B站账号，设置群昵称
+              await autoSetGroupNickname(session, username, latestTargetBind.buidUsername, normalizedTargetId)
+              logger.info(`[绑定] 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})MC绑定完成，已尝试设置群昵称`)
+              targetBuidStatus = '\n✅ 该用户已绑定B站账号，群昵称已更新'
+            } else {
+              logger.info(`[绑定] 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})MC绑定完成，但目标用户未绑定B站账号，跳过群昵称设置`)
+              targetBuidStatus = '\n⚠️ 该用户尚未绑定B站账号，建议提醒其使用 buid bind 命令完成B站绑定'
+            }
+          } catch (renameError) {
+            logger.warn(`[绑定] 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})MC绑定后群昵称设置失败: ${renameError.message}`)
+          }
+          
           // 根据配置决定显示哪种图像
           let mcAvatarUrl = null
           if (config?.showAvatar) {
@@ -2801,7 +2822,7 @@ export function apply(ctx: Context, config: Config) {
           const formattedUuid = formatUuid(uuid)
           
           return sendMessage(session, [
-            h.text(`已成功为用户 ${normalizedTargetId} 绑定MC账号\n用户名: ${username}\nUUID: ${formattedUuid}`),
+            h.text(`已成功为用户 ${normalizedTargetId} 绑定MC账号\n用户名: ${username}\nUUID: ${formattedUuid}${targetBuidStatus}`),
             ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : [])
           ])
         }
@@ -2852,6 +2873,23 @@ export function apply(ctx: Context, config: Config) {
         
         logOperation('绑定MC账号', normalizedUserId, true, `绑定MC账号: ${username}(${uuid})`)
         
+        // 获取最新绑定信息，检查B站绑定状态
+        let buidReminder = ''
+        try {
+          const latestBind = await getMcBindByQQId(normalizedUserId)
+          if (latestBind && latestBind.buidUid && latestBind.buidUsername) {
+            // 如果已绑定B站账号，设置群昵称
+            await autoSetGroupNickname(session, username, latestBind.buidUsername)
+            logger.info(`[绑定] QQ(${normalizedUserId})MC绑定完成，已尝试设置群昵称`)
+          } else {
+            // 未绑定B站账号，添加提醒
+            buidReminder = `\n\n💡 提醒：您还未绑定B站账号，建议使用 ${formatCommand('buid bind <B站UID>')} 完成B站绑定以享受完整功能`
+            logger.info(`[绑定] QQ(${normalizedUserId})MC绑定完成，但未绑定B站账号，跳过群昵称设置`)
+          }
+        } catch (renameError) {
+          logger.warn(`[绑定] QQ(${normalizedUserId})MC绑定后群昵称设置失败: ${renameError.message}`)
+        }
+        
         // 根据配置决定显示哪种图像
         let mcAvatarUrl = null
         if (config?.showAvatar) {
@@ -2866,7 +2904,7 @@ export function apply(ctx: Context, config: Config) {
         const formattedUuid = formatUuid(uuid)
         
         return sendMessage(session, [
-          h.text(`已成功绑定MC账号\n用户名: ${username}\nUUID: ${formattedUuid}`),
+          h.text(`已成功绑定MC账号\n用户名: ${username}\nUUID: ${formattedUuid}${buidReminder}`),
           ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : [])
         ])
       } catch (error) {
