@@ -668,11 +668,12 @@ export function apply(ctx: Context, config: Config) {
     // 创建超时定时器
     const timeout = setTimeout(() => {
       bindingSessions.delete(sessionKey)
-      // 发送超时消息
+      // 发送超时消息，@用户
+      const normalizedUser = normalizeQQId(userId)
       ctx.bots.forEach(bot => {
-        bot.sendMessage(channelId, [h.text('绑定会话已超时，请重新开始绑定流程')]).catch(() => {})
+        bot.sendMessage(channelId, [h.at(normalizedUser), h.text(' 绑定会话已超时，请重新开始绑定流程')]).catch(() => {})
       })
-      logger.info(`[交互绑定] QQ(${normalizeQQId(userId)})的绑定会话因超时被清理`)
+      logger.info(`[交互绑定] QQ(${normalizedUser})的绑定会话因超时被清理`)
     }, BINDING_SESSION_TIMEOUT)
     
     // 创建新会话
@@ -772,11 +773,6 @@ export function apply(ctx: Context, config: Config) {
     // 检查是否为明显的聊天模式（多个连续的标点符号、表情等）
     if (/[！？。，；：""''（）【】〈〉《》「」『』〔〕〖〗〘〙〚〛]{2,}/.test(content) || 
         /[!?.,;:"'()[\]<>{}]{3,}/.test(content)) {
-      return true
-    }
-    
-    // 检查是否为纯数字串（可能是聊天内容，但排除有效的UID）
-    if (/^[0-9\s]*$/.test(content) && content.length > 15) {
       return true
     }
     
@@ -3220,7 +3216,7 @@ export function apply(ctx: Context, config: Config) {
           const timeout = setTimeout(() => {
             bindingSessions.delete(`${normalizedUserId}_${channelId}`)
             ctx.bots.forEach(bot => {
-              bot.sendMessage(channelId, [h.text('绑定会话已超时，请重新开始绑定流程')]).catch(() => {})
+              bot.sendMessage(channelId, [h.at(normalizedUserId), h.text(' 绑定会话已超时，请重新开始绑定流程')]).catch(() => {})
             })
             logger.info(`[交互绑定] QQ(${normalizedUserId})的绑定会话因超时被清理`)
           }, BINDING_SESSION_TIMEOUT)
