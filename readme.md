@@ -17,6 +17,9 @@
 
 ## 管理员命令
 
+### 绑定流程管理
+- `绑定 <目标用户>` 为指定用户启动交互式绑定流程（支持QQ号和@用户）
+
 ### Minecraft账号管理
 - `mcid bind <用户名> [目标用户]` 为指定用户绑定Minecraft账号（支持QQ号和@用户）
 - `mcid query [目标用户]` 查询指定用户绑定的Minecraft账号（支持QQ号和@用户）
@@ -123,7 +126,7 @@ mcid whitelist remove 生存服 VIP
 | showAvatar | boolean | false | 是否显示头像图片（MC用头图，B站用头像） |
 | showMcSkin | boolean | false | 是否使用MC皮肤渲染图（需要先开启showAvatar） |
 | zminfoApiUrl | string | 'http://zminfo-api.wittf.ink' | ZMINFO API地址，用于获取B站用户信息 |
-| autoNicknameGroupId | string | '931805503' | 自动群昵称设置目标群ID，交互式绑定完成后自动设置群昵称 |
+| autoNicknameGroupId | string | '123456789' | 自动群昵称设置目标群ID，交互式绑定完成后自动设置群昵称 |
 | servers | array | [] | Minecraft服务器配置列表 |
 
 ### 服务器配置项
@@ -145,78 +148,4 @@ mcid whitelist remove 生存服 VIP
 
 ## 版本历史
 
-### v1.1.4 (最新)
-- 🔧 **重要修复**：修复所有管理员命令的参数类型问题
-  - 修复 `buid bind <UID> <QQ号>` 等命令参数验证失败的问题
-  - 现在所有管理员命令完全支持直接使用QQ号作为目标用户参数
-  - 涉及命令: `mcid query/bind/change/unbind/admin/unadmin`, `buid query/bind`, `tag list`
-  - 不再需要使用 `@用户` 格式，可以直接输入纯QQ号
-
-### v1.1.3
-- 🔧 **逻辑优化**：白名单命令标签处理逻辑优化
-  - 修复 `mcid whitelist add/remove` 命令的标签识别问题
-  - 现在优先检查是否存在指定标签名，如果存在则按标签处理，否则按QQ号处理
-  - 避免了纯数字标签被误识别为QQ号的问题
-- 📝 **文档更新**：完善管理员命令说明，明确支持QQ号和@用户两种格式
-
-### v1.1.2
-- 🐛 **修复**：B站账号查询时错误更新绑定时间的问题
-- 🆕 **新增功能**：天选播报功能开关
-- 🔧 **功能改进**：优化天选开奖结果处理逻辑
-
-### v1.0.10
-- 🔧 **配置优化**：图像显示配置重构
-  - 将 `showBuidAvatar` 重命名为 `showAvatar`，作为图像显示总开关
-  - `showMcSkin` 现在需要 `showAvatar` 开启后才能使用，控制MC是否使用皮肤渲染图
-  - 简化MC头图API，直接使用 `https://crafatar.com/avatars/uuid`
-- 🆕 **新增功能**：`buid query` 命令图像显示，根据配置显示B站头像
-- 🔧 **智能图像显示逻辑**：
-  - `showAvatar=false`：不显示任何图像
-  - `showAvatar=true & showMcSkin=false`：MC显示头图，B站显示头像
-  - `showAvatar=true & showMcSkin=true`：MC显示皮肤渲染图，B站显示头像
-
-### v1.0.9
-- 🐛 **修复**：B站绑定成功消息重复问题、Mojang API 403错误处理
-- 🆕 **新增功能**：mcid query B站绑定提醒
-- 📊 **新增命令**：`mcid stats` 管理员统计命令
-
-### v1.0.4
-- 🎨 **新增功能**：B站UID绑定功能
-  - 支持绑定和查询B站账号信息
-  - 集成ZMINFO API获取详细用户数据
-  - B站UID绑定冷却时间为MC绑定的3倍
-  - 在MC查询中同时显示B站信息
-- 🔧 **功能改进**：头像显示优化
-  - 配置项从 `showPlayerAvatar` 改为 `showAvatar`
-  - 支持显示MC皮肤和B站头像
-  - B站头像使用专用URL格式
-- 📝 **术语优化**：将"BUID"改为用户友好的"B站UID"或"B站账号"
-
-### v1.0.3
-- 🎨 **新增功能**：可选玩家头像显示 - 在配置中控制是否显示Minecraft玩家皮肤图片
-- 🔧 **改进功能**：reset命令现支持直接删除任意服务器ID，无需验证是否存在于配置中
-- 🆕 **新增命令**：`mcid whitelist resetall` - 一键清理所有未在服务器配置列表中的无效白名单ID
-- ⚡ **优化机制**：RCON执行改为真正的队列处理，按绑定时间优先（早绑定优先），避免并发冲突
-- 🏷️ **新增命令**：`mcid tag deleteall <标签名>` - 主人权限，一键删除所有用户的指定标签
-- 🛡️ **安全改进**：增强配置访问的防护性检查，提高代码稳定性
-
-### v1.0.2
-- 新增功能：支持解析 `<at id="..."/>` 格式的@用户字符串
-- 改进用户ID处理：增强对不同@用户格式的兼容性
-- 添加构建发布脚本：新增自动化构建和发布的bat脚本
-
-### v1.0.1
-- 修复Logger名称：将内部日志记录器名称从'bind-mcid'更新为'mcid-bot'
-- 代码清理：确保所有内部引用都使用正确的项目名称
-
-### v1.0.0
-- 初始发布版本
-- 支持Minecraft账号绑定和管理功能
-- 支持多服务器白名单管理
-- 支持用户标签系统，便于批量管理
-- 支持批量白名单操作
-- 支持管理员权限控制
-- 支持RCON连接管理
-- 支持消息自动撤回
-- 支持文本前缀触发指令
-- 完整的错误处理和日志系统
+详细的版本更新记录请查看 [CHANGELOG.md](CHANGELOG.md) 文件。

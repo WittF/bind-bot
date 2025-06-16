@@ -752,6 +752,11 @@ export function apply(ctx: Context, config: Config) {
     }
     
     if (bindingSession.state === 'waiting_mc_username') {
+      // 先排除跳过命令，这些是有效输入
+      if (content === '跳过' || content === 'skip') {
+        return false
+      }
+      
       // MC用户名检查
       // 长度明显不符合MC用户名规范（3-16位）
       if (content.length < 2 || content.length > 20) {
