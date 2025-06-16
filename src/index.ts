@@ -1467,20 +1467,16 @@ export function apply(ctx: Context, config: Config) {
         }
         
         // 处理撤回机器人消息 - 只在群聊中撤回机器人自己的消息
-        // 检查是否为不应撤回的重要提示消息
+        // 检查是否为不应撤回的重要提示消息（只有绑定会话超时提醒）
         const shouldNotRecall = content.some(element => {
           // 检查h.text类型的元素
           if (typeof element === 'string') {
-            return element.includes('🤔 您当前正在进行绑定流程') || 
-                   element.includes('🔄 检测到您可能不想继续绑定流程') ||
-                   element.includes('💭 您当前正在进行账号绑定');
+            return element.includes('绑定会话已超时，请重新开始绑定流程');
           }
           // 检查可能的对象结构
           if (typeof element === 'object' && element && 'toString' in element) {
             const text = element.toString();
-            return text.includes('🤔 您当前正在进行绑定流程') || 
-                   text.includes('🔄 检测到您可能不想继续绑定流程') ||
-                   text.includes('💭 您当前正在进行账号绑定');
+            return text.includes('绑定会话已超时，请重新开始绑定流程');
           }
           return false;
         });
@@ -2283,8 +2279,8 @@ export function apply(ctx: Context, config: Config) {
     const existingBind = await getMcBindByQQId(normalizedUserId)
     if (existingBind && existingBind.mcUsername && !existingBind.mcUsername.startsWith('_temp_')) {
       // 检查冷却时间
-      if (!await isAdmin(session.userId) && !checkCooldown(existingBind.lastModified, 3)) {
-        const days = config.cooldownDays * 3
+      if (!await isAdmin(session.userId) && !checkCooldown(existingBind.lastModified)) {
+        const days = config.cooldownDays
         const now = new Date()
         const diffTime = now.getTime() - existingBind.lastModified.getTime()
         const passedDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
@@ -2838,8 +2834,8 @@ export function apply(ctx: Context, config: Config) {
           
           if (!isTempUsername) {
             // 检查是否是管理员或是否在冷却时间内
-            if (!await isAdmin(session.userId) && !checkCooldown(selfBind.lastModified, 3)) {
-              const days = config.cooldownDays * 3
+            if (!await isAdmin(session.userId) && !checkCooldown(selfBind.lastModified)) {
+              const days = config.cooldownDays
               const now = new Date()
               const diffTime = now.getTime() - selfBind.lastModified.getTime()
               const passedDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
@@ -3016,8 +3012,8 @@ export function apply(ctx: Context, config: Config) {
         }
 
         // 检查冷却时间
-        if (!await isAdmin(session.userId) && !checkCooldown(selfBind.lastModified, 3)) {
-          const days = config.cooldownDays * 3
+        if (!await isAdmin(session.userId) && !checkCooldown(selfBind.lastModified)) {
+          const days = config.cooldownDays
           const now = new Date()
           const diffTime = now.getTime() - selfBind.lastModified.getTime()
           const passedDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
@@ -3599,8 +3595,8 @@ export function apply(ctx: Context, config: Config) {
         // 检查用户是否已绑定BUID
         if (selfBind && selfBind.buidUid) {
           // 检查是否是管理员或是否在冷却时间内
-          if (!await isAdmin(session.userId) && !checkCooldown(selfBind.lastModified, 3)) {
-            const days = config.cooldownDays * 3
+          if (!await isAdmin(session.userId) && !checkCooldown(selfBind.lastModified)) {
+            const days = config.cooldownDays
             const now = new Date()
             const diffTime = now.getTime() - selfBind.lastModified.getTime()
             const passedDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
