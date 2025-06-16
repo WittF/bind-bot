@@ -957,7 +957,7 @@ export function apply(ctx: Context, config: Config) {
         bindingSession.mcUsername = existingBind.mcUsername;
         
         await sendMessage(session, [
-          h.text(`🔗 请输入您的B站UID进行绑定\n\n获取方式：打开B站个人主页，地址栏中的数字即为UID\n例如：https://space.bilibili.com/123456 中的 123456`)
+          h.text(`🔗 请发送您的B站UID进行绑定\n\n📍 获取方式：\n1. 打开B站个人主页\n2. 地址栏中的数字即为UID\n例如：https://space.bilibili.com/123456 中的 123456\n\n💬 请直接发送您的UID数字（如：123456）`)
         ]);
         
       } else if (!existingBind.mcUsername && existingBind.buidUid) {
@@ -2253,7 +2253,7 @@ export function apply(ctx: Context, config: Config) {
       })
       
       logger.info(`[交互绑定] QQ(${normalizedUserId})跳过了MC账号绑定，直接进入B站绑定流程`)
-      await sendMessage(session, [h.text('✅ 已跳过MC绑定\n请发送您的B站UID')])
+              await sendMessage(session, [h.text('✅ 已跳过MC绑定\n\n🔗 请发送您的B站UID进行绑定\n💬 直接发送UID数字即可（如：123456）')])
       return
     }
     
@@ -2331,7 +2331,7 @@ export function apply(ctx: Context, config: Config) {
     
     // 发送简化的MC绑定成功消息
     await sendMessage(session, [
-      h.text(`✅ MC账号: ${username}\n请发送您的B站UID`),
+      h.text(`✅ MC账号: ${username}\n\n🔗 请发送您的B站UID进行绑定\n💬 直接发送UID数字即可（如：123456）`),
       ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : [])
     ])
   }
@@ -3196,7 +3196,7 @@ export function apply(ctx: Context, config: Config) {
             // 向目标用户发送提示（尝试@他们）
             return sendMessage(session, [
               h.at(target),
-              h.text(` 管理员为您启动了B站绑定流程\n🎮 已绑定MC: ${targetBind.mcUsername}\n请发送您的B站UID`)
+              h.text(` 管理员为您启动了B站绑定流程\n🎮 已绑定MC: ${targetBind.mcUsername}\n\n🔗 请发送您的B站UID进行绑定\n💬 直接发送UID数字即可（如：123456）`)
             ])
           }
           
@@ -3267,7 +3267,7 @@ export function apply(ctx: Context, config: Config) {
           
           bindingSessions.set(`${normalizedUserId}_${channelId}`, sessionData)
           
-          return sendMessage(session, [h.text(`🎮 已绑定MC: ${existingBind.mcUsername}\n请发送您的B站UID`)])
+          return sendMessage(session, [h.text(`🎮 已绑定MC: ${existingBind.mcUsername}\n\n🔗 请发送您的B站UID进行绑定\n💬 直接发送UID数字即可（如：123456）`)])
         }
         
         // 如果未绑定MC账号，让用户选择绑定方式
