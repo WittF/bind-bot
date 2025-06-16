@@ -2026,7 +2026,7 @@ export function apply(ctx: Context, config: Config) {
     // 验证用户名格式
     if (!content || !/^[a-zA-Z0-9_]{3,16}$/.test(content)) {
       logger.warn(`[交互绑定] QQ(${normalizedUserId})输入的MC用户名"${content}"格式无效`)
-      await sendMessage(session, [h.text('❌ 用户名格式无效\n\n请输入有效的MC用户名（3-16位字母、数字、下划线）')])
+      await sendMessage(session, [h.text('❌ 用户名格式无效，请重新输入')])
       return
     }
     
@@ -2034,7 +2034,7 @@ export function apply(ctx: Context, config: Config) {
     const profile = await validateUsername(content)
     if (!profile) {
       logger.warn(`[交互绑定] QQ(${normalizedUserId})输入的MC用户名"${content}"不存在`)
-      await sendMessage(session, [h.text(`❌ 用户名 ${content} 不存在\n\n请输入正确的MC用户名`)])
+      await sendMessage(session, [h.text(`❌ 用户名 ${content} 不存在`)])
       return
     }
     
@@ -2095,9 +2095,9 @@ export function apply(ctx: Context, config: Config) {
     
     const formattedUuid = formatUuid(uuid)
     
-    // 发送MC绑定成功消息和B站UID输入提示
+    // 发送简化的MC绑定成功消息
     await sendMessage(session, [
-      h.text(`✅ MC账号绑定成功！\n\n用户名: ${username}\nUUID: ${formattedUuid}\n\n现在请发送您的B站UID...\n\n💡 提示：\n- 支持格式：12345 或 UID:12345\n- 发送"跳过"可跳过B站绑定\n- 发送"取消"可退出绑定流程`),
+      h.text(`✅ MC账号: ${username}\n请发送您的B站UID`),
       ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : [])
     ])
   }
@@ -2125,7 +2125,7 @@ export function apply(ctx: Context, config: Config) {
     // 验证UID格式
     if (!actualUid || !/^\d+$/.test(actualUid)) {
       logger.warn(`[交互绑定] QQ(${normalizedUserId})输入的B站UID"${content}"格式无效`)
-      await sendMessage(session, [h.text('❌ UID格式无效\n\n请输入正确的B站UID（纯数字或UID:数字格式）\n或发送"跳过"跳过B站绑定')])
+      await sendMessage(session, [h.text('❌ UID格式无效，请重新输入')])
       return
     }
     
@@ -2166,27 +2166,14 @@ export function apply(ctx: Context, config: Config) {
       if (session.bot.internal) {
         let groupsToUpdate = []
         
-        if (session.isDirect) {
-          // 私聊环境：在指定群里设置昵称
-          groupsToUpdate.push(targetGroupId)
-          logger.info(`[交互绑定] QQ(${normalizedUserId})私聊绑定，将在群${targetGroupId}中设置昵称`)
-        } else {
-          // 群聊环境：在当前群设置昵称，如果不是指定群还要在指定群也设置
-          groupsToUpdate.push(session.channelId)
-          if (session.channelId !== targetGroupId) {
-            groupsToUpdate.push(targetGroupId)
-          }
-          logger.info(`[交互绑定] QQ(${normalizedUserId})群聊绑定，将在群${groupsToUpdate.join(', ')}中设置昵称`)
-        }
+        // 只在指定群设置昵称
+        groupsToUpdate.push(targetGroupId)
+        logger.info(`[交互绑定] QQ(${normalizedUserId})绑定完成，将在群${targetGroupId}中设置昵称`)
         
         // 为每个群设置昵称
         for (const groupId of groupsToUpdate) {
           try {
-            await session.bot.internal.setGroupCard({
-              group_id: groupId,
-              user_id: session.userId,
-              card: newNickname
-            })
+            await session.bot.internal.setGroupCard(groupId, session.userId, newNickname)
             logger.info(`[交互绑定] 成功在群${groupId}中将QQ(${normalizedUserId})群昵称设置为: ${newNickname}`)
           } catch (groupError) {
             logger.warn(`[交互绑定] 在群${groupId}中设置QQ(${normalizedUserId})群昵称失败: ${groupError.message}`)
@@ -2214,7 +2201,7 @@ export function apply(ctx: Context, config: Config) {
     }
     
     await sendMessage(session, [
-      h.text(`🎉 交互式绑定完成！\n\n您已成功绑定：\n✅ MC账号: ${bindingSession.mcUsername}\n✅ B站账号: ${buidUser.username}\n\n${buidInfo}${extraInfo}`),
+      h.text(`🎉 绑定完成！\nMC: ${bindingSession.mcUsername}\nB站: ${buidUser.username}${extraInfo}`),
       ...(config?.showAvatar ? [h.image(`https://workers.vrp.moe/bilibili/avatar/${buidUser.uid}?size=160`)] : [])
     ])
   }
@@ -2867,7 +2854,8 @@ export function apply(ctx: Context, config: Config) {
     })
 
   // 交互型绑定命令
-  cmd.subcommand('.绑定', '交互式绑定流程')
+  ctx.command('绑定', '交互式绑定流程')
+    .alias('bind')
     .alias('interact')
     .action(async ({ session }) => {
       try {
@@ -2930,14 +2918,14 @@ export function apply(ctx: Context, config: Config) {
           
           bindingSessions.set(`${normalizedUserId}_${channelId}`, sessionData)
           
-          return sendMessage(session, [h.text(`🎮 您已绑定MC账号: ${existingBind.mcUsername}\n\n现在请发送您的B站UID...\n\n💡 提示：\n- 支持格式：12345 或 UID:12345\n- 发送"跳过"可跳过B站绑定\n- 发送"取消"可退出绑定流程`)])
+          return sendMessage(session, [h.text(`🎮 已绑定MC: ${existingBind.mcUsername}\n请发送您的B站UID`)])
         }
         
         // 如果未绑定MC账号，从MC绑定开始
         createBindingSession(session.userId, channelId)
         
-        // 发送欢迎消息和MC用户名输入提示
-        return sendMessage(session, [h.text(`🎮 开始交互式绑定流程\n\n请发送您的MC用户名...\n\n💡 提示：\n- 用户名格式：3-16位字母、数字、下划线\n- 发送"取消"可退出绑定流程`)])
+        // 发送简化的MC用户名输入提示
+        return sendMessage(session, [h.text(`🎮 请发送您的MC用户名`)])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
         logger.error(`[交互绑定] QQ(${normalizedUserId})开始交互式绑定失败: ${error.message}`)

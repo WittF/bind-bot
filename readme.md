@@ -3,8 +3,8 @@
 ## 普通用户命令
 
 ### Minecraft账号相关
+- `绑定` 交互式绑定流程（引导式绑定MC账号和B站账号）
 - `mcid bind <用户名>` 绑定Minecraft账号
-- `mcid 绑定` 交互式绑定流程（引导式绑定MC账号和B站账号）
 - `mcid query` 查询自己绑定的Minecraft账号
 - `mcid change <用户名>` 修改绑定的Minecraft账号
 - `mcid unbind` 解绑Minecraft账号
