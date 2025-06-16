@@ -718,14 +718,32 @@ export function apply(ctx: Context, config: Config) {
       const actualUserId = targetUserId || session.userId
       const normalizedUserId = normalizeQQId(actualUserId)
       
-      // 根据MC绑定状态设置不同的格式
-      const mcInfo = mcUsername || "未绑定"
+      // 根据MC绑定状态设置不同的格式（临时用户名视为未绑定）
+      const mcInfo = (mcUsername && !mcUsername.startsWith('_temp_')) ? mcUsername : "未绑定"
       const newNickname = `${buidUsername}（ID:${mcInfo}）`
       const targetGroupId = config.autoNicknameGroupId
       
       if (session.bot.internal && targetGroupId) {
-        await session.bot.internal.setGroupCard(targetGroupId, actualUserId, newNickname)
-        logger.info(`[群昵称设置] 成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称设置为: ${newNickname}`)
+        // 先获取当前群昵称进行比对
+        try {
+          const currentGroupInfo = await session.bot.internal.getGroupMemberInfo(targetGroupId, actualUserId)
+          const currentNickname = currentGroupInfo.card || currentGroupInfo.nickname || ''
+          
+          // 如果当前昵称和目标昵称一致，跳过修改
+          if (currentNickname === newNickname) {
+            logger.debug(`[群昵称设置] QQ(${normalizedUserId})群昵称已经是"${newNickname}"，跳过修改`)
+            return
+          }
+          
+          // 昵称不一致，执行修改
+          await session.bot.internal.setGroupCard(targetGroupId, actualUserId, newNickname)
+          logger.info(`[群昵称设置] 成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称从"${currentNickname}"修改为"${newNickname}"`)
+        } catch (getInfoError) {
+          // 如果获取当前昵称失败，直接尝试设置新昵称
+          logger.debug(`[群昵称设置] 获取QQ(${normalizedUserId})当前群昵称失败，直接设置新昵称: ${getInfoError.message}`)
+          await session.bot.internal.setGroupCard(targetGroupId, actualUserId, newNickname)
+          logger.info(`[群昵称设置] 成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称设置为: ${newNickname}`)
+        }
       } else if (!session.bot.internal) {
         logger.debug(`[群昵称设置] QQ(${normalizedUserId})bot不支持OneBot内部API，跳过自动群昵称设置`)
       } else if (!targetGroupId) {
@@ -1442,7 +1460,25 @@ export function apply(ctx: Context, config: Config) {
         }
         
         // 处理撤回机器人消息 - 只在群聊中撤回机器人自己的消息
-        if (isGroupMessage && messageResult) {
+        // 检查是否为不应撤回的重要提示消息
+        const shouldNotRecall = content.some(element => {
+          // 检查h.text类型的元素
+          if (typeof element === 'string') {
+            return element.includes('🤔 您当前正在进行绑定流程') || 
+                   element.includes('🔄 检测到您可能不想继续绑定流程') ||
+                   element.includes('💭 您当前正在进行账号绑定');
+          }
+          // 检查可能的对象结构
+          if (typeof element === 'object' && element && 'toString' in element) {
+            const text = element.toString();
+            return text.includes('🤔 您当前正在进行绑定流程') || 
+                   text.includes('🔄 检测到您可能不想继续绑定流程') ||
+                   text.includes('💭 您当前正在进行账号绑定');
+          }
+          return false;
+        });
+        
+        if (isGroupMessage && messageResult && !shouldNotRecall) {
           // 获取消息ID
           let messageId: string | undefined
           
@@ -1663,11 +1699,21 @@ export function apply(ctx: Context, config: Config) {
         return false
       }
       
+      // 跳过临时用户名的检查
+      if (username.startsWith('_temp_')) {
+        return false
+      }
+      
       // 查询新表中是否已有此用户名的绑定
       const bind = await getMcBindByUsername(username)
       
       // 如果没有绑定，返回false
       if (!bind) return false
+      
+      // 如果绑定的用户名是临时用户名，视为未绑定
+      if (bind.mcUsername && bind.mcUsername.startsWith('_temp_')) {
+        return false
+      }
       
       // 如果提供了当前用户ID，需要排除当前用户
       if (currentUserId) {
@@ -1962,10 +2008,11 @@ export function apply(ctx: Context, config: Config) {
         await ctx.database.set('mcidbind', { qqId: normalizedQQId }, updateData)
         logger.info(`[B站账号绑定] 更新绑定: QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}`)
       } else {
-        // 允许mcUsername为空字符串
+        // 为跳过MC绑定的用户生成唯一的临时用户名，避免UNIQUE constraint冲突
+        const tempMcUsername = `_temp_skip_${normalizedQQId}_${Date.now()}`;
         const newBind: any = {
           qqId: normalizedQQId,
-          mcUsername: '',
+          mcUsername: tempMcUsername,
           mcUuid: '',
           isAdmin: false,
           whitelist: [],
@@ -1973,7 +2020,7 @@ export function apply(ctx: Context, config: Config) {
           ...updateData
         }
         await ctx.database.create('mcidbind', newBind)
-        logger.info(`[B站账号绑定] 创建绑定: QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}`)
+        logger.info(`[B站账号绑定] 创建绑定(跳过MC): QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}, 临时MC用户名=${tempMcUsername}`)
       }
       return true
     } catch (error) {
@@ -2394,7 +2441,7 @@ export function apply(ctx: Context, config: Config) {
           
           // 查询目标用户的MC账号 - 使用MCIDBIND表
           const targetBind = await getMcBindByQQId(normalizedTargetId)
-          if (!targetBind || !targetBind.mcUsername) {
+          if (!targetBind || !targetBind.mcUsername || targetBind.mcUsername.startsWith('_temp_')) {
             logger.info(`[查询] QQ(${normalizedTargetId})未绑定MC账号`)
             return sendMessage(session, [h.text(`该用户尚未绑定MC账号`)])
           }
@@ -2497,7 +2544,7 @@ export function apply(ctx: Context, config: Config) {
         logger.info(`[查询] QQ(${normalizedUserId})查询自己的MC账号信息`)
         const selfBind = await getMcBindByQQId(normalizedUserId)
         
-        if (!selfBind || !selfBind.mcUsername) {
+        if (!selfBind || !selfBind.mcUsername || selfBind.mcUsername.startsWith('_temp_')) {
           logger.info(`[查询] QQ(${normalizedUserId})未绑定MC账号`)
           return sendMessage(session, [h.text(`您尚未绑定MC账号，请使用 ` + formatCommand('mcid bind <用户名>') + ` 进行绑定`)])
         }
