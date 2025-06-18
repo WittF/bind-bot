@@ -143,6 +143,7 @@ export interface MCIDBIND {
   medalLevel: number    // 粉丝牌等级
   wealthMedalLevel: number // 荣耀等级
   lastActiveTime: Date  // 最后活跃时间
+  reminderCount: number // 随机提醒次数
 }
 
 // 为koishi扩展表定义
@@ -648,6 +649,34 @@ export function apply(ctx: Context, config: Config) {
   // 缓存有效期（12小时，单位毫秒）
   const CACHE_DURATION = 12 * 60 * 60 * 1000
 
+  // 随机提醒功能的冷却缓存
+  const reminderCooldown = new Map<string, number>()
+  const REMINDER_COOLDOWN_TIME = 24 * 60 * 60 * 1000 // 24小时冷却
+
+  // 检查群昵称是否符合规范格式
+  const checkNicknameFormat = (nickname: string, buidUsername: string, mcUsername: string | null): boolean => {
+    if (!nickname || !buidUsername) return false
+    
+    // 期望格式：B站名称（ID:MC用户名）或 B站名称（ID:未绑定）
+    const mcInfo = mcUsername && !mcUsername.startsWith('_temp_') ? mcUsername : "未绑定"
+    const expectedFormat = `${buidUsername}（ID:${mcInfo}）`
+    
+    return nickname === expectedFormat
+  }
+
+  // 检查用户是否在冷却期内
+  const isInReminderCooldown = (userId: string): boolean => {
+    const lastReminder = reminderCooldown.get(userId)
+    if (!lastReminder) return false
+    
+    return (Date.now() - lastReminder) < REMINDER_COOLDOWN_TIME
+  }
+
+  // 设置用户提醒冷却
+  const setReminderCooldown = (userId: string): void => {
+    reminderCooldown.set(userId, Date.now())
+  }
+
   // 创建RCON连接管理器
   const rconManager = new RconManager(logger, config.servers || [], config.debugMode);
   
@@ -671,7 +700,7 @@ export function apply(ctx: Context, config: Config) {
       // 发送超时消息，@用户
       const normalizedUser = normalizeQQId(userId)
       ctx.bots.forEach(bot => {
-        bot.sendMessage(channelId, [h.at(normalizedUser), h.text(' 绑定会话已超时，请重新开始绑定流程')]).catch(() => {})
+        bot.sendMessage(channelId, [h.at(normalizedUser), h.text(' 绑定会话已超时，请重新开始绑定流程\n\n⚠️ 温馨提醒：若在管理员多次提醒后仍不配合绑定账号信息，将按群规进行相应处理。')]).catch(() => {})
       })
       logger.info(`[交互绑定] QQ(${normalizedUser})的绑定会话因超时被清理`)
     }, BINDING_SESSION_TIMEOUT)
@@ -926,8 +955,7 @@ export function apply(ctx: Context, config: Config) {
       
       if (!existingBind || (!existingBind.mcUsername && !existingBind.buidUid)) {
         // 完全未绑定，自动启动交互式绑定
-        welcomeMessage += `📋 为了更好的群聊体验，系统将自动为您启动账号绑定流程...\n\n`;
-        welcomeMessage += `⚠️ 重要提醒：若在管理员多次提醒后仍不配合绑定账号信息，将按群规进行相应处理。`;
+        welcomeMessage += `🎮 请选择绑定方式：\n1️⃣ 发送您的MC用户名进行MC绑定\n2️⃣ 发送"跳过"仅绑定B站账号`;
         
         await session.bot.sendMessage(session.channelId, welcomeMessage);
         logger.info(`[新人绑定] 为新成员QQ(${normalizedUserId})自动启动交互式绑定流程`);
@@ -937,15 +965,9 @@ export function apply(ctx: Context, config: Config) {
         const bindingSession = getBindingSession(session.userId, session.channelId);
         bindingSession.state = 'waiting_mc_username';
         
-        await sendMessage(session, [
-          h.text(`🎮 开始交互式绑定流程\n\n请选择绑定方式：\n1️⃣ 发送您的MC用户名进行MC绑定\n2️⃣ 发送"跳过"直接绑定B站账号`)
-        ]);
-        
       } else if (existingBind.mcUsername && !existingBind.buidUid) {
         // 只绑定了MC，未绑定B站 - 自动启动B站绑定
-        welcomeMessage += `📋 检测到您已绑定MC账号(${existingBind.mcUsername})，但尚未绑定B站账号\n`;
-        welcomeMessage += `系统将自动为您启动B站账号绑定流程...\n\n`;
-        welcomeMessage += `⚠️ 重要提醒：若在管理员多次提醒后仍不配合绑定B站账号信息，将按群规进行相应处理。`;
+        welcomeMessage += `🎮 已绑定MC: ${existingBind.mcUsername}\n🔗 请发送您的B站UID进行绑定`;
         
         await session.bot.sendMessage(session.channelId, welcomeMessage);
         logger.info(`[新人绑定] 为新成员QQ(${normalizedUserId})自动启动B站绑定流程`);
@@ -955,10 +977,6 @@ export function apply(ctx: Context, config: Config) {
         const bindingSession = getBindingSession(session.userId, session.channelId);
         bindingSession.state = 'waiting_buid';
         bindingSession.mcUsername = existingBind.mcUsername;
-        
-        await sendMessage(session, [
-          h.text(`🔗 请发送您的B站UID进行绑定\n\n📍 获取方式：\n1. 打开B站个人主页\n2. 地址栏中的数字即为UID\n例如：https://space.bilibili.com/123456 中的 123456\n\n💬 请直接发送您的UID数字（如：123456）`)
-        ]);
         
       } else if (!existingBind.mcUsername && existingBind.buidUid) {
         // 只绑定了B站，未绑定MC - 仅发送提醒
@@ -1122,6 +1140,10 @@ export function apply(ctx: Context, config: Config) {
       type: 'timestamp',
       initial: null,
     },
+    reminderCount: {
+      type: 'integer',
+      initial: 0,
+    },
   }, {
     // 设置主键为qqId
     primary: 'qqId',
@@ -1185,6 +1207,12 @@ export function apply(ctx: Context, config: Config) {
         // 检查并添加maxGuardLevelText字段
         if (!('maxGuardLevelText' in record)) {
           updateData.maxGuardLevelText = ''
+          needUpdate = true
+        }
+        
+        // 检查并添加reminderCount字段
+        if (!('reminderCount' in record)) {
+          updateData.reminderCount = 0
           needUpdate = true
         }
         
@@ -1412,7 +1440,7 @@ export function apply(ctx: Context, config: Config) {
   }
 
   // 封装发送消息的函数，处理私聊和群聊的不同格式
-  const sendMessage = async (session: Session, content: any[]): Promise<void> => {
+  const sendMessage = async (session: Session, content: any[], options?: { isProactiveMessage?: boolean }): Promise<void> => {
     try {
       if (!session) {
         logError('消息', 'system', '无效的会话对象')
@@ -1422,11 +1450,13 @@ export function apply(ctx: Context, config: Config) {
       // 检查是否为群聊消息
       const isGroupMessage = session.channelId && !session.channelId.startsWith('private:');
       const normalizedQQId = normalizeQQId(session.userId)
+      const isProactiveMessage = options?.isProactiveMessage || false
       
       // 处理私聊和群聊的消息格式
+      // 主动消息不引用原消息
       const promptMessage = session.channelId?.startsWith('private:')
-        ? [h.quote(session.messageId), ...content]
-        : [h.quote(session.messageId), h.at(session.userId), '\n', ...content]
+        ? (isProactiveMessage ? content : [h.quote(session.messageId), ...content])
+        : (isProactiveMessage ? [h.at(session.userId), '\n', ...content] : [h.quote(session.messageId), h.at(session.userId), '\n', ...content])
 
       // 发送消息并获取返回的消息ID
       const messageResult = await session.send(promptMessage)
@@ -1439,6 +1469,7 @@ export function apply(ctx: Context, config: Config) {
       if (config.autoRecallTime > 0 && session.bot) {
         // 处理撤回用户消息 - 只在群聊中且开启了用户消息撤回时
         // 但如果用户在绑定会话中发送聊天消息（不包括指令），不撤回
+        // 主动消息不撤回用户消息
         const bindingSession = getBindingSession(session.userId, session.channelId)
         const isBindingCommand = session.content && (
           session.content.trim() === '绑定' ||
@@ -1447,7 +1478,7 @@ export function apply(ctx: Context, config: Config) {
         const shouldNotRecallUserMessage = bindingSession && session.content && 
           !isBindingCommand && checkIrrelevantInput(bindingSession, session.content.trim())
         
-        if (config.recallUserMessage && isGroupMessage && session.messageId && !shouldNotRecallUserMessage) {
+        if (config.recallUserMessage && isGroupMessage && session.messageId && !shouldNotRecallUserMessage && !isProactiveMessage) {
           setTimeout(async () => {
             try {
               await session.bot.deleteMessage(session.channelId, session.messageId)
@@ -1464,6 +1495,8 @@ export function apply(ctx: Context, config: Config) {
           }
         } else if (shouldNotRecallUserMessage && config.debugMode) {
           logDebug('消息', `QQ(${normalizedQQId})在绑定会话中发送聊天消息，跳过撤回用户消息`)
+        } else if (isProactiveMessage && config.debugMode) {
+          logDebug('消息', `主动发送的消息，跳过撤回用户消息`)
         }
         
         // 处理撤回机器人消息 - 只在群聊中撤回机器人自己的消息
@@ -2138,6 +2171,158 @@ export function apply(ctx: Context, config: Config) {
     })
   }
 
+  // 随机提醒中间件 - 检查用户绑定状态和群昵称
+  ctx.middleware(async (session, next) => {
+    try {
+      // 只在指定群中处理
+      if (session.channelId !== config.autoNicknameGroupId) {
+        return next()
+      }
+
+      // 跳过机器人自己的消息和系统消息
+      if (!session.userId || session.userId === session.bot.userId) {
+        return next()
+      }
+
+      // 跳过空消息或命令消息
+      if (!session.content || session.content.startsWith('.') || session.content.startsWith('/') || 
+          session.content.includes('mcid') || session.content.includes('buid') || session.content.includes('绑定')) {
+        return next()
+      }
+
+      const normalizedUserId = normalizeQQId(session.userId)
+      
+      // 检查是否在冷却期内
+      if (isInReminderCooldown(normalizedUserId)) {
+        return next()
+      }
+
+      // 随机触发概率：管理员 1%，普通用户 3%，避免过于频繁
+      const isUserAdmin = await isAdmin(session.userId)
+      const triggerRate = isUserAdmin ? 0.01 : 0.03
+      if (Math.random() > triggerRate) {
+        return next()
+      }
+      
+      logger.debug(`[随机提醒] 触发提醒检查: QQ(${normalizedUserId})${isUserAdmin ? ' (管理员)' : ''}`)
+
+      // 检查是否在进行绑定会话，避免重复提醒
+      const activeBindingSession = getBindingSession(session.userId, session.channelId)
+      if (activeBindingSession) {
+        logger.debug(`[随机提醒] QQ(${normalizedUserId})正在进行绑定会话，跳过提醒`)
+        return next()
+      }
+
+      // 获取用户绑定信息
+      const bind = await getMcBindByQQId(normalizedUserId)
+      
+      // 获取用户群昵称信息
+      let currentNickname = ''
+      try {
+        if (session.bot.internal) {
+          const groupInfo = await session.bot.internal.getGroupMemberInfo(session.channelId, session.userId)
+          currentNickname = groupInfo.card || groupInfo.nickname || ''
+        }
+      } catch (error) {
+        // 获取群昵称失败，跳过处理
+        return next()
+      }
+
+      // 情况1：完全未绑定
+      if (!bind || (!bind.mcUsername && !bind.buidUid)) {
+        // 创建新记录或获取提醒次数
+        let reminderCount = 0
+        if (!bind) {
+          // 创建新记录
+          const tempUsername = `_temp_${normalizedUserId}`
+          await ctx.database.create('mcidbind', {
+            qqId: normalizedUserId,
+            mcUsername: tempUsername,
+            mcUuid: '',
+            lastModified: new Date(),
+            isAdmin: false,
+            whitelist: [],
+            tags: [],
+            reminderCount: 1
+          })
+          reminderCount = 1
+        } else {
+          // 更新提醒次数
+          reminderCount = (bind.reminderCount || 0) + 1
+          await ctx.database.set('mcidbind', { qqId: normalizedUserId }, { reminderCount })
+        }
+        
+        setReminderCooldown(normalizedUserId)
+        
+        // 根据次数决定用词
+        const reminderType = reminderCount >= 4 ? '警告' : '提醒'
+        const reminderPrefix = `【第${reminderCount}次${reminderType}】`
+        
+        logger.info(`[随机提醒] 向完全未绑定的用户QQ(${normalizedUserId})发送第${reminderCount}次${reminderType}`)
+        await sendMessage(session, [
+          h.text(`${reminderPrefix} 👋 你好！检测到您尚未绑定账号\n\n📋 为了更好的群聊体验，建议您绑定MC和B站账号\n💡 使用 ${formatCommand('绑定')} 开始绑定流程\n\n⚠️ 温馨提醒：请按群规设置合适的群昵称。若在管理员多次提醒后仍不配合绑定账号信息或按规修改群昵称，将按群规进行相应处理。`)
+        ], { isProactiveMessage: true })
+        return next()
+      }
+
+      // 情况2：只绑定了B站，未绑定MC
+      if (bind.buidUid && bind.buidUsername && (!bind.mcUsername || bind.mcUsername.startsWith('_temp_'))) {
+        const mcInfo = null
+        const isNicknameCorrect = checkNicknameFormat(currentNickname, bind.buidUsername, mcInfo)
+        
+        if (!isNicknameCorrect) {
+          // 更新提醒次数
+          const reminderCount = (bind.reminderCount || 0) + 1
+          await ctx.database.set('mcidbind', { qqId: normalizedUserId }, { reminderCount })
+          
+          // 根据次数决定用词
+          const reminderType = reminderCount >= 4 ? '警告' : '提醒'
+          const reminderPrefix = `【第${reminderCount}次${reminderType}】`
+          
+          // 自动修改群昵称
+          await autoSetGroupNickname(session, mcInfo, bind.buidUsername)
+          setReminderCooldown(normalizedUserId)
+          logger.info(`[随机提醒] 为仅绑定B站的用户QQ(${normalizedUserId})修复群昵称并发送第${reminderCount}次${reminderType}`)
+          
+          await sendMessage(session, [
+            h.text(`${reminderPrefix} ✅ 已修改您的群昵称为规范格式\n\n💡 若您有Minecraft Java版账号，请使用 ${formatCommand('mcid bind <用户名>')} 绑定MC账号\n📝 这样可以申请服务器白名单哦！\n\n⚠️ 请勿随意修改群昵称，保持规范格式`)
+          ], { isProactiveMessage: true })
+        }
+        return next()
+      }
+
+      // 情况3：都已绑定，但群昵称格式不正确
+      if (bind.buidUid && bind.buidUsername && bind.mcUsername && !bind.mcUsername.startsWith('_temp_')) {
+        const isNicknameCorrect = checkNicknameFormat(currentNickname, bind.buidUsername, bind.mcUsername)
+        
+        if (!isNicknameCorrect) {
+          // 更新提醒次数
+          const reminderCount = (bind.reminderCount || 0) + 1
+          await ctx.database.set('mcidbind', { qqId: normalizedUserId }, { reminderCount })
+          
+          // 根据次数决定用词
+          const reminderType = reminderCount >= 4 ? '警告' : '提醒'
+          const reminderPrefix = `【第${reminderCount}次${reminderType}】`
+          
+          // 自动修改群昵称
+          await autoSetGroupNickname(session, bind.mcUsername, bind.buidUsername)
+          setReminderCooldown(normalizedUserId)
+          logger.info(`[随机提醒] 为已完全绑定的用户QQ(${normalizedUserId})修复群昵称并发送第${reminderCount}次${reminderType}`)
+          
+          await sendMessage(session, [
+            h.text(`${reminderPrefix} ✅ 已修改您的群昵称为规范格式\n\n⚠️ 请勿随意修改群昵称！群昵称格式为：B站名称（ID:MC用户名）\n📋 这有助于管理员和群友识别您的身份\n\n`)
+          ], { isProactiveMessage: true })
+        }
+        return next()
+      }
+
+      return next()
+    } catch (error) {
+      logger.error(`[随机提醒] 处理用户消息时出错: ${error.message}`)
+      return next()
+    }
+  })
+
   // 交互型绑定会话处理中间件
   ctx.middleware(async (session, next) => {
     try {
@@ -2193,8 +2378,8 @@ export function apply(ctx: Context, config: Config) {
           if (newCount >= 2) {
             removeBindingSession(session.userId, session.channelId)
             logger.info(`[交互绑定] QQ(${normalizedUserId})持续发送聊天消息，自动取消绑定会话避免打扰`)
-            // 对于聊天取消，给一个更温和的提示，且不发送群规警告
-            await sendMessage(session, [h.text(`💬 看起来您在聊天，绑定流程已自动取消\n\n如需绑定账号，请随时使用 ${formatCommand('绑定')} 命令重新开始`)])
+            // 对于聊天取消，给一个更温和的提示，同时提醒群规
+            await sendMessage(session, [h.text(`💬 看起来您在聊天，绑定流程已自动取消\n\n📋 温馨提醒：请按群规设置合适的群昵称。若在管理员多次提醒后仍不配合绑定账号信息或按规修改群昵称，将按群规进行相应处理。\n\n如需绑定账号，请随时使用 ${formatCommand('绑定')} 命令重新开始`)])
             return
           } else {
             // 第一次聊天消息，给温和提醒
@@ -2253,14 +2438,14 @@ export function apply(ctx: Context, config: Config) {
       })
       
       logger.info(`[交互绑定] QQ(${normalizedUserId})跳过了MC账号绑定，直接进入B站绑定流程`)
-              await sendMessage(session, [h.text('✅ 已跳过MC绑定\n\n🔗 请发送您的B站UID进行绑定\n💬 直接发送UID数字即可（如：123456）')])
+              await sendMessage(session, [h.text('✅ 已跳过MC绑定\n🔗 请发送您的B站UID')])
       return
     }
     
     // 验证用户名格式
     if (!content || !/^[a-zA-Z0-9_]{3,16}$/.test(content)) {
       logger.warn(`[交互绑定] QQ(${normalizedUserId})输入的MC用户名"${content}"格式无效`)
-      await sendMessage(session, [h.text('❌ 用户名格式无效，请重新输入\n或发送"跳过"直接绑定B站账号')])
+      await sendMessage(session, [h.text('❌ 用户名格式无效，请重新输入\n或发送"跳过"仅绑定B站账号')])
       return
     }
     
@@ -2268,7 +2453,7 @@ export function apply(ctx: Context, config: Config) {
     const profile = await validateUsername(content)
     if (!profile) {
       logger.warn(`[交互绑定] QQ(${normalizedUserId})输入的MC用户名"${content}"不存在`)
-      await sendMessage(session, [h.text(`❌ 用户名 ${content} 不存在\n请重新输入或发送"跳过"直接绑定B站账号`)])
+      await sendMessage(session, [h.text(`❌ 用户名 ${content} 不存在\n请重新输入或发送"跳过"仅绑定B站账号`)])
       return
     }
     
@@ -2295,7 +2480,7 @@ export function apply(ctx: Context, config: Config) {
     // 检查用户名是否已被其他人绑定
     if (await checkUsernameExists(username, session.userId)) {
       logger.warn(`[交互绑定] MC用户名"${username}"已被其他用户绑定`)
-      await sendMessage(session, [h.text(`❌ 用户名 ${username} 已被其他用户绑定\n\n请输入其他MC用户名或发送"跳过"直接绑定B站账号`)])
+      await sendMessage(session, [h.text(`❌ 用户名 ${username} 已被其他用户绑定\n\n请输入其他MC用户名或发送"跳过"仅绑定B站账号`)])
       return
     }
     
@@ -2331,7 +2516,7 @@ export function apply(ctx: Context, config: Config) {
     
     // 发送简化的MC绑定成功消息
     await sendMessage(session, [
-      h.text(`✅ MC账号: ${username}\n\n🔗 请发送您的B站UID进行绑定\n💬 直接发送UID数字即可（如：123456）`),
+      h.text(`✅ MC账号: ${username}\n🔗 请发送您的B站UID`),
       ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : [])
     ])
   }
@@ -2536,7 +2721,7 @@ export function apply(ctx: Context, config: Config) {
           const messageElements = [
             h.text(`用户 ${normalizedTargetId} 的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}`),
             ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : []),
-            h.text(buidInfo),
+            h.text(`\n${buidInfo}`),
             ...(buidAvatar ? [buidAvatar] : [])
           ]
           
@@ -2645,7 +2830,7 @@ export function apply(ctx: Context, config: Config) {
         const messageElements = [
           h.text(`您的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}`),
           ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : []),
-          h.text(buidInfo),
+          h.text(`\n${buidInfo}`),
           ...(buidAvatar ? [buidAvatar] : [])
         ]
         
@@ -3190,24 +3375,22 @@ export function apply(ctx: Context, config: Config) {
               mcUuid: targetBind.mcUuid
             })
             
-            // 通知目标用户
-            await sendMessage(session, [h.text(`已为用户 ${normalizedTargetId} 启动B站绑定流程`)])
-            
-            // 向目标用户发送提示（尝试@他们）
-            return sendMessage(session, [
+            // 向目标用户发送提示（@他们）
+            await sendMessage(session, [
               h.at(target),
-              h.text(` 管理员为您启动了B站绑定流程\n🎮 已绑定MC: ${targetBind.mcUsername}\n\n🔗 请发送您的B站UID进行绑定\n💬 直接发送UID数字即可（如：123456）`)
+              h.text(` 管理员为您启动了B站绑定流程\n🎮 已绑定MC: ${targetBind.mcUsername}\n🔗 请发送您的B站UID`)
             ])
+            
+            return
           }
           
-          // 未绑定MC账号，让目标用户选择绑定方式
-          await sendMessage(session, [h.text(`已为用户 ${normalizedTargetId} 启动交互式绑定流程`)])
-          
-          // 向目标用户发送提示（尝试@他们）
-          return sendMessage(session, [
+          // 向目标用户发送提示（@他们）
+          await sendMessage(session, [
             h.at(target),
-            h.text(` 管理员为您启动了账号绑定流程\n🎮 请选择绑定方式：\n1. 发送您的MC用户名进行MC绑定\n2. 发送"跳过"直接绑定B站账号`)
+            h.text(` 管理员为您启动了账号绑定流程\n🎮 请选择绑定方式：\n1. 发送您的MC用户名进行MC绑定\n2. 发送"跳过"仅绑定B站账号`)
           ])
+          
+          return
         }
         
         // 为自己启动绑定流程
@@ -3250,7 +3433,7 @@ export function apply(ctx: Context, config: Config) {
           const timeout = setTimeout(() => {
             bindingSessions.delete(`${normalizedUserId}_${channelId}`)
             ctx.bots.forEach(bot => {
-              bot.sendMessage(channelId, [h.at(normalizedUserId), h.text(' 绑定会话已超时，请重新开始绑定流程')]).catch(() => {})
+              bot.sendMessage(channelId, [h.at(normalizedUserId), h.text(' 绑定会话已超时，请重新开始绑定流程\n\n⚠️ 温馨提醒：若在管理员多次提醒后仍不配合绑定账号信息，将按群规进行相应处理。')]).catch(() => {})
             })
             logger.info(`[交互绑定] QQ(${normalizedUserId})的绑定会话因超时被清理`)
           }, BINDING_SESSION_TIMEOUT)
@@ -3267,14 +3450,14 @@ export function apply(ctx: Context, config: Config) {
           
           bindingSessions.set(`${normalizedUserId}_${channelId}`, sessionData)
           
-          return sendMessage(session, [h.text(`🎮 已绑定MC: ${existingBind.mcUsername}\n\n🔗 请发送您的B站UID进行绑定\n💬 直接发送UID数字即可（如：123456）`)])
+          return sendMessage(session, [h.text(`🎮 已绑定MC: ${existingBind.mcUsername}\n🔗 请发送您的B站UID`)])
         }
         
         // 如果未绑定MC账号，让用户选择绑定方式
         createBindingSession(session.userId, channelId)
         
         // 发送绑定选项提示
-        return sendMessage(session, [h.text(`🎮 请选择绑定方式：\n1. 发送您的MC用户名进行MC绑定\n2. 发送"跳过"直接绑定B站账号`)])
+        return sendMessage(session, [h.text(`🎮 请选择绑定方式：\n1. 发送您的MC用户名进行MC绑定\n2. 发送"跳过"仅绑定B站账号`)])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
         logger.error(`[交互绑定] QQ(${normalizedUserId})开始交互式绑定失败: ${error.message}`)
@@ -5647,6 +5830,151 @@ export function apply(ctx: Context, config: Config) {
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
         logger.error(`[标签] QQ(${normalizedUserId})重命名标签失败: ${error.message}`)
+        return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
+      }
+    })
+
+  // 检查和修复群昵称命令
+  cmd.subcommand('.fixnicknames', '[管理员]检查并修复所有用户的群昵称格式')
+    .action(async ({ session }) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        
+        // 检查权限
+        if (!await isAdmin(session.userId)) {
+          logger.warn(`[群昵称修复] 权限不足: QQ(${normalizedUserId})不是管理员`)
+          return sendMessage(session, [h.text('只有管理员才能执行群昵称修复操作')])
+        }
+        
+        // 检查是否在目标群
+        if (session.channelId !== config.autoNicknameGroupId) {
+          return sendMessage(session, [h.text('此命令只能在指定群中使用')])
+        }
+        
+        logger.info(`[群昵称修复] 管理员QQ(${normalizedUserId})开始批量修复群昵称`)
+        await sendMessage(session, [h.text('🔧 开始检查并修复所有用户的群昵称格式，请稍候...')])
+        
+        // 获取所有已绑定B站的用户
+        const allBinds = await ctx.database.get('mcidbind', {})
+        const usersWithBuid = allBinds.filter(bind => bind.buidUid && bind.buidUsername)
+        
+        let checkedCount = 0
+        let fixedCount = 0
+        let errorCount = 0
+        const results: string[] = []
+        
+        for (const bind of usersWithBuid) {
+          try {
+            checkedCount++
+            
+            // 获取用户当前群昵称
+            let currentNickname = ''
+            try {
+              if (session.bot.internal) {
+                const groupInfo = await session.bot.internal.getGroupMemberInfo(session.channelId, bind.qqId)
+                currentNickname = groupInfo.card || groupInfo.nickname || ''
+              }
+            } catch (error) {
+              errorCount++
+              results.push(`❌ ${bind.qqId}: 获取群信息失败`)
+              continue
+            }
+            
+            // 检查昵称格式
+            const mcInfo = bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? bind.mcUsername : null
+            const isCorrect = checkNicknameFormat(currentNickname, bind.buidUsername, mcInfo)
+            
+            if (!isCorrect) {
+              // 修复群昵称
+              await autoSetGroupNickname(session, mcInfo, bind.buidUsername, bind.qqId)
+              fixedCount++
+              
+              const expectedFormat = `${bind.buidUsername}（ID:${mcInfo || '未绑定'}）`
+              results.push(`✅ ${bind.qqId}: "${currentNickname}" → "${expectedFormat}"`)
+              
+              // 添加延迟避免频率限制
+              await new Promise(resolve => setTimeout(resolve, 500))
+            } else {
+              results.push(`✓ ${bind.qqId}: 格式正确`)
+            }
+            
+            // 每处理10个用户发送一次进度
+            if (checkedCount % 10 === 0) {
+              await sendMessage(session, [h.text(`进度: ${checkedCount}/${usersWithBuid.length} | 修复: ${fixedCount} | 错误: ${errorCount}`)])
+            }
+            
+          } catch (error) {
+            errorCount++
+            results.push(`❌ ${bind.qqId}: 处理出错 - ${error.message}`)
+            logger.error(`[群昵称修复] 处理用户QQ(${bind.qqId})时出错: ${error.message}`)
+          }
+        }
+        
+        // 生成最终报告
+        let resultMessage = `🔧 群昵称修复完成\n共检查${checkedCount}个用户\n✅ 修复: ${fixedCount}个\n❌ 错误: ${errorCount}个`
+        
+        // 如果用户数量不多，显示详细结果
+        if (usersWithBuid.length <= 20) {
+          resultMessage += '\n\n详细结果:\n' + results.join('\n')
+        } else {
+          // 只显示修复的结果
+          const fixedResults = results.filter(r => r.includes('→'))
+          if (fixedResults.length > 0) {
+            resultMessage += '\n\n修复的用户:\n' + fixedResults.slice(0, 10).join('\n')
+            if (fixedResults.length > 10) {
+              resultMessage += `\n... 还有${fixedResults.length - 10}个用户被修复`
+            }
+          }
+        }
+        
+        logger.info(`[群昵称修复] 修复完成: 管理员QQ(${normalizedUserId})检查${checkedCount}个用户，修复${fixedCount}个，错误${errorCount}个`)
+        return sendMessage(session, [h.text(resultMessage)])
+      } catch (error) {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logger.error(`[群昵称修复] QQ(${normalizedUserId})执行群昵称修复失败: ${error.message}`)
+        return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
+      }
+    })
+
+  // 清除提醒冷却和次数命令
+  cmd.subcommand('.clearreminder [target:string]', '[管理员]清除用户的随机提醒冷却时间和提醒次数')
+    .action(async ({ session }, target) => {
+      try {
+        const normalizedUserId = normalizeQQId(session.userId)
+        
+        // 检查权限
+        if (!await isAdmin(session.userId)) {
+          logger.warn(`[清除冷却] 权限不足: QQ(${normalizedUserId})不是管理员`)
+          return sendMessage(session, [h.text('只有管理员才能清除提醒冷却和次数')])
+        }
+        
+        if (target) {
+          // 清除指定用户的冷却和次数
+          const normalizedTargetId = normalizeQQId(target)
+          reminderCooldown.delete(normalizedTargetId)
+          
+          // 重置提醒次数
+          const bind = await getMcBindByQQId(normalizedTargetId)
+          if (bind) {
+            await ctx.database.set('mcidbind', { qqId: normalizedTargetId }, { reminderCount: 0 })
+          }
+          
+          logger.info(`[清除冷却] 管理员QQ(${normalizedUserId})清除了QQ(${normalizedTargetId})的提醒冷却和次数`)
+          return sendMessage(session, [h.text(`已清除用户 ${normalizedTargetId} 的随机提醒冷却时间和提醒次数`)])
+        } else {
+          // 清除所有用户的冷却
+          const clearedCount = reminderCooldown.size
+          reminderCooldown.clear()
+          
+          // 重置所有用户的提醒次数
+          await ctx.database.set('mcidbind', {}, { reminderCount: 0 })
+          
+          logger.info(`[清除冷却] 管理员QQ(${normalizedUserId})清除了所有用户的提醒冷却和次数`)
+          return sendMessage(session, [h.text(`已清除所有用户的随机提醒冷却时间和提醒次数，共清除 ${clearedCount} 条冷却记录`)])
+        }
+      } catch (error) {
+        const normalizedUserId = normalizeQQId(session.userId)
+        logger.error(`[清除冷却] QQ(${normalizedUserId})清除提醒冷却失败: ${error.message}`)
         return sendMessage(session, [h.text(getFriendlyErrorMessage(error))])
       }
     })
