@@ -970,7 +970,8 @@ export function apply(ctx: Context, config: Config) {
         
       } else if (existingBind.mcUsername && !existingBind.buidUid) {
         // 只绑定了MC，未绑定B站 - 自动启动B站绑定
-        welcomeMessage += `🎮 已绑定MC: ${existingBind.mcUsername}\n🔗 请发送您的B站UID进行绑定`;
+        const displayUsername = existingBind.mcUsername && !existingBind.mcUsername.startsWith('_temp_') ? existingBind.mcUsername : '未绑定'
+        welcomeMessage += `🎮 已绑定MC: ${displayUsername}\n🔗 请发送您的B站UID进行绑定`;
         
         await session.bot.sendMessage(session.channelId, welcomeMessage);
         logger.info(`[新人绑定] 为新成员QQ(${normalizedUserId})自动启动B站绑定流程`);
@@ -979,7 +980,8 @@ export function apply(ctx: Context, config: Config) {
         createBindingSession(session.userId, session.channelId);
         const bindingSession = getBindingSession(session.userId, session.channelId);
         bindingSession.state = 'waiting_buid';
-        bindingSession.mcUsername = existingBind.mcUsername;
+        // 只有非temp用户名才设置到会话中
+        bindingSession.mcUsername = existingBind.mcUsername && !existingBind.mcUsername.startsWith('_temp_') ? existingBind.mcUsername : null;
         
       } else if (!existingBind.mcUsername && existingBind.buidUid) {
         // 只绑定了B站，未绑定MC - 仅发送提醒
@@ -2285,7 +2287,7 @@ export function apply(ctx: Context, config: Config) {
         
         logger.info(`[随机提醒] 向完全未绑定的用户QQ(${normalizedUserId})发送第${reminderCount}次${reminderType}`)
         await sendMessage(session, [
-          h.text(`${reminderPrefix} 👋 你好！检测到您尚未绑定账号\n\n📋 为了更好的群聊体验，建议您绑定MC和B站账号\n💡 使用 ${formatCommand('绑定')} 开始绑定流程\n\n⚠️ 温馨提醒：请按群规设置合适的群昵称。若在管理员多次提醒后仍不配合绑定账号信息或按规修改群昵称，将按群规进行相应处理。`)
+          h.text(`${reminderPrefix} \n👋 你好！检测到您尚未绑定账号\n\n📋 为了更好的群聊体验，建议您绑定MC和B站账号\n💡 使用 ${formatCommand('绑定')} 开始绑定流程\n\n⚠️ 温馨提醒：请按群规设置合适的群昵称。若在管理员多次提醒后仍不配合绑定账号信息或按规修改群昵称，将按群规进行相应处理。`)
         ], { isProactiveMessage: true })
         return next()
       }
@@ -2497,7 +2499,8 @@ export function apply(ctx: Context, config: Config) {
         const remainingDays = days - passedDays
         
         removeBindingSession(session.userId, session.channelId)
-        await sendMessage(session, [h.text(`❌ 您已绑定MC账号: ${existingBind.mcUsername}\n\n如需修改，请在冷却期结束后(还需${remainingDays}天)使用 ${formatCommand('mcid change')} 命令或联系管理员`)])
+        const displayUsername = existingBind.mcUsername && !existingBind.mcUsername.startsWith('_temp_') ? existingBind.mcUsername : '未绑定'
+        await sendMessage(session, [h.text(`❌ 您已绑定MC账号: ${displayUsername}\n\n如需修改，请在冷却期结束后(还需${remainingDays}天)使用 ${formatCommand('mcid change')} 命令或联系管理员`)])
         return
       }
     }
@@ -2520,6 +2523,42 @@ export function apply(ctx: Context, config: Config) {
     
     logger.info(`[交互绑定] QQ(${normalizedUserId})成功绑定MC账号: ${username}`)
     
+    // 检查用户是否已经绑定了B站账号
+    const updatedBind = await getMcBindByQQId(normalizedUserId)
+    if (updatedBind && updatedBind.buidUid && updatedBind.buidUsername) {
+      // 用户已经绑定了B站账号，直接完成绑定流程
+      logger.info(`[交互绑定] QQ(${normalizedUserId})已绑定B站账号，完成绑定流程`)
+      
+      // 清理会话
+      removeBindingSession(session.userId, session.channelId)
+      
+      // 设置群昵称
+      try {
+        await autoSetGroupNickname(session, username, updatedBind.buidUsername)
+        logger.info(`[交互绑定] QQ(${normalizedUserId})绑定完成，已设置群昵称`)
+      } catch (renameError) {
+        logger.warn(`[交互绑定] QQ(${normalizedUserId})自动群昵称设置失败: ${renameError.message}`)
+      }
+      
+      // 根据配置决定显示哪种图像
+      let mcAvatarUrl = null
+      if (config?.showAvatar) {
+        if (config?.showMcSkin) {
+          mcAvatarUrl = getStarlightSkinUrl(username)
+        } else {
+          mcAvatarUrl = getCrafatarUrl(uuid)
+        }
+      }
+      
+      // 发送完成消息
+      await sendMessage(session, [
+        h.text(`🎉 绑定完成！\nMC: ${username}\nB站: ${updatedBind.buidUsername}`),
+        ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : [])
+      ])
+      return
+    }
+    
+    // 用户未绑定B站账号，继续B站绑定流程
     // 更新会话状态
     updateBindingSession(session.userId, session.channelId, {
       state: 'waiting_buid',
@@ -2587,7 +2626,8 @@ export function apply(ctx: Context, config: Config) {
       removeBindingSession(session.userId, session.channelId)
       
       // 根据是否有MC绑定提供不同的提示
-      const mcStatus = bindingSession.mcUsername ? `您的MC账号${bindingSession.mcUsername}已成功绑定\n` : ''
+      const displayMcName = bindingSession.mcUsername && !bindingSession.mcUsername.startsWith('_temp_') ? bindingSession.mcUsername : null
+      const mcStatus = displayMcName ? `您的MC账号${displayMcName}已成功绑定\n` : ''
       await sendMessage(session, [h.text(`❌ B站账号绑定失败，数据库操作出错\n\n${mcStatus}可稍后使用 ${formatCommand('buid bind <UID>')} 命令单独绑定B站账号`)])
       return
     }
@@ -2622,11 +2662,12 @@ export function apply(ctx: Context, config: Config) {
     }
     
     // 准备完成消息
-    const mcInfo = bindingSession.mcUsername ? `MC: ${bindingSession.mcUsername}` : 'MC: 未绑定'
+    const displayMcName = bindingSession.mcUsername && !bindingSession.mcUsername.startsWith('_temp_') ? bindingSession.mcUsername : null
+    const mcInfo = displayMcName ? `MC: ${displayMcName}` : 'MC: 未绑定'
     let extraTip = ''
     
-    // 如果用户跳过了MC绑定，提供后续绑定的指引
-    if (!bindingSession.mcUsername) {
+    // 如果用户跳过了MC绑定或MC账号是temp，提供后续绑定的指引
+    if (!displayMcName) {
       extraTip = `\n\n💡 您可以随时使用 ${formatCommand('mcid bind <用户名>')} 绑定MC账号`
     }
     
@@ -2662,12 +2703,47 @@ export function apply(ctx: Context, config: Config) {
           
           logger.info(`[查询] QQ(${normalizedUserId})查询QQ(${normalizedTargetId})的MC账号信息`)
           
-          // 查询目标用户的MC账号 - 使用MCIDBIND表
-          const targetBind = await getMcBindByQQId(normalizedTargetId)
-          if (!targetBind || !targetBind.mcUsername || targetBind.mcUsername.startsWith('_temp_')) {
-            logger.info(`[查询] QQ(${normalizedTargetId})未绑定MC账号`)
-            return sendMessage(session, [h.text(`该用户尚未绑定MC账号`)])
+                  // 查询目标用户的MC账号 - 使用MCIDBIND表
+        const targetBind = await getMcBindByQQId(normalizedTargetId)
+        if (!targetBind || !targetBind.mcUsername || targetBind.mcUsername.startsWith('_temp_')) {
+          logger.info(`[查询] QQ(${normalizedTargetId})未绑定MC账号`)
+          
+          // 检查是否绑定了B站账号
+          if (targetBind && targetBind.buidUid) {
+            // 刷新B站数据（仅更新信息，不更新绑定时间）
+            const buidUser = await validateBUID(targetBind.buidUid)
+            if (buidUser) {
+              await updateBuidInfoOnly(targetBind.qqId, buidUser)
+              // 重新获取最新绑定
+              const refreshedBind = await getMcBindByQQId(normalizedTargetId)
+              if (refreshedBind) {
+                let buidInfo = `该用户尚未绑定MC账号\n\nB站账号信息：\nB站UID: ${refreshedBind.buidUid}\n用户名: ${refreshedBind.buidUsername}`
+                if (refreshedBind.guardLevel > 0) {
+                  buidInfo += `\n舰长等级: ${refreshedBind.guardLevelText} (${refreshedBind.guardLevel})`
+                  // 只有当历史最高等级比当前等级更高时才显示（数值越小等级越高）
+                  if (refreshedBind.maxGuardLevel > 0 && refreshedBind.maxGuardLevel < refreshedBind.guardLevel) {
+                    buidInfo += `\n历史最高: ${refreshedBind.maxGuardLevelText} (${refreshedBind.maxGuardLevel})`
+                  }
+                } else if (refreshedBind.maxGuardLevel > 0) {
+                  // 当前无舰长但有历史记录，显示历史最高
+                  buidInfo += `\n历史舰长: ${refreshedBind.maxGuardLevelText} (${refreshedBind.maxGuardLevel})`
+                }
+                if (refreshedBind.medalName) {
+                  buidInfo += `\n粉丝牌: ${refreshedBind.medalName} Lv.${refreshedBind.medalLevel}`
+                }
+                
+                const messageElements = [h.text(buidInfo)]
+                if (config?.showAvatar) {
+                  messageElements.push(h.image(`https://workers.vrp.moe/bilibili/avatar/${refreshedBind.buidUid}?size=160`))
+                }
+                
+                return sendMessage(session, messageElements)
+              }
+            }
           }
+          
+          return sendMessage(session, [h.text(`该用户尚未绑定MC账号`)])
+        }
           
           // 检查并更新用户名（如果变更）
           const updatedBind = await checkAndUpdateUsername(targetBind);
@@ -2753,8 +2829,10 @@ export function apply(ctx: Context, config: Config) {
           }
           
           // 按照用户期望的顺序发送消息：MC账号信息 -> MC头图 -> B站账号信息 -> B站头像
+          // 确保不显示temp用户名
+          const displayUsername = updatedBind.mcUsername && !updatedBind.mcUsername.startsWith('_temp_') ? updatedBind.mcUsername : '未绑定'
           const messageElements = [
-            h.text(`用户 ${normalizedTargetId} 的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}`),
+            h.text(`用户 ${normalizedTargetId} 的MC账号信息：\n用户名: ${displayUsername}\nUUID: ${formattedUuid}${whitelistInfo}`),
             ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : []),
             h.text(`\n${buidInfo}`),
             ...(buidAvatar ? [buidAvatar] : [])
@@ -2862,8 +2940,10 @@ export function apply(ctx: Context, config: Config) {
         }
         
         // 按照用户期望的顺序发送消息：MC账号信息 -> MC头图 -> B站账号信息 -> B站头像
+        // 确保不显示temp用户名
+        const displayUsername = updatedBind.mcUsername && !updatedBind.mcUsername.startsWith('_temp_') ? updatedBind.mcUsername : '未绑定'
         const messageElements = [
-          h.text(`您的MC账号信息：\n用户名: ${updatedBind.mcUsername}\nUUID: ${formattedUuid}${whitelistInfo}`),
+          h.text(`您的MC账号信息：\n用户名: ${displayUsername}\nUUID: ${formattedUuid}${whitelistInfo}`),
           ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : []),
           h.text(`\n${buidInfo}`),
           ...(buidAvatar ? [buidAvatar] : [])
@@ -2938,8 +3018,10 @@ export function apply(ctx: Context, config: Config) {
         }
         
         logger.info(`[反向查询] 成功: MC用户名"${username}"被QQ(${bind.qqId})绑定`)
+        // 确保不显示temp用户名
+        const displayUsername = bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? bind.mcUsername : '未绑定'
         return sendMessage(session, [
-          h.text(`MC用户名"${bind.mcUsername}"绑定信息:\nQQ号: ${bind.qqId}\nUUID: ${formattedUuid}${adminInfo}`),
+          h.text(`MC用户名"${displayUsername}"绑定信息:\nQQ号: ${bind.qqId}\nUUID: ${formattedUuid}${adminInfo}`),
           ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : [])
         ])
       } catch (error) {
@@ -3072,10 +3154,12 @@ export function apply(ctx: Context, config: Config) {
               const remainingDays = days - passedDays
               
               logWarn('绑定', `QQ(${normalizedUserId})已绑定MC账号"${selfBind.mcUsername}"，且在冷却期内，还需${remainingDays}天`)
-              return sendMessage(session, [h.text(`您已绑定MC账号: ${selfBind.mcUsername}，如需修改，请在冷却期结束后(还需${remainingDays}天)使用 ` + formatCommand('mcid change') + ` 命令或联系管理员。`)])
+              const displayUsername = selfBind.mcUsername && !selfBind.mcUsername.startsWith('_temp_') ? selfBind.mcUsername : '未绑定'
+              return sendMessage(session, [h.text(`您已绑定MC账号: ${displayUsername}，如需修改，请在冷却期结束后(还需${remainingDays}天)使用 ` + formatCommand('mcid change') + ` 命令或联系管理员。`)])
             }
             logDebug('绑定', `QQ(${normalizedUserId})已绑定MC账号"${selfBind.mcUsername}"，建议使用change命令`)
-            return sendMessage(session, [h.text(`您已绑定MC账号: ${selfBind.mcUsername}，如需修改请使用 ` + formatCommand('mcid change') + ` 命令。`)])
+            const displayUsername = selfBind.mcUsername && !selfBind.mcUsername.startsWith('_temp_') ? selfBind.mcUsername : '未绑定'
+            return sendMessage(session, [h.text(`您已绑定MC账号: ${displayUsername}，如需修改请使用 ` + formatCommand('mcid change') + ` 命令。`)])
           } else {
             // 临时用户名，允许直接绑定，记录日志
             logDebug('绑定', `QQ(${normalizedUserId})之前绑定的是临时用户名"${selfBind.mcUsername}"，允许直接使用bind命令`)
@@ -3341,7 +3425,7 @@ export function apply(ctx: Context, config: Config) {
             return sendMessage(session, [h.text(`用户 ${normalizedTargetId} 尚未绑定MC账号`)])
           }
 
-          const oldUsername = targetBind.mcUsername
+          const oldUsername = targetBind.mcUsername && !targetBind.mcUsername.startsWith('_temp_') ? targetBind.mcUsername : '未绑定'
           const oldBuidInfo = targetBind.buidUid ? ` 和 B站账号: ${targetBind.buidUsername}(${targetBind.buidUid})` : ''
           
           // 删除绑定记录
@@ -3363,7 +3447,7 @@ export function apply(ctx: Context, config: Config) {
         }
 
         // 移除冷却时间检查，解绑操作不受冷却时间限制
-        const oldUsername = selfBind.mcUsername
+        const oldUsername = selfBind.mcUsername && !selfBind.mcUsername.startsWith('_temp_') ? selfBind.mcUsername : '未绑定'
         const oldBuidInfo = selfBind.buidUid ? ` 和 B站账号: ${selfBind.buidUsername}(${selfBind.buidUid})` : ''
         
         // 删除绑定记录
@@ -3423,7 +3507,8 @@ export function apply(ctx: Context, config: Config) {
             logger.info(`[交互绑定] QQ(${normalizedTargetId})已完成全部绑定`)
             
             // 显示当前绑定信息
-            let bindInfo = `用户 ${normalizedTargetId} 已完成全部账号绑定：\n✅ MC账号: ${targetBind.mcUsername}\n✅ B站账号: ${targetBind.buidUsername} (UID: ${targetBind.buidUid})`
+            const displayUsername = targetBind.mcUsername && !targetBind.mcUsername.startsWith('_temp_') ? targetBind.mcUsername : '未绑定'
+            let bindInfo = `用户 ${normalizedTargetId} 已完成全部账号绑定：\n✅ MC账号: ${displayUsername}\n✅ B站账号: ${targetBind.buidUsername} (UID: ${targetBind.buidUid})`
             
             if (targetBind.guardLevel > 0) {
               bindInfo += `\n舰长等级: ${targetBind.guardLevelText}`
@@ -3445,14 +3530,15 @@ export function apply(ctx: Context, config: Config) {
             // 更新会话状态
             updateBindingSession(target, channelId, {
               state: 'waiting_buid',
-              mcUsername: targetBind.mcUsername,
+              mcUsername: targetBind.mcUsername && !targetBind.mcUsername.startsWith('_temp_') ? targetBind.mcUsername : null,
               mcUuid: targetBind.mcUuid
             })
             
             // 向目标用户发送提示（@他们）
+            const displayUsername = targetBind.mcUsername && !targetBind.mcUsername.startsWith('_temp_') ? targetBind.mcUsername : '未绑定'
             await sendMessage(session, [
               h.at(normalizedTargetId),
-              h.text(` 管理员为您启动了B站绑定流程\n🎮 已绑定MC: ${targetBind.mcUsername}\n🔗 请发送您的B站UID`)
+              h.text(` 管理员为您启动了B站绑定流程\n🎮 已绑定MC: ${displayUsername}\n🔗 请发送您的B站UID`)
             ])
             
             return
@@ -3480,12 +3566,13 @@ export function apply(ctx: Context, config: Config) {
         // 检查用户当前绑定状态
         const existingBind = await getMcBindByQQId(normalizedUserId)
         
-        // 如果两个账号都已绑定，不需要进入绑定流程
-        if (existingBind && existingBind.mcUsername && existingBind.buidUid) {
+        // 如果两个账号都已绑定（且MC不是temp用户名），不需要进入绑定流程
+        if (existingBind && existingBind.mcUsername && !existingBind.mcUsername.startsWith('_temp_') && existingBind.buidUid) {
           logger.info(`[交互绑定] QQ(${normalizedUserId})已完成全部绑定`)
           
           // 显示当前绑定信息
-          let bindInfo = `您已完成全部账号绑定：\n✅ MC账号: ${existingBind.mcUsername}\n✅ B站账号: ${existingBind.buidUsername} (UID: ${existingBind.buidUid})`
+          const displayUsername = existingBind.mcUsername
+          let bindInfo = `您已完成全部账号绑定：\n✅ MC账号: ${displayUsername}\n✅ B站账号: ${existingBind.buidUsername} (UID: ${existingBind.buidUid})`
           
           if (existingBind.guardLevel > 0) {
             bindInfo += `\n舰长等级: ${existingBind.guardLevelText}`
@@ -3499,8 +3586,8 @@ export function apply(ctx: Context, config: Config) {
           return sendMessage(session, [h.text(bindInfo)])
         }
         
-        // 如果已绑定MC但未绑定B站，直接进入B站绑定流程
-        if (existingBind && existingBind.mcUsername && !existingBind.buidUid) {
+        // 如果已绑定MC（且不是temp用户名）但未绑定B站，直接进入B站绑定流程
+        if (existingBind && existingBind.mcUsername && !existingBind.mcUsername.startsWith('_temp_') && !existingBind.buidUid) {
           logger.info(`[交互绑定] QQ(${normalizedUserId})已绑定MC，进入B站绑定流程`)
           
           // 创建绑定会话，状态直接设为等待B站UID
@@ -3525,6 +3612,17 @@ export function apply(ctx: Context, config: Config) {
           bindingSessions.set(`${normalizedUserId}_${channelId}`, sessionData)
           
           return sendMessage(session, [h.text(`🎮 已绑定MC: ${existingBind.mcUsername}\n🔗 请发送您的B站UID`)])
+        }
+        
+        // 如果只绑定了B站（MC是temp用户名），提醒绑定MC账号
+        if (existingBind && existingBind.buidUid && existingBind.buidUsername && 
+            existingBind.mcUsername && existingBind.mcUsername.startsWith('_temp_')) {
+          logger.info(`[交互绑定] QQ(${normalizedUserId})只绑定了B站，进入MC绑定流程`)
+          
+          // 创建绑定会话，状态设为等待MC用户名
+          createBindingSession(session.userId, channelId)
+          
+          return sendMessage(session, [h.text(`✅ 已绑定B站: ${existingBind.buidUsername}\n🎮 请发送您的MC用户名，或发送"跳过"保持当前状态`)])
         }
         
         // 如果未绑定MC账号，让用户选择绑定方式
@@ -3659,7 +3757,8 @@ export function apply(ctx: Context, config: Config) {
         
         // 格式化管理员列表
         const adminList = admins.map(admin => {
-          return `- ${admin.qqId}${admin.mcUsername ? ` (MC: ${admin.mcUsername})` : ''}`
+          const displayUsername = admin.mcUsername && !admin.mcUsername.startsWith('_temp_') ? admin.mcUsername : null
+          return `- ${admin.qqId}${displayUsername ? ` (MC: ${displayUsername})` : ''}`
         }).join('\n')
         
         logger.info(`[管理员] 成功: 主人QQ(${normalizedUserId})查看了管理员列表`)
@@ -3745,7 +3844,7 @@ export function apply(ctx: Context, config: Config) {
           // 重新获取最新绑定
           bind = await getMcBindByQQId(bind.qqId)
         }
-        const userInfo = `${target ? `用户 ${bind.qqId}` : '您的'}B站账号信息：\nB站UID: ${bind.buidUid}\n用户名: ${bind.buidUsername}`
+        const userInfo = `${target ? `用户 ${bind.qqId} 的` : '您的'}B站账号信息：\nB站UID: ${bind.buidUid}\n用户名: ${bind.buidUsername}`
         let detailInfo = ''
                   if (bind.guardLevel > 0) {
             detailInfo += `\n舰长等级: ${bind.guardLevelText} (${bind.guardLevel})`
@@ -4632,8 +4731,9 @@ export function apply(ctx: Context, config: Config) {
         }).join('\n\n');  // 使用双换行分隔不同服务器，增强可读性
         
         logger.info(`[白名单] 成功: QQ(${normalizedUserId})获取了服务器列表，共${enabledServers.length}个服务器`)
+        const displayUsername = userBind.mcUsername && !userBind.mcUsername.startsWith('_temp_') ? userBind.mcUsername : '未绑定MC账号'
         return sendMessage(session, [
-          h.text(`${userBind.mcUsername} 的可用服务器列表:\n\n${serverList}\n\n使用 ${formatCommand('mcid whitelist add <服务器名称或ID>')} 申请白名单`)
+          h.text(`${displayUsername} 的可用服务器列表:\n\n${serverList}\n\n使用 ${formatCommand('mcid whitelist add <服务器名称或ID>')} 申请白名单`)
         ])
       } catch (error) {
         const normalizedUserId = normalizeQQId(session.userId)
@@ -6254,8 +6354,9 @@ export function apply(ctx: Context, config: Config) {
         for (let i = 0; i < displayUsers.length; i++) {
           const user = displayUsers[i]
           const index = i + 1
+          const displayMcName = user.mcUsername && !user.mcUsername.startsWith('_temp_') ? user.mcUsername : '未绑定'
           groupMessage += `${index}. ${user.buidUsername} (UID: ${user.uid})\n`
-          groupMessage += `   QQ: ${user.qqId} | MC: ${user.mcUsername}\n`
+          groupMessage += `   QQ: ${user.qqId} | MC: ${displayMcName}\n`
         }
         
         // 如果用户太多，显示省略信息
@@ -6295,8 +6396,9 @@ export function apply(ctx: Context, config: Config) {
           const matchedUser = stats.matchedUsers.find(user => user.uid === winner.uid)
           
           if (matchedUser) {
+            const displayMcName = matchedUser.mcUsername && !matchedUser.mcUsername.startsWith('_temp_') ? matchedUser.mcUsername : '未绑定'
             privateMessage += `${index}. ${winner.username} (UID: ${winner.uid})\n`
-            privateMessage += `   QQ: ${matchedUser.qqId} | MC: ${matchedUser.mcUsername}\n`
+            privateMessage += `   QQ: ${matchedUser.qqId} | MC: ${displayMcName}\n`
           } else {
             privateMessage += `${index}. ${winner.username} (UID: ${winner.uid})\n`
             privateMessage += `   无绑定信息，自动跳过\n`
