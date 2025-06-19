@@ -2360,7 +2360,9 @@ export function apply(ctx: Context, config: Config) {
       }
       
       const normalizedUserId = normalizeQQId(session.userId)
-      const content = session.content?.trim()
+      const rawContent = session.content?.trim()
+      // 清理用户输入中的@Bot前缀
+      const content = cleanUserInput(rawContent || '', session)
       
       // 处理取消命令
       if (content === '取消' || content === 'cancel') {
@@ -2371,13 +2373,14 @@ export function apply(ctx: Context, config: Config) {
       }
       
       // 检查是否在绑定过程中使用了其他绑定相关命令（排除跳过选项）
-      if (content && content !== '跳过' && content !== 'skip' && (
-        content.includes('绑定') || 
-        content.includes('bind') || 
-        content.includes('mcid') || 
-        content.includes('buid') ||
-        content.startsWith('.') ||
-        content.startsWith('/')
+      // 这里使用原始内容检测命令，避免误判@Bot发送的正常输入
+      if (rawContent && content !== '跳过' && content !== 'skip' && (
+        rawContent.includes('绑定') || 
+        rawContent.includes('bind') || 
+        rawContent.includes('mcid') || 
+        rawContent.includes('buid') ||
+        rawContent.startsWith('.') ||
+        rawContent.startsWith('/')
       )) {
         const currentState = bindingSession.state === 'waiting_mc_username' ? 'MC用户名' : 'B站UID'
         await sendMessage(session, [h.text(`🔄 您正在进行交互式绑定，请继续输入${currentState}\n\n如需取消当前绑定，请发送"取消"`)])
@@ -2394,7 +2397,7 @@ export function apply(ctx: Context, config: Config) {
           invalidInputCount: newCount
         })
         
-        // 检查是否为明显的聊天内容
+        // 检查是否为明显的聊天内容（使用清理后的内容）
         const chatKeywords = ['你好', 'hello', 'hi', '在吗', '在不在', '怎么样', '什么', '为什么', '好的', '谢谢', '哈哈', '呵呵', '早上好', '晚上好', '晚安', '再见', '拜拜', '666', '牛', '厉害', '真的吗', '不是吧', '哇', '哦', '嗯', '好吧', '行', '可以', '没事', '没问题', '没关系']
         const isChatMessage = chatKeywords.some(keyword => content.toLowerCase().includes(keyword)) ||
                               /[！？。，；：""''（）【】〈〉《》「」『』〔〕〖〗〘〙〚〛]{2,}/.test(content) ||
@@ -2680,6 +2683,37 @@ export function apply(ctx: Context, config: Config) {
   // 帮助函数：转义正则表达式中的特殊字符
   const escapeRegExp = (string: string): string => {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  }
+
+  // 帮助函数：清理用户输入中的@Bot前缀
+  const cleanUserInput = (content: string, session: Session): string => {
+    if (!content) return content
+    
+    // 获取机器人的用户ID
+    const botUserId = session.bot.userId
+    
+    // 匹配各种@Bot的格式
+    const atPatterns = [
+      // <at id="botUserId"/> 格式
+      new RegExp(`^<at id="${escapeRegExp(botUserId)}"/>\\s*`, 'i'),
+      // @Bot昵称 格式（如果配置了botNickname）
+      config.botNickname ? new RegExp(`^@${escapeRegExp(config.botNickname)}\\s+`, 'i') : null,
+      // @botUserId 格式
+      new RegExp(`^@${escapeRegExp(botUserId)}\\s+`, 'i'),
+    ].filter(Boolean)
+    
+    let cleanedContent = content.trim()
+    
+    // 尝试匹配并移除@Bot前缀
+    for (const pattern of atPatterns) {
+      if (pattern.test(cleanedContent)) {
+        cleanedContent = cleanedContent.replace(pattern, '').trim()
+        logger.debug(`[交互绑定] 清理用户输入，原始: "${content}" -> 清理后: "${cleanedContent}"`)
+        break
+      }
+    }
+    
+    return cleanedContent
   }
 
   // 查询MC账号命令
