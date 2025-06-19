@@ -754,9 +754,12 @@ export function apply(ctx: Context, config: Config) {
       const targetGroupId = config.autoNicknameGroupId
       
       if (session.bot.internal && targetGroupId) {
+        // 使用规范化的QQ号调用OneBot API
+        const fullUserId = ensureFullUserId(normalizedUserId)
+        
         // 先获取当前群昵称进行比对
         try {
-          const currentGroupInfo = await session.bot.internal.getGroupMemberInfo(targetGroupId, actualUserId)
+          const currentGroupInfo = await session.bot.internal.getGroupMemberInfo(targetGroupId, fullUserId)
           const currentNickname = currentGroupInfo.card || currentGroupInfo.nickname || ''
           
           // 如果当前昵称和目标昵称一致，跳过修改
@@ -766,12 +769,12 @@ export function apply(ctx: Context, config: Config) {
           }
           
           // 昵称不一致，执行修改
-          await session.bot.internal.setGroupCard(targetGroupId, actualUserId, newNickname)
+          await session.bot.internal.setGroupCard(targetGroupId, fullUserId, newNickname)
           logger.info(`[群昵称设置] 成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称从"${currentNickname}"修改为"${newNickname}"`)
         } catch (getInfoError) {
           // 如果获取当前昵称失败，直接尝试设置新昵称
           logger.debug(`[群昵称设置] 获取QQ(${normalizedUserId})当前群昵称失败，直接设置新昵称: ${getInfoError.message}`)
-          await session.bot.internal.setGroupCard(targetGroupId, actualUserId, newNickname)
+          await session.bot.internal.setGroupCard(targetGroupId, fullUserId, newNickname)
           logger.info(`[群昵称设置] 成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称设置为: ${newNickname}`)
         }
       } else if (!session.bot.internal) {
@@ -1325,19 +1328,41 @@ export function apply(ctx: Context, config: Config) {
       return ''
     }
     
+    let extractedId = ''
+    
+    // 检查是否是手动输入的@符号（错误用法）
+    if (userId.startsWith('@') && !userId.match(/<at\s+id="[^"]+"\s*\/>/)) {
+      logger.warn(`[用户ID] 检测到手动输入的@符号"${userId}"，应使用真正的@功能`)
+      return ''  // 返回空字符串表示无效
+    }
+    
     // 处理 <at id="..."/> 格式的@用户字符串
     const atMatch = userId.match(/<at id="(\d+)"\s*\/>/)
     if (atMatch) {
-      return atMatch[1]
+      extractedId = atMatch[1]
+    } else {
+      // 如果包含冒号，说明有平台前缀(如 onebot:123456)
+      const colonIndex = userId.indexOf(':')
+      if (colonIndex !== -1) {
+        extractedId = userId.substring(colonIndex + 1)
+      } else {
+        extractedId = userId
+      }
     }
     
-    // 如果包含冒号，说明有平台前缀(如 onebot:123456)
-    const colonIndex = userId.indexOf(':')
-    if (colonIndex !== -1) {
-      // 返回冒号后面的部分，即纯QQ号
-      return userId.substring(colonIndex + 1)
+    // 验证提取的ID是否为纯数字QQ号
+    if (!/^\d+$/.test(extractedId)) {
+      logger.warn(`[用户ID] 提取的ID"${extractedId}"不是有效的QQ号(必须为纯数字)，来源: ${userId}`)
+      return ''  // 返回空字符串表示无效
     }
-    return userId
+    
+    // 检查QQ号长度是否合理(QQ号通常为5-12位数字)
+    if (extractedId.length < 5 || extractedId.length > 12) {
+      logger.warn(`[用户ID] QQ号"${extractedId}"长度异常(${extractedId.length}位)，有效范围为5-12位`)
+      return ''
+    }
+    
+    return extractedId
   }
 
   // 获取用户友好的错误信息
@@ -1456,7 +1481,7 @@ export function apply(ctx: Context, config: Config) {
       // 主动消息不引用原消息
       const promptMessage = session.channelId?.startsWith('private:')
         ? (isProactiveMessage ? content : [h.quote(session.messageId), ...content])
-        : (isProactiveMessage ? [h.at(session.userId), '\n', ...content] : [h.quote(session.messageId), h.at(session.userId), '\n', ...content])
+        : (isProactiveMessage ? [h.at(normalizedQQId), '\n', ...content] : [h.quote(session.messageId), h.at(normalizedQQId), '\n', ...content])
 
       // 发送消息并获取返回的消息ID
       const messageResult = await session.send(promptMessage)
@@ -2625,6 +2650,16 @@ export function apply(ctx: Context, config: Config) {
         // 如果指定了目标用户
         if (target) {
           const normalizedTargetId = normalizeQQId(target)
+          
+          // 检查目标用户ID是否有效
+          if (!normalizedTargetId) {
+            logger.warn(`[查询] QQ(${normalizedUserId})提供的目标用户ID"${target}"无效`)
+            if (target.startsWith('@')) {
+              return sendMessage(session, [h.text('❌ 请使用真正的@功能，而不是手动输入@符号\n正确做法：点击或长按用户头像选择@功能')])
+            }
+            return sendMessage(session, [h.text('❌ 目标用户ID无效\n请提供有效的QQ号或使用@功能选择用户')])
+          }
+          
           logger.info(`[查询] QQ(${normalizedUserId})查询QQ(${normalizedTargetId})的MC账号信息`)
           
           // 查询目标用户的MC账号 - 使用MCIDBIND表
@@ -2940,6 +2975,16 @@ export function apply(ctx: Context, config: Config) {
         // 如果指定了目标用户（管理员功能）
         if (target) {
           const normalizedTargetId = normalizeQQId(target)
+          
+          // 检查目标用户ID是否有效
+          if (!normalizedTargetId) {
+            logWarn('绑定', `QQ(${normalizedUserId})提供的目标用户ID"${target}"无效`)
+            if (target.startsWith('@')) {
+              return sendMessage(session, [h.text('❌ 请使用真正的@功能，而不是手动输入@符号\n正确做法：点击或长按用户头像选择@功能')])
+            }
+            return sendMessage(session, [h.text('❌ 目标用户ID无效\n请提供有效的QQ号或使用@功能选择用户')])
+          }
+          
           logDebug('绑定', `QQ(${normalizedUserId})尝试为QQ(${normalizedTargetId})绑定MC账号: ${username}(${uuid})`)
           
           // 检查权限
@@ -3121,6 +3166,16 @@ export function apply(ctx: Context, config: Config) {
         // 如果指定了目标用户（管理员功能）
         if (target) {
           const normalizedTargetId = normalizeQQId(target)
+          
+          // 检查目标用户ID是否有效
+          if (!normalizedTargetId) {
+            logger.warn(`[修改] QQ(${normalizedUserId})提供的目标用户ID"${target}"无效`)
+            if (target.startsWith('@')) {
+              return sendMessage(session, [h.text('❌ 请使用真正的@功能，而不是手动输入@符号\n正确做法：点击或长按用户头像选择@功能')])
+            }
+            return sendMessage(session, [h.text('❌ 目标用户ID无效\n请提供有效的QQ号或使用@功能选择用户')])
+          }
+          
           logger.info(`[修改] QQ(${normalizedUserId})尝试修改QQ(${normalizedTargetId})的MC账号为: ${username}(${uuid})`)
           
           // 检查权限
@@ -3260,6 +3315,16 @@ export function apply(ctx: Context, config: Config) {
         // 如果指定了目标用户（管理员功能）
         if (target) {
           const normalizedTargetId = normalizeQQId(target)
+          
+          // 检查目标用户ID是否有效
+          if (!normalizedTargetId) {
+            logger.warn(`[解绑] QQ(${normalizedUserId})提供的目标用户ID"${target}"无效`)
+            if (target.startsWith('@')) {
+              return sendMessage(session, [h.text('❌ 请使用真正的@功能，而不是手动输入@符号\n正确做法：点击或长按用户头像选择@功能')])
+            }
+            return sendMessage(session, [h.text('❌ 目标用户ID无效\n请提供有效的QQ号或使用@功能选择用户')])
+          }
+          
           logger.info(`[解绑] QQ(${normalizedUserId})尝试为QQ(${normalizedTargetId})解绑MC账号`)
           
           // 检查权限
@@ -3332,6 +3397,15 @@ export function apply(ctx: Context, config: Config) {
           }
           
           const normalizedTargetId = normalizeQQId(target)
+          
+          // 检查目标用户ID是否有效
+          if (!normalizedTargetId) {
+            logger.warn(`[交互绑定] QQ(${normalizedUserId})提供的目标用户ID"${target}"无效`)
+            if (target.startsWith('@')) {
+              return sendMessage(session, [h.text('❌ 请使用真正的@功能，而不是手动输入@符号\n正确做法：点击或长按用户头像选择@功能')])
+            }
+            return sendMessage(session, [h.text('❌ 目标用户ID无效\n请提供有效的QQ号或使用@功能选择用户')])
+          }
           logger.info(`[交互绑定] 管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})启动交互式绑定流程`)
           
           // 检查目标用户是否已有进行中的会话
@@ -3377,7 +3451,7 @@ export function apply(ctx: Context, config: Config) {
             
             // 向目标用户发送提示（@他们）
             await sendMessage(session, [
-              h.at(target),
+              h.at(normalizedTargetId),
               h.text(` 管理员为您启动了B站绑定流程\n🎮 已绑定MC: ${targetBind.mcUsername}\n🔗 请发送您的B站UID`)
             ])
             
@@ -3386,7 +3460,7 @@ export function apply(ctx: Context, config: Config) {
           
           // 向目标用户发送提示（@他们）
           await sendMessage(session, [
-            h.at(target),
+            h.at(normalizedTargetId),
             h.text(` 管理员为您启动了账号绑定流程\n🎮 请选择绑定方式：\n1. 发送您的MC用户名进行MC绑定\n2. 发送"跳过"仅绑定B站账号`)
           ])
           
@@ -3718,6 +3792,16 @@ export function apply(ctx: Context, config: Config) {
         // 如果指定了目标用户（管理员功能）
         if (target) {
           const normalizedTargetId = normalizeQQId(target)
+          
+          // 检查目标用户ID是否有效
+          if (!normalizedTargetId) {
+            logWarn('BUID绑定', `QQ(${normalizedUserId})提供的目标用户ID"${target}"无效`)
+            if (target.startsWith('@')) {
+              return sendMessage(session, [h.text('❌ 请使用真正的@功能，而不是手动输入@符号\n正确做法：点击或长按用户头像选择@功能')])
+            }
+            return sendMessage(session, [h.text('❌ 目标用户ID无效\n请提供有效的QQ号或使用@功能选择用户')])
+          }
+          
           logDebug('BUID绑定', `QQ(${normalizedUserId})尝试为QQ(${normalizedTargetId})绑定BUID: ${actualUid}`)
           
           // 检查权限
@@ -3742,8 +3826,8 @@ export function apply(ctx: Context, config: Config) {
             return sendMessage(session, [h.text(`无法验证UID: ${actualUid}，该用户可能不存在或未被发现，你可以去直播间逛一圈，发个弹幕回来再绑定`)])
           }
 
-          // 创建或更新绑定记录
-          const bindResult = await createOrUpdateBuidBind(target, buidUser)
+                  // 创建或更新绑定记录
+        const bindResult = await createOrUpdateBuidBind(normalizedTargetId, buidUser)
           
           if (!bindResult) {
             logError('BUID绑定', normalizedUserId, `管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})绑定BUID"${actualUid}"失败: 数据库操作失败`)
