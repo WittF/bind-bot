@@ -572,6 +572,61 @@ export class ValidationService {
     return { isSafe: true, sanitizedInput: input }
   }
 
+  // 检查用户是否为管理员 - 从原代码提取
+  async isAdmin(userId: string, databaseService?: any): Promise<boolean> {
+    try {
+      const normalizedQQId = this.normalizeQQId(userId)
+      if (!normalizedQQId) return false
+
+      // 主人始终是管理员
+      if (this.isMaster(userId)) {
+        return true
+      }
+
+      // 查询数据库中的管理员状态
+      if (databaseService) {
+        const bind = await databaseService.getMcBindByQQId(normalizedQQId)
+        return bind && bind.isAdmin === true
+      }
+
+      return false
+    } catch (error) {
+      this.logger.error(`检查管理员状态失败: ${error.message}`)
+      return false
+    }
+  }
+
+  // 检查用户是否为主人 - 从原代码提取
+  isMaster(userId: string): boolean {
+    const normalizedQQId = this.normalizeQQId(userId)
+    return !!(this.config.masterId && normalizedQQId === this.config.masterId)
+  }
+
+  // 规范化QQ号 - 从原代码提取
+  normalizeQQId(userId: string): string {
+    if (!userId) return ''
+
+    // 处理 <at id="..."/> 格式的@用户字符串
+    const atMatch = userId.match(/<at id="(\d+)"\s*\/>/)
+    if (atMatch) {
+      return atMatch[1]
+    }
+
+    // 如果包含冒号，说明有平台前缀(如 onebot:123456)
+    const colonIndex = userId.indexOf(':')
+    if (colonIndex !== -1) {
+      return userId.substring(colonIndex + 1)
+    }
+
+    // 验证是否为纯数字QQ号
+    if (!/^\d+$/.test(userId)) {
+      this.logger.warn(`提取的ID"${userId}"不是有效的QQ号`)
+      return ''
+    }
+
+    return userId
+  }
+
   // 销毁服务
   async dispose(): Promise<void> {
     this.logger.info('ValidationService 正在销毁')

@@ -401,6 +401,25 @@ export class ErrorService {
     return report.join('\\n')
   }
 
+  // 获取用户友好的错误信息（兼容方法） - 从原代码提取
+  getFriendlyErrorMessage(error: Error | string): string {
+    return this.createUserFriendlyMessage(error)
+  }
+
+  // 记录操作日志 - 从原代码提取
+  logOperation(operation: string, userId: string, success: boolean, details: string = ''): void {
+    const status = success ? '成功' : '失败'
+    const message = `用户(${userId}) ${operation} ${status}${details ? ': ' + details : ''}`
+    
+    if (success) {
+      // 成功的操作通常记录为信息级别
+      this.logger.info(`[操作] ${message}`)
+    } else {
+      // 失败的操作记录为警告级别
+      this.logger.warn(`[操作] ${message}`)
+    }
+  }
+
   // 销毁服务
   async dispose(): Promise<void> {
     this.logger.info('ErrorService 正在销毁')
