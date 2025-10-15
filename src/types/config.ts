@@ -1,4 +1,11 @@
-// 配置类型定义 - 从原 index.ts 提取
+/**
+ * 配置相关类型定义
+ * 包含插件配置接口和服务器配置接口
+ */
+
+/**
+ * 插件配置接口
+ */
 export interface Config {
   cooldownDays: number
   masterId: string
@@ -16,9 +23,16 @@ export interface Config {
   enableLotteryBroadcast: boolean
   // 自动群昵称设置目标群
   autoNicknameGroupId: string
+  // 强制绑定相关配置
+  forceBindSessdata: string
+  forceBindTargetUpUid: number
+  forceBindTargetRoomId: number
+  forceBindTargetMedalName: string
 }
 
-// 服务器配置接口 - 从原 index.ts 提取
+/**
+ * 服务器配置接口
+ */
 export interface ServerConfig {
   id: string
   name: string
@@ -32,4 +46,17 @@ export interface ServerConfig {
   displayAddress?: string // 服务器展示地址
   description?: string // 服务器说明信息
   enabled?: boolean // 服务器启用状态
-} 
+}
+
+/**
+ * 强制绑定配置接口
+ * 从 force-bind-utils.ts 迁移
+ */
+export interface ForceBindConfig {
+  SESSDATA: string  // 支持完整cookie或单独SESSDATA
+  zminfoApiUrl: string
+  targetUpUid: number  // 目标UP主UID
+  targetRoomId: number // 目标房间号
+  targetMedalName: string // 目标粉丝牌名称
+  debugMode: boolean
+}

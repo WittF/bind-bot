@@ -1,2 +1,25 @@
+# macOS
 .DS_Store
+
+# TypeScript
 tsconfig.tsbuildinfo
+src/
+tsconfig.json
+
+# Claude Code
+.claude/
+CLAUDE.md
+TODO.md
+
+# Git
+.git
+.gitignore
+.gitattributes
+.editorconfig
+
+# 开发文档
+API_DOCUMENTATION.md
+nul
+
+# 备份文件
+*.backup

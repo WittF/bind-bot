@@ -1,6 +1,11 @@
-// 数据库类型定义 - 从原 index.ts 提取
+/**
+ * 数据库表结构类型定义
+ * 包含 MCIDBIND 表和 SCHEDULE_MUTE_TASKS 表
+ */
 
-// 定义MCIDBIND表结构
+/**
+ * MCIDBIND表结构 - MC和B站账号绑定主表
+ */
 export interface MCIDBIND {
   qqId: string          // 纯QQ号 (作为主键)
   mcUsername: string    // MC用户名
@@ -23,10 +28,24 @@ export interface MCIDBIND {
   reminderCount: number // 随机提醒次数
 }
 
-// 为koishi扩展表定义
+/**
+ * SCHEDULE_MUTE_TASKS表结构 - 定时禁言任务配置
+ */
+export interface SCHEDULE_MUTE_TASKS {
+  id: number            // 任务ID (自增主键)
+  groupId: string       // 群组ID
+  startTime: string     // 开始时间 (格式: HH:MM)
+  endTime: string       // 结束时间 (格式: HH:MM)
+  enabled: boolean      // 是否启用
+  setterId: string      // 设置者ID
+}
+
+/**
+ * Koishi模块扩展 - 声明数据库表
+ */
 declare module 'koishi' {
-  // 添加MCIDBIND表
   interface Tables {
     mcidbind: MCIDBIND
+    schedule_mute_tasks: SCHEDULE_MUTE_TASKS
   }
-} 
+}

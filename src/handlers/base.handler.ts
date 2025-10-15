@@ -1,122 +1,78 @@
 import { Context, Session } from 'koishi'
-import { ServiceContainer } from '../container/service-container'
-import { Config } from '../types/config'
-import { DatabaseService } from '../services/database.service'
-import { MessageService } from '../services/message.service'
-import { ValidationService } from '../services/validation.service'
-import { ErrorService } from '../services/error.service'
-import { MojangService } from '../services/mojang.service'
-import { BuidService } from '../services/buid.service'
-import { RconService } from '../services/rcon.service'
-import { NicknameService } from '../services/nickname.service'
+import { LoggerService } from '../utils/logger'
+import { MCIDBINDRepository } from '../repositories/mcidbind.repository'
+import { ScheduleMuteRepository } from '../repositories/schedule-mute.repository'
+import { RconManager } from '../managers/rcon-manager'
+import { MessageUtils } from '../utils/message-utils'
+import { ForceBinder } from '../force-bind-utils'
+import { GroupExporter } from '../export-utils'
+import type { MCIDBIND } from '../types'
 
 /**
- * 基础命令处理器类
- * 为所有命令处理器提供通用功能和依赖注入
+ * Repositories 接口 - 聚合所有数据仓储
+ */
+export interface Repositories {
+  mcidbind: MCIDBINDRepository
+  scheduleMute: ScheduleMuteRepository
+}
+
+/**
+ * Handler 依赖项接口
+ * 包含所有 Handler 需要的共享函数和服务
+ */
+export interface HandlerDependencies {
+  // 工具函数
+  normalizeQQId: (userId: string) => string
+  formatCommand: (cmd: string) => string
+  formatUuid: (uuid: string) => string
+  checkCooldown: (lastModified: Date | null, multiplier?: number) => boolean
+  getCrafatarUrl: (uuid: string) => string
+  getStarlightSkinUrl: (uuid: string) => string
+
+  // 业务函数
+  sendMessage: (session: Session, content: any[], options?: any) => Promise<void>
+  autoSetGroupNickname: (
+    session: Session,
+    mcUsername: string,
+    buidUsername: string,
+    targetUserId?: string,
+    specifiedGroupId?: string
+  ) => Promise<void>
+  getBindInfo: (qqId: string) => Promise<MCIDBIND | null>
+
+  // 服务实例
+  rconManager: RconManager
+  messageUtils: MessageUtils
+  forceBinder: ForceBinder
+  groupExporter: GroupExporter
+
+  // 会话管理 (for BindingHandler)
+  getBindingSession: (userId: string, channelId: string) => any
+  createBindingSession: (userId: string, channelId: string, initialState?: string) => void
+  updateBindingSession: (userId: string, channelId: string, updates: any) => void
+  removeBindingSession: (userId: string, channelId: string) => void
+
+  // 其他共享状态
+  avatarCache?: Map<string, { url: string; timestamp: number }>
+  bindingSessions: Map<string, any>
+}
+
+/**
+ * 命令处理器基类
+ * 提供通用的上下文、配置、日志、数据仓储和共享依赖访问
  */
 export abstract class BaseHandler {
-  protected ctx: Context
-  protected config: Config
-  protected services: ServiceContainer
-
-  constructor(ctx: Context, config: Config, services: ServiceContainer) {
-    this.ctx = ctx
-    this.config = config
-    this.services = services
-  }
+  constructor(
+    protected ctx: Context,
+    protected config: any,
+    protected logger: LoggerService,
+    protected repos: Repositories,
+    protected deps: HandlerDependencies
+  ) {}
 
   /**
-   * 获取服务实例的便捷方法
+   * 注册命令
+   * 每个子类实现自己的命令注册逻辑
    */
-  protected get database(): DatabaseService {
-    return this.services.get<DatabaseService>('database')
-  }
-
-  protected get message(): MessageService {
-    return this.services.get<MessageService>('message')
-  }
-
-  protected get validation(): ValidationService {
-    return this.services.get<ValidationService>('validation')
-  }
-
-  protected get error(): ErrorService {
-    return this.services.get<ErrorService>('error')
-  }
-
-  protected get mojang(): MojangService {
-    return this.services.get<MojangService>('mojang')
-  }
-
-  protected get buid(): BuidService {
-    return this.services.get<BuidService>('buid')
-  }
-
-  protected get rcon(): RconService {
-    return this.services.get<RconService>('rcon')
-  }
-
-  protected get nickname(): NicknameService {
-    return this.services.get<NicknameService>('nickname')
-  }
-
-  /**
-   * 获取命令前缀（用于帮助文本）
-   */
-  protected getCommandPrefix(): string {
-    if (this.config.allowTextPrefix && this.config.botNickname) {
-      const nickname = this.config.botNickname.startsWith('@') ? 
-        this.config.botNickname :
-        `@${this.config.botNickname}`
-      return `${nickname} `
-    }
-    return ''
-  }
-
-  /**
-   * 格式化命令文本（添加前缀）
-   */
-  protected formatCommand(cmd: string): string {
-    return `${this.getCommandPrefix()}${cmd}`
-  }
-
-  /**
-   * 检查用户是否为管理员
-   */
-  protected async isAdmin(userId: string): Promise<boolean> {
-    return this.validation.isAdmin(userId)
-  }
-
-  /**
-   * 检查用户是否为主人
-   */
-  protected isMaster(userId: string): boolean {
-    return this.validation.isMaster(userId)
-  }
-
-  /**
-   * 发送消息的便捷方法
-   */
-  protected async sendMessage(session: Session, content: any[], options?: { isProactiveMessage?: boolean }): Promise<void> {
-    return this.message.sendMessage(session, content, options)
-  }
-
-  /**
-   * 获取用户友好的错误信息
-   */
-  protected getFriendlyErrorMessage(error: Error | string): string {
-    return this.error.getFriendlyErrorMessage(error)
-  }
-
-  /**
-   * 记录操作日志
-   */
-  protected logOperation(operation: string, userId: string, success: boolean, details: string = ''): void {
-    this.error.logOperation(operation, userId, success, details)
-  }
-
-  /**
-   * 注册命令的抽象方法，由子类实现
-   */
-  abstract registerCommands(): void
-} 
+  abstract register(): void
+}

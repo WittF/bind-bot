@@ -1,42 +1,44 @@
-// 通用类型定义 - 从原 index.ts 提取
+/**
+ * 通用类型定义
+ * 包含缓存、会话、天选开奖等公共接口
+ */
 
-// 交互型绑定会话状态接口
-export interface BindingSession {
-  userId: string
-  channelId: string
-  state: 'waiting_mc_username' | 'waiting_buid'
-  startTime: number
-  timeout: NodeJS.Timeout
-  mcUsername?: string
-  mcUuid?: string
-  invalidInputCount?: number // 记录无效输入次数
+/**
+ * 头像缓存接口
+ */
+export interface AvatarCache {
+  url: string
+  timestamp: number
 }
 
-// 消息发送选项
-export interface MessageOptions {
-  isProactiveMessage?: boolean
+/**
+ * 交互式绑定会话接口
+ * 从 utils/session-manager.ts 重新导出
+ */
+export type { BindingSession } from '../utils/session-manager'
+
+/**
+ * 天选开奖 - 中奖用户接口
+ */
+export interface LotteryWinner {
+  uid: number
+  username: string
+  medal_level: number
 }
 
-// 操作锁类型
-export interface OperationLock {
-  [key: string]: boolean
+/**
+ * 天选开奖 - 开奖结果接口
+ */
+export interface LotteryResult {
+  type: string
+  lottery_id: string
+  room_id: number
+  reward_name: string
+  reward_num: number
+  message: string
+  winners_count: number
+  winners: LotteryWinner[]
+  timestamp: number
+  host_uid: number
+  host_username: string
 }
-
-// 权限类型
-export type PermissionLevel = 'user' | 'admin' | 'master'
-
-// 命令执行结果
-export interface CommandResult {
-  success: boolean
-  message?: string
-  error?: string
-}
-
-// 批量操作统计结果
-export interface BatchOperationStats {
-  totalCount: number
-  successCount: number
-  failCount: number
-  skipCount: number
-  results?: string[]
-} 

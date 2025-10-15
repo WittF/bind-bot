@@ -1,4 +1,6 @@
-# koishi-plugin-mcid-bot 指令使用说明
+# BIND-BOT (koishi-plugin-bind-bot) 指令使用说明
+
+**BIND-BOT** - 账号绑定管理机器人，支持 Minecraft 账号和 B站账号绑定与管理。
 
 ## 普通用户命令
 
@@ -12,7 +14,8 @@
 - `mcid whitelist add <服务器名称或ID>` 申请添加服务器白名单（需服务器允许自助申请）
 
 ### B站账号相关
-- `buid bind <B站UID>` 绑定B站UID
+- `buid bind <B站UID>` 绑定B站UID（支持UID、URL等多种格式）
+- `buid bind <B站UID> -f` 强制绑定B站UID（使用API直接获取数据，检查目标粉丝牌）
 - `buid query` 查询自己绑定的B站账号信息
 
 ## 管理员命令
@@ -29,9 +32,10 @@
 - `mcid stats` 查看绑定信息统计
 
 ### B站账号管理
-- `buid bind <B站UID> [目标用户]` 为指定用户绑定B站UID（支持QQ号和@用户）
+- `buid bind <B站UID> [目标用户]` 为指定用户绑定B站UID（支持UID、URL等多种格式）
+- `buid bind <B站UID> [目标用户] -f` 为指定用户强制绑定B站UID（支持UID、URL等多种格式）
 - `buid query [目标用户]` 查询指定用户的B站账号信息（支持QQ号和@用户）
-- `buid finduser <B站UID>` 通过B站UID查询绑定的QQ账号
+- `buid finduser <B站UID>` 通过B站UID查询绑定的QQ账号（支持UID、URL等多种格式）
 
 ### 白名单管理
 - `mcid whitelist add <服务器名称或ID> [目标用户...]` 为指定用户添加服务器白名单（支持批量，支持QQ号和@用户）
@@ -58,8 +62,9 @@
 - `mcid whitelist reset <服务器ID>` 重置指定服务器的所有白名单数据库记录（可清理配置中已删除的服务器ID）
 - `mcid whitelist resetall` 清理所有未在服务器配置列表中的白名单ID
 - `mcid tag deleteall <标签名>` 删除所有用户的指定标签
-- `mcid fixnicknames` 批量检查并修复所有用户的群昵称格式
+- `mcid fixnicknames [群号]` 批量检查并修复指定群或当前群的用户群昵称格式
 - `mcid clearreminder [目标用户]` 清除用户的随机提醒冷却时间和提醒次数
+- `mcid export <群号>` 导出指定群的成员列表和绑定信息为Excel文件（仅私聊可用）
 
 ## B站UID绑定功能说明
 
@@ -131,6 +136,108 @@ mcid whitelist add 生存服 123456
 mcid whitelist remove 生存服 VIP
 ```
 
+## B站UID格式支持
+
+系统支持多种B站UID输入格式，使用户更方便地进行绑定：
+
+### 支持的格式
+
+1. **纯数字格式**：`123456789`
+2. **UID前缀格式**：`UID:123456789` 
+3. **个人空间链接**：
+   - `https://space.bilibili.com/123456789`
+   - `http://space.bilibili.com/123456789`
+   - `https://space.bilibili.com/123456789?spm_id_from=333.999.0.0`
+   - `https://space.bilibili.com/123456789/dynamic`
+
+### 使用示例
+
+```bash
+# 使用纯数字
+buid bind 1385838290
+
+# 使用UID前缀
+buid bind UID:1385838290
+
+# 使用完整空间链接
+buid bind https://space.bilibili.com/1385838290?spm_id_from=..0.0
+
+# 强制绑定模式也支持URL
+buid bind https://space.bilibili.com/1385838290 -f
+
+# 管理员为他人绑定
+buid bind https://space.bilibili.com/1385838290 @用户
+```
+
+### 自动解析功能
+
+- 系统会自动识别输入格式并提取UID
+- 自动删除URL前缀 `https://space.bilibili.com/`
+- 自动删除URL参数 `?spm_id_from=...`
+- 自动删除路径后缀 `/dynamic` 等
+- 提取出的UID必须为纯数字才能通过验证
+
+## 强制绑定功能说明
+
+强制绑定功能（`-f`参数）完全依赖B站API获取用户信息和粉丝牌数据，不依赖ZMINFO数据库。
+
+### 功能特点
+
+1. **纯API模式**: 主要使用B站Live API获取用户信息，ZMINFO仅作为备选
+2. **必须登录**: 要求有效的B站Cookie，未登录状态将直接报错
+3. **目标粉丝牌检测**: 自动检查用户是否拥有指定UP主的目标粉丝牌
+4. **用户名获取**: 直接从B站API获取真实用户名，无效UID将报错
+5. **详细反馈**: 提供目标粉丝牌的详细信息（等级、佩戴状态等）
+
+### 配置要求
+
+使用强制绑定功能需要配置以下参数：
+
+- `forceBindSessdata`: B站Cookie信息，用于API认证（支持以下格式）：
+  - 完整Cookie: `buvid3=xxx; SESSDATA=xxx; bili_jct=xxx; DedeUserID=xxx; ...`
+  - 单独SESSDATA值: `5fdf9765%2C1768271824%2C9cd59%2A71CjDx...`
+  - SESSDATA格式: `SESSDATA=5fdf9765%2C1768271824%2C9cd59%2A71CjDx...`
+- `forceBindTargetUpUid`: 目标UP主UID（默认：686127）
+- `forceBindTargetRoomId`: 目标房间号（默认：544853）
+- `forceBindTargetMedalName`: 目标粉丝牌名称（默认：生态）
+
+### 使用示例
+
+```bash
+# 普通用户强制绑定
+buid bind 123456789 -f
+
+# 管理员为他人强制绑定
+buid bind 123456789 @用户 -f
+```
+
+### 响应示例
+
+**找到目标粉丝牌时：**
+```
+✅ 强制绑定成功！
+B站UID: 123456789
+用户名: 测试用户
+
+🎯 目标粉丝牌: 生态 LV.15 (舰长) 【已佩戴】
+```
+
+**未找到目标粉丝牌时：**
+```
+✅ 强制绑定成功！
+B站UID: 123456789
+用户名: 测试用户
+
+未找到目标粉丝牌"生态"（UP主UID: 686127）
+```
+
+**UID不存在或Cookie无效时：**
+```
+❌ 强制绑定失败: 无法获取用户 123456789 的信息，请确认UID是否正确
+
+❌ 强制绑定失败: B站登录状态异常，无法进行强制绑定，请检查Cookie配置
+```
+
 ## 配置项说明
 
 | 配置项 | 类型 | 默认值 | 说明 |
@@ -146,6 +253,10 @@ mcid whitelist remove 生存服 VIP
 | showMcSkin | boolean | false | 是否使用MC皮肤渲染图（需要先开启showAvatar） |
 | zminfoApiUrl | string | 'http://zminfo-api.wittf.ink' | ZMINFO API地址，用于获取B站用户信息 |
 | autoNicknameGroupId | string | '123456789' | 自动群昵称设置目标群ID，交互式绑定完成后自动设置群昵称 |
+| forceBindSessdata | string | '' | B站Cookie信息，用于强制绑定时获取粉丝牌信息（支持完整Cookie或单独SESSDATA） |
+| forceBindTargetUpUid | number | 686127 | 强制绑定目标UP主UID |
+| forceBindTargetRoomId | number | 544853 | 强制绑定目标房间号 |
+| forceBindTargetMedalName | string | '生态' | 强制绑定目标粉丝牌名称 |
 | servers | array | [] | Minecraft服务器配置列表 |
 
 ### 服务器配置项
