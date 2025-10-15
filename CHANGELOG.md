@@ -1,5 +1,127 @@
 # 更新日志
 
+## [2.0.0] - 2025-10-14
+
+### 🎉 重大更新 - BIND-BOT 诞生
+
+#### 📦 项目重构
+- **项目更名**: `koishi-plugin-mcid-bot` → `koishi-plugin-bind-bot`
+- **插件ID**: `mcid-bot` → `bind-bot`
+- **新仓库**: https://github.com/WittF/bind-bot
+- **许可证变更**: MIT → CC BY-NC-SA 4.0（禁止商业使用）
+
+#### 🏗️ 架构革命 - 模块化重构
+- **代码优化**: 主文件从 7116 行减少到 3187 行（-55%）
+- **架构模式**: 采用 Handler + Repository + Dependency Injection 模式
+- **模块总数**: 20+ 个独立模块，职责清晰
+
+**新增目录结构**:
+```
+src/
+├── handlers/          # 命令处理器层 (6个)
+│   ├── base.handler.ts
+│   ├── mcid.handler.ts
+│   ├── buid.handler.ts
+│   ├── whitelist.handler.ts
+│   ├── tag.handler.ts
+│   └── binding.handler.ts
+├── repositories/      # 数据访问层 (2个)
+│   ├── mcidbind.repository.ts
+│   └── schedule-mute.repository.ts
+├── managers/          # 管理器层 (1个)
+│   └── rcon-manager.ts
+├── utils/             # 工具层 (5个)
+│   ├── logger.ts
+│   ├── helpers.ts
+│   ├── session-manager.ts
+│   ├── message-utils.ts
+│   └── rate-limiter.ts
+├── types/             # 类型定义层 (5个)
+│   ├── config.ts
+│   ├── database.ts
+│   ├── api.ts
+│   ├── common.ts
+│   └── index.ts
+├── force-bind-utils.ts
+├── export-utils.ts
+└── index.ts           # 主入口 (3187行)
+```
+
+#### 🎯 Handler 层 (命令处理器)
+- **BaseHandler**: 抽象基类，统一依赖注入接口
+- **McidCommandHandler** (1274行): MC 账号管理的所有命令
+- **BuidHandler** (791行): B站账号管理命令
+- **WhitelistHandler** (1165行): 白名单管理命令
+- **TagHandler** (372行): 用户标签系统
+- **BindingHandler** (343行): 交互式绑定流程
+
+#### 💾 Repository 层 (数据仓储)
+- **MCIDBINDRepository**: 封装所有 MCIDBIND 表操作
+  - 15个方法: 查询(6)、修改(5)、专用(4)
+  - 类型安全的 CRUD 接口
+- **ScheduleMuteRepository**: 定时禁言任务管理
+  - 完整的任务 CRUD 和状态控制
+
+#### 🛠️ Utils 层 (工具模块)
+- **LoggerService**: 统一日志服务，支持调试模式和上下文标签
+- **Helpers**: 11个纯函数工具（QQ号规范化、UUID格式化、冷却检查等）
+- **SessionManager**: 交互式绑定会话管理，自动超时清理
+- **MessageUtils**: 消息发送/撤回、群昵称管理
+- **RateLimiter**: 请求频率限制器
+
+#### 🎭 Managers 层
+- **RconManager**: RCON 连接池管理
+  - 连接复用和心跳保持（5分钟）
+  - 自动重连机制
+  - 空闲连接清理（30分钟）
+  - 最大连接数限制（20个）
+
+#### 📐 Types 层 (类型系统)
+- **统一类型定义**: 消除 6 处重复类型定义
+- **config.ts**: Config, ServerConfig, ForceBindConfig
+- **database.ts**: MCIDBIND, SCHEDULE_MUTE_TASKS
+- **api.ts**: Mojang, Zminfo, Bilibili API 类型
+- **common.ts**: AvatarCache, BindingSession, LotteryResult
+- **单一数据源**: 所有模块从 `types/` 导入类型
+
+#### 🔧 功能模块
+- **ForceBinder**: B站强制绑定，使用 B站 Live API
+- **GroupExporter**: 群成员数据导出为 Excel
+
+#### 🎨 架构优势
+- ✅ **单一职责**: 每个模块专注于一个功能领域
+- ✅ **依赖注入**: 通过构造函数注入，易于测试和替换
+- ✅ **Repository Pattern**: 数据访问与业务逻辑分离
+- ✅ **类型安全**: 充分利用 TypeScript 类型系统
+- ✅ **易于维护**: 修改局部不影响全局
+- ✅ **易于扩展**: 添加新功能只需创建新 Handler
+- ✅ **向后兼容**: 主文件保留包装函数
+
+#### 📚 文档完善
+- **CLAUDE.md**: 688 行完整开发文档
+  - 项目概述和架构说明
+  - 所有模块的详细介绍
+  - 使用示例和最佳实践
+  - 维护和扩展指南
+- **LICENSE**: CC BY-NC-SA 4.0 双语许可证文件
+- **readme.md**: 更新项目名称和描述
+- **.npmignore**: 优化发布内容，过滤开发文件
+
+#### 🔄 迁移说明
+- **npm 包名变更**: 用户需要卸载旧包 `koishi-plugin-mcid-bot`，安装新包 `koishi-plugin-bind-bot`
+- **配置兼容**: 所有配置项保持不变，无需修改
+- **功能保持**: 所有现有功能完全保留，无破坏性变更
+- **数据库兼容**: 数据表结构未变，无需迁移数据
+
+#### 📊 统计数据
+- **删除代码**: 9536 行（旧服务和容器架构）
+- **新增代码**: 7256 行（模块化架构）
+- **净优化**: 主文件减少 3929 行（-55%）
+- **模块数量**: 从 1 个巨文件变为 20+ 个独立模块
+- **文件总数**: 40 个文件发生变更
+
+---
+
 ## [1.3.7]
 
 ### 🐛 重要Bug修复
