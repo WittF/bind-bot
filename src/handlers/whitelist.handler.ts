@@ -907,11 +907,14 @@ export class WhitelistHandler extends BaseHandler {
       }
 
       // 重新获取最新的用户绑定信息
-      const freshBind = await this.deps.getBindInfo(mcBind.qqId)
+      let freshBind = await this.deps.getBindInfo(mcBind.qqId)
       if (!freshBind || !freshBind.mcUsername) {
         this.logger.warn('白名单', `用户QQ(${mcBind.qqId})可能在操作过程中解绑了MC账号`)
         return false
       }
+
+      // 智能检测用户名变更（带缓存，避免频繁API调用）
+      freshBind = await this.deps.checkAndUpdateUsernameWithCache(freshBind)
 
       // 检查最新状态是否已在白名单中
       if (freshBind.whitelist && freshBind.whitelist.includes(server.id)) {
@@ -995,11 +998,14 @@ export class WhitelistHandler extends BaseHandler {
       }
 
       // 重新获取最新的用户绑定信息
-      const freshBind = await this.deps.getBindInfo(mcBind.qqId)
+      let freshBind = await this.deps.getBindInfo(mcBind.qqId)
       if (!freshBind || !freshBind.mcUsername) {
         this.logger.warn('白名单', `用户QQ(${mcBind.qqId})可能在操作过程中解绑了MC账号`)
         return false
       }
+
+      // 智能检测用户名变更（带缓存，避免频繁API调用）
+      freshBind = await this.deps.checkAndUpdateUsernameWithCache(freshBind)
 
       // 检查最新状态是否在白名单中
       if (!freshBind.whitelist || !freshBind.whitelist.includes(server.id)) {

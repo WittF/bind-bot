@@ -34,8 +34,9 @@ export interface HandlerDependencies {
   getMcBindByUsername: (username: string) => Promise<MCIDBIND | null>
   createOrUpdateMcBind: (userId: string, username: string, uuid: string, isAdmin?: boolean) => Promise<boolean>
   deleteMcBind: (userId: string) => Promise<boolean>
-  checkUsernameExists: (username: string, currentUserId?: string) => Promise<boolean>
+  checkUsernameExists: (username: string, currentUserId?: string, uuid?: string) => Promise<boolean>
   checkAndUpdateUsername: (bind: MCIDBIND) => Promise<MCIDBIND>
+  checkAndUpdateUsernameWithCache: (bind: MCIDBIND) => Promise<MCIDBIND>
 
   // API操作函数
   validateUsername: (username: string) => Promise<any>

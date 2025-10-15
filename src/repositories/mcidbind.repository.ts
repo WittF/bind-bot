@@ -1,5 +1,6 @@
 import { Context } from 'koishi'
 import { LoggerService } from '../utils/logger'
+import { normalizeUsername } from '../utils/helpers'
 import type { MCIDBIND } from '../types'
 
 /**
@@ -32,7 +33,7 @@ export class MCIDBINDRepository {
   }
 
   /**
-   * 根据 MC 用户名查询绑定信息
+   * 根据 MC 用户名查询绑定信息（精确匹配）
    * @param mcUsername MC用户名
    * @returns 绑定信息或 null
    */
@@ -43,6 +44,62 @@ export class MCIDBINDRepository {
       return binds.length > 0 ? binds[0] : null
     } catch (error) {
       this.logger.error('数据库', `查询MC用户名(${mcUsername})绑定信息失败: ${error.message}`)
+      return null
+    }
+  }
+
+  /**
+   * 根据 MC 用户名查询绑定信息（不区分大小写）
+   * @param mcUsername MC用户名
+   * @returns 绑定信息或 null
+   */
+  async findByUsernameIgnoreCase(mcUsername: string): Promise<MCIDBIND | null> {
+    try {
+      const normalizedInput = normalizeUsername(mcUsername, this.logger.getRawLogger())
+      this.logger.debug('数据库', `查询MC用户名(${mcUsername} -> ${normalizedInput})的绑定信息（不区分大小写）`)
+
+      // 获取所有绑定记录，然后在应用层过滤（因为 Koishi 数据库不支持不区分大小写查询）
+      const allBinds = await this.ctx.database.get('mcidbind', {})
+      const match = allBinds.find(bind =>
+        bind.mcUsername && normalizeUsername(bind.mcUsername) === normalizedInput
+      )
+
+      return match || null
+    } catch (error) {
+      this.logger.error('数据库', `查询MC用户名(${mcUsername})绑定信息失败（不区分大小写）: ${error.message}`)
+      return null
+    }
+  }
+
+  /**
+   * 根据 MC UUID 查询绑定信息
+   * @param mcUuid MC UUID（可带或不带连字符）
+   * @returns 绑定信息或 null
+   */
+  async findByUuid(mcUuid: string): Promise<MCIDBIND | null> {
+    try {
+      // 规范化 UUID（移除连字符）
+      const cleanUuid = mcUuid.replace(/-/g, '')
+      this.logger.debug('数据库', `查询MC UUID(${cleanUuid})的绑定信息`)
+
+      // 先尝试精确匹配
+      let binds = await this.ctx.database.get('mcidbind', { mcUuid: cleanUuid })
+      if (binds.length > 0) return binds[0]
+
+      // 尝试带连字符的格式
+      const formattedUuid = `${cleanUuid.substring(0, 8)}-${cleanUuid.substring(8, 12)}-${cleanUuid.substring(12, 16)}-${cleanUuid.substring(16, 20)}-${cleanUuid.substring(20)}`
+      binds = await this.ctx.database.get('mcidbind', { mcUuid: formattedUuid })
+      if (binds.length > 0) return binds[0]
+
+      // 如果都没有，在应用层过滤（去除连字符后比较）
+      const allBinds = await this.ctx.database.get('mcidbind', {})
+      const match = allBinds.find(bind =>
+        bind.mcUuid && bind.mcUuid.replace(/-/g, '') === cleanUuid
+      )
+
+      return match || null
+    } catch (error) {
+      this.logger.error('数据库', `查询MC UUID(${mcUuid})绑定信息失败: ${error.message}`)
       return null
     }
   }

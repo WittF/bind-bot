@@ -341,3 +341,48 @@ export function calculateSimilarity(str1: string, str2: string): number {
   const maxLength = Math.max(str1.length, str2.length)
   return 1 - distance / maxLength
 }
+
+/**
+ * 规范化 Minecraft 用户名（统一小写，用于存储和比较）
+ * Minecraft 用户名不区分大小写，但 Mojang 返回的是规范大小写
+ * 为避免 "Notch" 和 "notch" 被视为不同用户，统一转小写存储
+ *
+ * @param username MC 用户名
+ * @param logger Koishi Logger实例（用于日志）
+ * @returns 规范化后的用户名（小写）
+ */
+export function normalizeUsername(username: string, logger?: Logger): string {
+  if (!username) {
+    logger?.warn(`[用户名规范化] 收到空用户名`)
+    return ''
+  }
+
+  // 移除首尾空格
+  const trimmed = username.trim()
+
+  // 检查是否为临时用户名，临时用户名不做转换
+  if (trimmed.startsWith('_temp_')) {
+    return trimmed
+  }
+
+  // 转小写
+  const normalized = trimmed.toLowerCase()
+
+  if (normalized !== trimmed) {
+    logger?.debug(`[用户名规范化] "${trimmed}" -> "${normalized}"`)
+  }
+
+  return normalized
+}
+
+/**
+ * 比较两个 Minecraft 用户名是否相同（不区分大小写）
+ *
+ * @param username1 第一个用户名
+ * @param username2 第二个用户名
+ * @returns 是否相同
+ */
+export function isSameUsername(username1: string, username2: string): boolean {
+  if (!username1 || !username2) return false
+  return normalizeUsername(username1) === normalizeUsername(username2)
+}

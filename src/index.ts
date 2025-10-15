@@ -17,6 +17,8 @@ import {
   getStarlightSkinUrl as getStarlightSkinUrlHelper,
   checkIrrelevantInput as checkIrrelevantInputHelper,
   cleanUserInput as cleanUserInputHelper,
+  normalizeUsername as normalizeUsernameHelper,
+  isSameUsername as isSameUsernameHelper,
   escapeRegExp,
   levenshteinDistance,
   calculateSimilarity
@@ -1326,38 +1328,50 @@ export function apply(ctx: Context, config: IConfig) {
     }
   }
 
-  // 检查MC用户名是否已被其他QQ号绑定
-  const checkUsernameExists = async (username: string, currentUserId?: string): Promise<boolean> => {
+  // 检查MC用户名是否已被其他QQ号绑定（支持不区分大小写和UUID检查）
+  const checkUsernameExists = async (username: string, currentUserId?: string, uuid?: string): Promise<boolean> => {
     try {
       // 验证输入参数
       if (!username) {
         logger.warn(`[绑定检查] 尝试检查空MC用户名`)
         return false
       }
-      
+
       // 跳过临时用户名的检查
       if (username.startsWith('_temp_')) {
         return false
       }
-      
-      // 查询新表中是否已有此用户名的绑定
-      const bind = await getMcBindByUsername(username)
-      
+
+      // 使用不区分大小写的查询
+      const bind = await mcidbindRepo.findByUsernameIgnoreCase(username)
+
       // 如果没有绑定，返回false
       if (!bind) return false
-      
+
       // 如果绑定的用户名是临时用户名，视为未绑定
       if (bind.mcUsername && bind.mcUsername.startsWith('_temp_')) {
         return false
       }
-      
+
+      // 如果提供了 UUID，检查是否为同一个 MC 账号（用户改名场景）
+      if (uuid && bind.mcUuid) {
+        const cleanUuid = uuid.replace(/-/g, '')
+        const bindCleanUuid = bind.mcUuid.replace(/-/g, '')
+
+        if (cleanUuid === bindCleanUuid) {
+          // 同一个 UUID，说明是用户改名，允许绑定
+          logger.info(`[绑定检查] 检测到MC账号改名: UUID=${uuid}, 旧用户名=${bind.mcUsername}, 新用户名=${username}`)
+          return false
+        }
+      }
+
       // 如果提供了当前用户ID，需要排除当前用户
       if (currentUserId) {
         const normalizedCurrentId = normalizeQQId(currentUserId)
         // 如果绑定的用户就是当前用户，返回false，表示没有被其他用户绑定
         return normalizedCurrentId ? bind.qqId !== normalizedCurrentId : true
       }
-      
+
       return true
     } catch (error) {
       logError('绑定检查', currentUserId || 'system', `检查用户名"${username}"是否已被绑定失败: ${error.message}`)
@@ -1847,8 +1861,11 @@ export function apply(ctx: Context, config: IConfig) {
         return bind;
       }
 
-      // 如果用户名与数据库中的不同，更新数据库
-      if (latestUsername !== bind.mcUsername) {
+      // 如果用户名与数据库中的不同，更新数据库（使用规范化比较，不区分大小写）
+      const normalizedLatest = normalizeUsernameHelper(latestUsername)
+      const normalizedCurrent = normalizeUsernameHelper(bind.mcUsername)
+
+      if (normalizedLatest !== normalizedCurrent) {
         logger.info(`[用户名更新] 用户 QQ(${bind.qqId}) 的Minecraft用户名已变更: ${bind.mcUsername} -> ${latestUsername}`);
 
         // 更新数据库中的用户名
@@ -1863,6 +1880,102 @@ export function apply(ctx: Context, config: IConfig) {
       return bind;
     } catch (error) {
       logger.error(`[用户名更新] 检查和更新用户名失败: ${error.message}`);
+      return bind;
+    }
+  };
+
+  /**
+   * 智能缓存版本的改名检测函数
+   * 特性：
+   * - 24小时冷却期（失败>=3次时延长到72小时）
+   * - 失败计数追踪
+   * - 成功时重置失败计数
+   * @param bind 绑定记录
+   * @returns 更新后的绑定记录
+   */
+  const checkAndUpdateUsernameWithCache = async (bind: MCIDBIND): Promise<MCIDBIND> => {
+    try {
+      if (!bind || !bind.mcUuid) {
+        logger.warn(`[改名检测缓存] 无法检查用户名更新: 空绑定或空UUID`);
+        return bind;
+      }
+
+      const now = new Date();
+      const failCount = bind.usernameCheckFailCount || 0;
+
+      // 根据失败次数决定冷却期：普通24小时，失败>=3次则72小时
+      const cooldownHours = failCount >= 3 ? 72 : 24;
+
+      // 检查是否在冷却期内
+      if (bind.usernameLastChecked) {
+        const lastCheck = new Date(bind.usernameLastChecked);
+        const hoursSinceCheck = (now.getTime() - lastCheck.getTime()) / (1000 * 60 * 60);
+
+        if (hoursSinceCheck < cooldownHours) {
+          logger.debug(`[改名检测缓存] QQ(${bind.qqId}) 在冷却期内(${hoursSinceCheck.toFixed(1)}h/${cooldownHours}h)，跳过检查`);
+          return bind;
+        }
+      }
+
+      logger.debug(`[改名检测缓存] QQ(${bind.qqId}) 开始检查用户名变更（失败计数: ${failCount}）`);
+
+      // 执行实际的改名检测
+      const oldUsername = bind.mcUsername;
+      const updatedBind = await checkAndUpdateUsername(bind);
+
+      // 判断检测是否成功
+      const detectionSuccess = updatedBind.mcUsername !== null && updatedBind.mcUsername !== undefined;
+
+      if (detectionSuccess) {
+        // 检测成功
+        const usernameChanged = normalizeUsernameHelper(updatedBind.mcUsername) !== normalizeUsernameHelper(oldUsername);
+
+        // 更新检查时间和重置失败计数
+        await mcidbindRepo.update(bind.qqId, {
+          usernameLastChecked: now,
+          usernameCheckFailCount: 0
+        });
+
+        if (usernameChanged) {
+          logger.info(`[改名检测缓存] QQ(${bind.qqId}) 用户名已变更: ${oldUsername} -> ${updatedBind.mcUsername}`);
+        } else {
+          logger.debug(`[改名检测缓存] QQ(${bind.qqId}) 用户名无变更: ${updatedBind.mcUsername}`);
+        }
+
+        // 更新返回对象的缓存字段
+        updatedBind.usernameLastChecked = now;
+        updatedBind.usernameCheckFailCount = 0;
+      } else {
+        // 检测失败��API失败或返回null）
+        const newFailCount = failCount + 1;
+
+        await mcidbindRepo.update(bind.qqId, {
+          usernameLastChecked: now,
+          usernameCheckFailCount: newFailCount
+        });
+
+        logger.warn(`[改名检测缓存] QQ(${bind.qqId}) 检测失败，失败计数: ${newFailCount}`);
+
+        // 更新返回对象的缓存字段
+        updatedBind.usernameLastChecked = now;
+        updatedBind.usernameCheckFailCount = newFailCount;
+      }
+
+      return updatedBind;
+    } catch (error) {
+      logger.error(`[改名检测缓存] 检查和更新用户名失败: ${error.message}`);
+
+      // 失败时也更新检查时间和递增失败计数
+      try {
+        const failCount = bind.usernameCheckFailCount || 0;
+        await mcidbindRepo.update(bind.qqId, {
+          usernameLastChecked: new Date(),
+          usernameCheckFailCount: failCount + 1
+        });
+      } catch (updateError) {
+        logger.error(`[改名检测缓存] 更新失败计数时出错: ${updateError.message}`);
+      }
+
       return bind;
     }
   };
@@ -1980,6 +2093,7 @@ export function apply(ctx: Context, config: IConfig) {
     deleteMcBind,
     checkUsernameExists,
     checkAndUpdateUsername,
+    checkAndUpdateUsernameWithCache,
 
     // API operations
     validateUsername,
@@ -2457,7 +2571,7 @@ export function apply(ctx: Context, config: IConfig) {
     }
     
     // 检查用户名是否已被其他人绑定
-    if (await checkUsernameExists(username, session.userId)) {
+    if (await checkUsernameExists(username, session.userId, uuid)) {
       logger.warn(`[交互绑定] MC用户名"${username}"已被其他用户绑定`)
       await sendMessage(session, [h.text(`❌ 用户名 ${username} 已被其他用户绑定\n\n请输入其他MC用户名或发送"跳过"完成绑定`)])
       return

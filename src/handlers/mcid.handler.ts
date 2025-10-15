@@ -120,8 +120,8 @@ export class McidCommandHandler extends BaseHandler {
           return this.deps.sendMessage(session, [h.text('该用户尚未绑定MC账号')])
         }
 
-        // 显示MC绑定信息
-        const updatedBind = await this.deps.checkAndUpdateUsername(targetBind)
+        // 显示MC绑定信息（使用智能缓存检测，避免频繁API调用）
+        const updatedBind = await this.deps.checkAndUpdateUsernameWithCache(targetBind)
         return this.buildQueryResponse(session, updatedBind, normalizedTargetId)
       }
 
@@ -166,7 +166,8 @@ export class McidCommandHandler extends BaseHandler {
         return this.deps.sendMessage(session, [h.text('您尚未绑定MC账号，请使用 ' + this.deps.formatCommand('mcid bind <用户名>') + ' 进行绑定')])
       }
 
-      const updatedBind = await this.deps.checkAndUpdateUsername(selfBind)
+      // 使用智能缓存检测，避免频繁API调用
+      const updatedBind = await this.deps.checkAndUpdateUsernameWithCache(selfBind)
       return this.buildQueryResponse(session, updatedBind, null)
     } catch (error) {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
@@ -385,8 +386,8 @@ export class McidCommandHandler extends BaseHandler {
       return this.deps.sendMessage(session, [h.text('只有管理员才能为其他用户绑定MC账号')])
     }
 
-    // 检查用户名是否已被占用
-    if (await this.deps.checkUsernameExists(username, target)) {
+    // 检查用户名是否已被占用（支持改名检测）
+    if (await this.deps.checkUsernameExists(username, target, uuid)) {
       this.logger.warn('绑定', `MC用户名"${username}"已被其他QQ号绑定`)
       return this.deps.sendMessage(session, [h.text(`用户名 ${username} 已被其他用户绑定`)])
     }
@@ -466,8 +467,8 @@ export class McidCommandHandler extends BaseHandler {
       }
     }
 
-    // 检查用户名是否已被占用
-    if (await this.deps.checkUsernameExists(username)) {
+    // 检查用户名是否已被占用（支持改名检测）
+    if (await this.deps.checkUsernameExists(username, session.userId, uuid)) {
       this.logger.warn('绑定', `MC用户名"${username}"已被其他QQ号绑定`)
       return this.deps.sendMessage(session, [h.text(`用户名 ${username} 已被其他用户绑定`)])
     }
@@ -583,8 +584,8 @@ export class McidCommandHandler extends BaseHandler {
       return this.deps.sendMessage(session, [h.text(`用户 ${normalizedTargetId} 当前已绑定此用户名: ${username}`)])
     }
 
-    // 检查用户名是否已被占用
-    if (await this.deps.checkUsernameExists(username, target)) {
+    // 检查用户名是否已被占用（支持改名检测）
+    if (await this.deps.checkUsernameExists(username, target, uuid)) {
       this.logger.warn('修改', `MC用户名"${username}"已被其他QQ号绑定`)
       return this.deps.sendMessage(session, [h.text(`用户名 ${username} 已被其他用户绑定`)])
     }
@@ -644,8 +645,8 @@ export class McidCommandHandler extends BaseHandler {
       return this.deps.sendMessage(session, [h.text(`您的MC账号绑定在冷却期内，还需${remainingDays}天才能修改。如需立即修改，请联系管理员。`)])
     }
 
-    // 检查用户名是否已被占用
-    if (await this.deps.checkUsernameExists(username, session.userId)) {
+    // 检查用户名是否已被占用（支持改名检测）
+    if (await this.deps.checkUsernameExists(username, session.userId, uuid)) {
       this.logger.warn('修改', `MC用户名"${username}"已被其他QQ号绑定`)
       return this.deps.sendMessage(session, [h.text(`用户名 ${username} 已被其他用户绑定`)])
     }

@@ -10,6 +10,8 @@ export interface MCIDBIND {
   qqId: string          // 纯QQ号 (作为主键)
   mcUsername: string    // MC用户名
   mcUuid: string        // MC UUID
+  usernameLastChecked?: Date    // MC用户名上次检查时间（用于改名检测缓存）
+  usernameCheckFailCount?: number  // 用户名检查失败次数（连续失败计数）
   lastModified: Date    // 上次修改时间
   isAdmin: boolean      // 是否为MC绑定管理员
   whitelist: string[]   // 已添加白名单的服务器ID列表
