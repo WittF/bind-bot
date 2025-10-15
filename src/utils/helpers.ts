@@ -291,3 +291,53 @@ export function cleanUserInput(content: string, session: Session, botNickname: s
 
   return cleanedContent
 }
+
+/**
+ * 计算两个字符串之间的Levenshtein距离
+ * Levenshtein距离是指将一个字符串转换成另一个字符串所需的最少编辑操作次数
+ * @param str1 第一个字符串
+ * @param str2 第二个字符串
+ * @returns 两个字符串之间的编辑距离
+ */
+export function levenshteinDistance(str1: string, str2: string): number {
+  const matrix: number[][] = []
+
+  // 初始化第一列
+  for (let i = 0; i <= str2.length; i++) {
+    matrix[i] = [i]
+  }
+
+  // 初始化第一行
+  for (let j = 0; j <= str1.length; j++) {
+    matrix[0][j] = j
+  }
+
+  // 填充矩阵
+  for (let i = 1; i <= str2.length; i++) {
+    for (let j = 1; j <= str1.length; j++) {
+      if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1]
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1, // 替换
+          matrix[i][j - 1] + 1,     // 插入
+          matrix[i - 1][j] + 1      // 删除
+        )
+      }
+    }
+  }
+
+  return matrix[str2.length][str1.length]
+}
+
+/**
+ * 计算两个字符串的相似度（基于Levenshtein距离）
+ * @param str1 第一个字符串
+ * @param str2 第二个字符串
+ * @returns 相似度值（0到1之间，1表示完全相同）
+ */
+export function calculateSimilarity(str1: string, str2: string): number {
+  const distance = levenshteinDistance(str1, str2)
+  const maxLength = Math.max(str1.length, str2.length)
+  return 1 - distance / maxLength
+}

@@ -1,6 +1,7 @@
 import { Session, h } from 'koishi'
 import { BaseHandler } from './base.handler'
 import type { ServerConfig, MCIDBIND } from '../types'
+import { calculateSimilarity } from '../utils/helpers'
 
 /**
  * 白名单命令处理器
@@ -882,43 +883,8 @@ export class WhitelistHandler extends BaseHandler {
       return a.length / b.length
     }
 
-    // 否则计算Levenshtein距离的相似度
-    const maxLength = Math.max(a.length, b.length)
-    const editDistance = this.levenshteinDistance(a, b)
-
-    return 1 - (editDistance / maxLength)
-  }
-
-  /**
-   * 私有辅助方法：计算Levenshtein距离
-   */
-  private levenshteinDistance(a: string, b: string): number {
-    const matrix = []
-
-    // 初始化矩阵
-    for (let i = 0; i <= b.length; i++) {
-      matrix[i] = [i]
-    }
-    for (let j = 0; j <= a.length; j++) {
-      matrix[0][j] = j
-    }
-
-    // 填充矩阵
-    for (let i = 1; i <= b.length; i++) {
-      for (let j = 1; j <= a.length; j++) {
-        if (b.charAt(i - 1) === a.charAt(j - 1)) {
-          matrix[i][j] = matrix[i - 1][j - 1]
-        } else {
-          matrix[i][j] = Math.min(
-            matrix[i - 1][j - 1] + 1, // 替换
-            matrix[i][j - 1] + 1,     // 插入
-            matrix[i - 1][j] + 1      // 删除
-          )
-        }
-      }
-    }
-
-    return matrix[b.length][a.length]
+    // 否则使用工具函数计算Levenshtein距离的相似度
+    return calculateSimilarity(a, b)
   }
 
   /**
