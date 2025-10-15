@@ -2098,10 +2098,34 @@ export function apply(ctx: Context, config: IConfig) {
     getCrafatarUrl,
     getStarlightSkinUrl,
 
+    // Database operations (for McidCommandHandler)
+    getMcBindByQQId,
+    getMcBindByUsername,
+    createOrUpdateMcBind,
+    deleteMcBind,
+    checkUsernameExists,
+    checkAndUpdateUsername,
+
+    // API operations
+    validateUsername,
+    validateBUID,
+    updateBuidInfoOnly,
+
+    // Permission check functions
+    isAdmin,
+    isMaster,
+
     // Business functions
     sendMessage,
     autoSetGroupNickname,
+    checkNicknameFormat,
     getBindInfo: getMcBindByQQId,
+
+    // Config operations
+    getServerConfigById,
+
+    // Error handling
+    getFriendlyErrorMessage,
 
     // Service instances
     rconManager,
@@ -2132,59 +2156,9 @@ export function apply(ctx: Context, config: IConfig) {
   whitelistHandler.register()
   buidHandler.register()
 
-  // =========== MC命令组 ===========
-  const cmd = ctx.command('mcid', 'Minecraft 账号绑定管理')
-
-  // 创建McidHandler的依赖对象
-  const mcidHandlerDeps = {
-    config,
-    logger: loggerService,
-    mcidbindRepo,
-    groupExporter,
-
-    // 辅助函数依赖
-    normalizeQQId,
-    formatCommand,
-    formatUuid,
-    checkCooldown,
-    getCrafatarUrl,
-    getStarlightSkinUrl,
-
-    // 数据库操作
-    getMcBindByQQId,
-    getMcBindByUsername,
-    createOrUpdateMcBind,
-    deleteMcBind,
-    checkUsernameExists,
-    checkAndUpdateUsername,
-
-    // API操作
-    validateUsername,
-    validateBUID,
-    updateBuidInfoOnly,
-
-    // 权限检查
-    isAdmin,
-    isMaster,
-
-    // 消息操作
-    sendMessage,
-    autoSetGroupNickname,
-    checkNicknameFormat,
-
-    // 会话管理
-    removeBindingSession,
-
-    // 服务器配置
-    getServerConfigById,
-
-    // 工具函数
-    getFriendlyErrorMessage
-  }
-
   // 实例化McidCommandHandler并注册命令
-  const mcidHandler = new McidCommandHandler(ctx, mcidHandlerDeps)
-  mcidHandler.registerCommands(cmd)
+  const mcidHandler = new McidCommandHandler(ctx, config, loggerService, repositories, handlerDependencies)
+  mcidHandler.register()
 
   // 自定义文本前缀匹配
   if (config.allowTextPrefix && config.botNickname) {

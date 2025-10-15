@@ -29,16 +29,40 @@ export interface HandlerDependencies {
   getCrafatarUrl: (uuid: string) => string
   getStarlightSkinUrl: (uuid: string) => string
 
+  // 数据库操作函数（for McidCommandHandler）
+  getMcBindByQQId: (qqId: string) => Promise<MCIDBIND | null>
+  getMcBindByUsername: (username: string) => Promise<MCIDBIND | null>
+  createOrUpdateMcBind: (userId: string, username: string, uuid: string, isAdmin?: boolean) => Promise<boolean>
+  deleteMcBind: (userId: string) => Promise<boolean>
+  checkUsernameExists: (username: string, currentUserId?: string) => Promise<boolean>
+  checkAndUpdateUsername: (bind: MCIDBIND) => Promise<MCIDBIND>
+
+  // API操作函数
+  validateUsername: (username: string) => Promise<any>
+  validateBUID: (uid: string) => Promise<any>
+  updateBuidInfoOnly: (qqId: string, buidUser: any) => Promise<boolean>
+
+  // 权限检查函数
+  isAdmin: (userId: string) => Promise<boolean>
+  isMaster: (userId: string) => boolean
+
   // 业务函数
   sendMessage: (session: Session, content: any[], options?: any) => Promise<void>
   autoSetGroupNickname: (
     session: Session,
-    mcUsername: string,
+    mcUsername: string | null,
     buidUsername: string,
     targetUserId?: string,
     specifiedGroupId?: string
   ) => Promise<void>
+  checkNicknameFormat: (nickname: string, buidUsername: string, mcUsername: string | null) => boolean
   getBindInfo: (qqId: string) => Promise<MCIDBIND | null>
+
+  // 配置操作函数
+  getServerConfigById: (serverId: string) => any
+
+  // 错误处理函数
+  getFriendlyErrorMessage: (error: any) => string
 
   // 服务实例
   rconManager: RconManager
