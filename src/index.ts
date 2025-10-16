@@ -828,6 +828,14 @@ export function apply(ctx: Context, config: IConfig) {
       type: 'integer',
       initial: 0,
     },
+    usernameLastChecked: {
+      type: 'timestamp',
+      initial: null,
+    },
+    usernameCheckFailCount: {
+      type: 'integer',
+      initial: 0,
+    },
   }, {
     // 设置主键为qqId
     primary: 'qqId',

@@ -242,14 +242,6 @@ export class McidCommandHandler extends BaseHandler {
 
     this.logger.info('查询', `QQ(${bind.qqId})的MC账号信息：用户名=${bind.mcUsername}, UUID=${bind.mcUuid}`)
 
-    // 自动设置群昵称
-    if (bind.buidUid && bind.buidUsername) {
-      const mcName = bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? bind.mcUsername : null
-      await this.deps.autoSetGroupNickname(session, mcName, bind.buidUsername, targetId || undefined)
-    } else {
-      this.logger.info('查询', `QQ(${bind.qqId})未绑定B站账号，跳过群昵称设置`)
-    }
-
     const displayUsername = bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? bind.mcUsername : '未绑定'
     const prefix = targetId ? `用户 ${targetId} 的` : '您的'
     const messageElements = [
@@ -259,7 +251,19 @@ export class McidCommandHandler extends BaseHandler {
       ...(buidAvatar ? [buidAvatar] : [])
     ]
 
-    return this.deps.sendMessage(session, messageElements)
+    // 先发送响应，然后异步设置群昵称
+    const sendPromise = this.deps.sendMessage(session, messageElements)
+
+    // 异步设置群昵称
+    if (bind.buidUid && bind.buidUsername) {
+      const mcName = bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? bind.mcUsername : null
+      this.deps.autoSetGroupNickname(session, mcName, bind.buidUsername, targetId || undefined)
+        .catch(err => this.logger.warn('查询', `群昵称设置失败: ${err.message}`))
+    } else {
+      this.logger.info('查询', `QQ(${bind.qqId})未绑定B站账号，跳过群昵称设置`)
+    }
+
+    return sendPromise
   }
 
   /**
