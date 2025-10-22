@@ -62,7 +62,7 @@ export class BindingHandler extends BaseHandler {
             }
 
             // 检查目标用户当前绑定状态
-            const targetBind = await this.deps.getBindInfo(normalizedTargetId)
+            const targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
 
             // 如果两个账号都已绑定，不需要进入绑定流程
             if (targetBind && targetBind.mcUsername && targetBind.buidUid) {
@@ -126,7 +126,7 @@ export class BindingHandler extends BaseHandler {
           }
 
           // 检查用户当前绑定状态
-          const existingBind = await this.deps.getBindInfo(normalizedUserId)
+          const existingBind = await this.deps.databaseService.getMcBindByQQId(normalizedUserId)
 
           // 如果两个账号都已绑定（且MC不是temp用户名），不需要进入绑定流程
           if (existingBind && existingBind.mcUsername && !existingBind.mcUsername.startsWith('_temp_') && existingBind.buidUid) {
@@ -216,7 +216,7 @@ export class BindingHandler extends BaseHandler {
       if (normalizedQQId === normalizedMasterId) return true
 
       // 查询MCIDBIND表中是否是管理员
-      const bind = await this.deps.getBindInfo(normalizedQQId)
+      const bind = await this.deps.databaseService.getMcBindByQQId(normalizedQQId)
       return bind && bind.isAdmin === true
     } catch (error) {
       const normalizedQQId = this.deps.normalizeQQId(userId)

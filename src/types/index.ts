@@ -14,3 +14,6 @@ export * from './api'
 
 // 通用类型
 export * from './common'
+
+// 更新数据类型
+export * from './update-data'

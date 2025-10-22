@@ -24,7 +24,7 @@ export class TagHandler extends BaseHandler {
     const normalizedMasterId = this.deps.normalizeQQId(this.config.masterId)
     if (normalizedUserId === normalizedMasterId) return true
     try {
-      const bind = await this.deps.getBindInfo(normalizedUserId)
+      const bind = await this.deps.databaseService.getMcBindByQQId(normalizedUserId)
       return bind && bind.isAdmin === true
     } catch (error) {
       this.logger.error('权限检查', `QQ(${normalizedUserId})的管理员状态查询失败`, error)
@@ -69,11 +69,11 @@ export class TagHandler extends BaseHandler {
         const target = targets[0]
         const normalizedTargetId = this.deps.normalizeQQId(target)
         this.logger.info('标签', `管理员QQ(${normalizedUserId})尝试为QQ(${normalizedTargetId})添加标签"${tagName}"`, true)
-        let targetBind = await this.deps.getBindInfo(normalizedTargetId)
+        let targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
         if (!targetBind) {
           const tempUsername = `_temp_${normalizedTargetId}`
           await this.repos.mcidbind.create({qqId: normalizedTargetId, mcUsername: tempUsername, mcUuid: '', lastModified: new Date(), isAdmin: false, whitelist: [], tags: []})
-          targetBind = await this.deps.getBindInfo(normalizedTargetId)
+          targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
         }
         if (targetBind.tags && targetBind.tags.includes(tagName)) {
           this.logger.warn('标签', `QQ(${normalizedTargetId})已有标签"${tagName}"`)
@@ -92,11 +92,11 @@ export class TagHandler extends BaseHandler {
         const target = targets[i]
         const normalizedTargetId = this.deps.normalizeQQId(target)
         try {
-          let targetBind = await this.deps.getBindInfo(normalizedTargetId)
+          let targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
           if (!targetBind) {
             const tempUsername = `_temp_${normalizedTargetId}`
             await this.repos.mcidbind.create({qqId: normalizedTargetId, mcUsername: tempUsername, mcUuid: '', lastModified: new Date(), isAdmin: false, whitelist: [], tags: []})
-            targetBind = await this.deps.getBindInfo(normalizedTargetId)
+            targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
           }
           if (targetBind.tags && targetBind.tags.includes(tagName)) {
             skipCount++
@@ -146,7 +146,7 @@ export class TagHandler extends BaseHandler {
         const target = targets[0]
         const normalizedTargetId = this.deps.normalizeQQId(target)
         this.logger.info('标签', `管理员QQ(${normalizedUserId})尝试为QQ(${normalizedTargetId})移除标签"${tagName}"`, true)
-        const targetBind = await this.deps.getBindInfo(normalizedTargetId)
+        const targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
         if (!targetBind) {
           this.logger.warn('标签', `QQ(${normalizedTargetId})无记录`)
           return this.deps.sendMessage(session, [h.text(`用户 ${normalizedTargetId} 无记录`)])
@@ -168,7 +168,7 @@ export class TagHandler extends BaseHandler {
         const target = targets[i]
         const normalizedTargetId = this.deps.normalizeQQId(target)
         try {
-          const targetBind = await this.deps.getBindInfo(normalizedTargetId)
+          const targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
           if (!targetBind) {
             failCount++
             results.push(`❌ ${normalizedTargetId}: 无记录`)
@@ -214,7 +214,7 @@ export class TagHandler extends BaseHandler {
       if (target) {
         const normalizedTargetId = this.deps.normalizeQQId(target)
         this.logger.info('标签', `管理员QQ(${normalizedUserId})查看QQ(${normalizedTargetId})的标签`, true)
-        const targetBind = await this.deps.getBindInfo(normalizedTargetId)
+        const targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
         if (!targetBind) {
           this.logger.info('标签', `QQ(${normalizedTargetId})无记录`)
           return this.deps.sendMessage(session, [h.text(`用户 ${normalizedTargetId} 无记录`)])

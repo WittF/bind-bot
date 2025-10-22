@@ -552,7 +552,7 @@ export class BuidHandler extends BaseHandler {
             const latestTargetBind = await this.repos.mcidbind.findByQQId(normalizedTargetId)
             if (latestTargetBind) {
               const mcName = latestTargetBind.mcUsername && !latestTargetBind.mcUsername.startsWith('_temp_') ? latestTargetBind.mcUsername : null
-              await this.deps.autoSetGroupNickname(session, mcName, enhancedUser.username, String(enhancedUser.uid), normalizedTargetId)
+              await this.deps.nicknameService.autoSetGroupNickname(session, mcName, enhancedUser.username, String(enhancedUser.uid), normalizedTargetId)
             }
           } catch (renameError) {
             this.logger.warn('强制绑定', `群昵称设置失败: ${renameError.message}`)
@@ -585,7 +585,7 @@ export class BuidHandler extends BaseHandler {
             const latestBind = await this.repos.mcidbind.findByQQId(operatorQQId)
             if (latestBind) {
               const mcName = latestBind.mcUsername && !latestBind.mcUsername.startsWith('_temp_') ? latestBind.mcUsername : null
-              await this.deps.autoSetGroupNickname(session, mcName, enhancedUser.username, String(enhancedUser.uid))
+              await this.deps.nicknameService.autoSetGroupNickname(session, mcName, enhancedUser.username, String(enhancedUser.uid))
             }
           } catch (renameError) {
             this.logger.warn('强制绑定', `群昵称设置失败: ${renameError.message}`)
@@ -664,7 +664,7 @@ export class BuidHandler extends BaseHandler {
       const latestTargetBind = await this.repos.mcidbind.findByQQId(normalizedTargetId)
       if (latestTargetBind) {
         const mcName = latestTargetBind.mcUsername && !latestTargetBind.mcUsername.startsWith('_temp_') ? latestTargetBind.mcUsername : null
-        await this.deps.autoSetGroupNickname(session, mcName, buidUser.username, actualUid, normalizedTargetId)
+        await this.deps.nicknameService.autoSetGroupNickname(session, mcName, buidUser.username, actualUid, normalizedTargetId)
         this.logger.info('绑定', `管理员QQ(${operatorQQId})为QQ(${normalizedTargetId})B站绑定完成，已尝试设置群昵称`)
       }
     } catch (renameError) {
@@ -728,7 +728,7 @@ export class BuidHandler extends BaseHandler {
       const latestBind = await this.repos.mcidbind.findByQQId(operatorQQId)
       if (latestBind) {
         const mcName = latestBind.mcUsername && !latestBind.mcUsername.startsWith('_temp_') ? latestBind.mcUsername : null
-        await this.deps.autoSetGroupNickname(session, mcName, buidUser.username, actualUid)
+        await this.deps.nicknameService.autoSetGroupNickname(session, mcName, buidUser.username, actualUid)
         this.logger.info('绑定', `QQ(${operatorQQId})B站绑定完成，已尝试设置群昵称`)
       }
     } catch (renameError) {

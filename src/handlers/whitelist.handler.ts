@@ -43,7 +43,7 @@ export class WhitelistHandler extends BaseHandler {
           }
 
           // 检查用户是否绑定了MC账号
-          const userBind = await this.deps.getBindInfo(normalizedUserId)
+          const userBind = await this.deps.databaseService.getMcBindByQQId(normalizedUserId)
           if (!userBind || !userBind.mcUsername) {
             this.logger.warn('白名单', `QQ(${normalizedUserId})未绑定MC账号，无法显示白名单状态`)
             return this.deps.sendMessage(session, [h.text(`您尚未绑定MC账号，请先使用 ${this.deps.formatCommand('mcid bind <用户名>')} 命令绑定账号，然后再查看服务器列表。`)])
@@ -167,7 +167,7 @@ export class WhitelistHandler extends BaseHandler {
               this.logger.info('白名单', `QQ(${normalizedUserId})尝试为QQ(${normalizedTargetId})添加服务器"${server.name}"白名单`)
 
               // 获取目标用户的绑定信息
-              const targetBind = await this.deps.getBindInfo(normalizedTargetId)
+              const targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
               if (!targetBind || !targetBind.mcUsername) {
                 this.logger.warn('白名单', `QQ(${normalizedTargetId})未绑定MC账号`)
                 return this.deps.sendMessage(session, [h.text(`用户 ${normalizedTargetId} 尚未绑定MC账号，无法添加白名单`)])
@@ -210,7 +210,7 @@ export class WhitelistHandler extends BaseHandler {
 
               try {
                 // 获取目标用户的绑定信息
-                const targetBind = await this.deps.getBindInfo(normalizedTargetId)
+                const targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
                 if (!targetBind || !targetBind.mcUsername) {
                   failCount++
                   results.push(`❌ ${normalizedTargetId}: 未绑定MC账号`)
@@ -278,7 +278,7 @@ export class WhitelistHandler extends BaseHandler {
           }
 
           // 获取自己的绑定信息
-          const selfBind = await this.deps.getBindInfo(normalizedUserId)
+          const selfBind = await this.deps.databaseService.getMcBindByQQId(normalizedUserId)
           if (!selfBind || !selfBind.mcUsername) {
             this.logger.warn('白名单', `QQ(${normalizedUserId})未绑定MC账号`)
             return this.deps.sendMessage(session, [h.text('您尚未绑定MC账号，请先使用 ' + this.deps.formatCommand('mcid bind <用户名>') + ' 进行绑定')])
@@ -369,7 +369,7 @@ export class WhitelistHandler extends BaseHandler {
               this.logger.info('白名单', `管理员QQ(${normalizedUserId})尝试为QQ(${normalizedTargetId})移除服务器"${server.name}"白名单`)
 
               // 获取目标用户的绑定信息
-              const targetBind = await this.deps.getBindInfo(normalizedTargetId)
+              const targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
               if (!targetBind || !targetBind.mcUsername) {
                 this.logger.warn('白名单', `QQ(${normalizedTargetId})未绑定MC账号`)
                 return this.deps.sendMessage(session, [h.text(`用户 ${normalizedTargetId} 尚未绑定MC账号，无法移除白名单`)])
@@ -412,7 +412,7 @@ export class WhitelistHandler extends BaseHandler {
 
               try {
                 // 获取目标用户的绑定信息
-                const targetBind = await this.deps.getBindInfo(normalizedTargetId)
+                const targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
                 if (!targetBind || !targetBind.mcUsername) {
                   failCount++
                   results.push(`❌ ${normalizedTargetId}: 未绑定MC账号`)
@@ -474,7 +474,7 @@ export class WhitelistHandler extends BaseHandler {
           this.logger.info('白名单', `管理员QQ(${normalizedUserId})尝试为自己移除服务器"${server.name}"白名单`)
 
           // 获取自己的绑定信息
-          const selfBind = await this.deps.getBindInfo(normalizedUserId)
+          const selfBind = await this.deps.databaseService.getMcBindByQQId(normalizedUserId)
           if (!selfBind || !selfBind.mcUsername) {
             this.logger.warn('白名单', `QQ(${normalizedUserId})未绑定MC账号`)
             return this.deps.sendMessage(session, [h.text('您尚未绑定MC账号，请先使用 ' + this.deps.formatCommand('mcid bind <用户名>') + ' 进行绑定')])
@@ -773,7 +773,7 @@ export class WhitelistHandler extends BaseHandler {
 
     // 查询MCIDBIND表中是否是管理员
     try {
-      const bind = await this.deps.getBindInfo(normalizedQQId)
+      const bind = await this.deps.databaseService.getMcBindByQQId(normalizedQQId)
       return bind && bind.isAdmin === true
     } catch (error) {
       this.logger.error('权限检查', `QQ(${normalizedQQId})的管理员状态查询失败: ${error.message}`)
@@ -907,14 +907,14 @@ export class WhitelistHandler extends BaseHandler {
       }
 
       // 重新获取最新的用户绑定信息
-      let freshBind = await this.deps.getBindInfo(mcBind.qqId)
+      let freshBind = await this.deps.databaseService.getMcBindByQQId(mcBind.qqId)
       if (!freshBind || !freshBind.mcUsername) {
         this.logger.warn('白名单', `用户QQ(${mcBind.qqId})可能在操作过程中解绑了MC账号`)
         return false
       }
 
       // 智能检测用户名变更（带缓存，避免频繁API调用）
-      freshBind = await this.deps.checkAndUpdateUsernameWithCache(freshBind)
+      freshBind = await this.deps.databaseService.checkAndUpdateUsernameWithCache(freshBind)
 
       // 检查最新状态是否已在白名单中
       if (freshBind.whitelist && freshBind.whitelist.includes(server.id)) {
@@ -967,7 +967,7 @@ export class WhitelistHandler extends BaseHandler {
 
       if (success) {
         // 更新数据库
-        const currentBind = await this.deps.getBindInfo(freshBind.qqId)
+        const currentBind = await this.deps.databaseService.getMcBindByQQId(freshBind.qqId)
         if (currentBind) {
           const whitelistSet = new Set(currentBind.whitelist || [])
           whitelistSet.add(server.id)
@@ -998,14 +998,14 @@ export class WhitelistHandler extends BaseHandler {
       }
 
       // 重新获取最新的用户绑定信息
-      let freshBind = await this.deps.getBindInfo(mcBind.qqId)
+      let freshBind = await this.deps.databaseService.getMcBindByQQId(mcBind.qqId)
       if (!freshBind || !freshBind.mcUsername) {
         this.logger.warn('白名单', `用户QQ(${mcBind.qqId})可能在操作过程中解绑了MC账号`)
         return false
       }
 
       // 智能检测用户名变更（带缓存，避免频繁API调用）
-      freshBind = await this.deps.checkAndUpdateUsernameWithCache(freshBind)
+      freshBind = await this.deps.databaseService.checkAndUpdateUsernameWithCache(freshBind)
 
       // 检查最新状态是否在白名单中
       if (!freshBind.whitelist || !freshBind.whitelist.includes(server.id)) {
@@ -1061,7 +1061,7 @@ export class WhitelistHandler extends BaseHandler {
 
       if (success) {
         // 更新数据库
-        const currentBind = await this.deps.getBindInfo(freshBind.qqId)
+        const currentBind = await this.deps.databaseService.getMcBindByQQId(freshBind.qqId)
         if (currentBind && currentBind.whitelist && currentBind.whitelist.includes(server.id)) {
           currentBind.whitelist = currentBind.whitelist.filter(id => id !== server.id)
           await this.repos.mcidbind.update(freshBind.qqId, {

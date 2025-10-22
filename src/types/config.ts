@@ -21,6 +21,8 @@ export interface Config {
   zminfoApiUrl: string
   // 天选播报配置
   enableLotteryBroadcast: boolean
+  lotteryTargetGroupId: string  // 天选播报目标群ID
+  lotteryTargetPrivateId: string  // 天选播报私聊目标ID
   // 自动群昵称设置目标群
   autoNicknameGroupId: string
   // 强制绑定相关配置

@@ -38,9 +38,12 @@ import {
   WhitelistHandler,
   BuidHandler,
   McidCommandHandler,
+  LotteryHandler,
   Repositories,
   HandlerDependencies
 } from './handlers'
+import { ApiService, DatabaseService, NicknameService } from './services'
+import { ServiceContainer } from './services/service-container'
 // 导入所有类型定义
 import type {
   Config as IConfig,
@@ -102,6 +105,10 @@ export const Config: Schema<IConfig> = Schema.object({
   enableLotteryBroadcast: Schema.boolean()
     .description('是否启用天选开奖播报功能')
     .default(false),
+  lotteryTargetGroupId: Schema.string()
+    .description('天选开奖播报目标群ID'),
+  lotteryTargetPrivateId: Schema.string()
+    .description('天选开奖播报私聊目标ID（格式：private:QQ号）'),
   autoNicknameGroupId: Schema.string()
     .description('自动群昵称设置目标群ID')
     .default('123456789'),
@@ -205,16 +212,6 @@ export function apply(ctx: Context, config: IConfig) {
   const reminderCooldown = new Map<string, number>()
   const REMINDER_COOLDOWN_TIME = 24 * 60 * 60 * 1000 // 24小时冷却
 
-  // 检查群昵称是否符合规范格式
-  const checkNicknameFormat = (nickname: string, buidUsername: string, mcUsername: string | null): boolean => {
-    if (!nickname || !buidUsername) return false
-    
-    // 期望格式：B站名称（ID:MC用户名）或 B站名称（ID:未绑定）
-    const mcInfo = mcUsername && !mcUsername.startsWith('_temp_') ? mcUsername : "未绑定"
-    const expectedFormat = `${buidUsername}（ID:${mcInfo}）`
-    
-    return nickname === expectedFormat
-  }
 
   // 检查用户是否在冷却期内
   const isInReminderCooldown = (userId: string): boolean => {
@@ -273,10 +270,14 @@ export function apply(ctx: Context, config: IConfig) {
 
   // 创建RCON连接管理器
   const rconManager = new RconManager(loggerService.createChild('RCON管理器'), config.servers || []);
-  
+
   // 创建RCON限流器实例
   const rconRateLimiter = new RateLimiter(10, 3000); // 3秒内最多10个请求
-  
+
+  // =========== 服务容器 ===========
+  // 注意：服务容器需要在 normalizeQQId 定义后才能实例化
+  // 将在定义 normalizeQQId 后统一实例化所有服务
+
   // 会话管理辅助函数
   const createBindingSession = (userId: string, channelId: string): void => {
     const sessionKey = `${normalizeQQId(userId)}_${channelId}`
@@ -335,204 +336,6 @@ export function apply(ctx: Context, config: IConfig) {
     }
   }
 
-  // 自动群昵称设置功能
-  const autoSetGroupNickname = async (session: Session, mcUsername: string | null, buidUsername: string, buidUid?: string, targetUserId?: string, specifiedGroupId?: string): Promise<void> => {
-    try {
-      // 如果指定了目标用户ID，使用目标用户ID，否则使用session的用户ID
-      const actualUserId = targetUserId || session.userId
-      const normalizedUserId = normalizeQQId(actualUserId)
-
-      // 根据MC绑定状态设置不同的格式（临时用户名视为未绑定）
-      const mcInfo = (mcUsername && !mcUsername.startsWith('_temp_')) ? mcUsername : "未绑定"
-      let currentBuidUsername = buidUsername
-      const newNickname = `${currentBuidUsername}（ID:${mcInfo}）`
-      // 使用指定的群ID，如果没有指定则使用配置的默认群ID
-      const targetGroupId = specifiedGroupId || config.autoNicknameGroupId
-
-      logger.debug(`[群昵称设置] 开始处理QQ(${normalizedUserId})的群昵称设置，目标群: ${targetGroupId}`)
-      logger.debug(`[群昵称设置] 期望昵称: "${newNickname}"`)
-
-      if (session.bot.internal && targetGroupId) {
-        // 使用规范化的QQ号调用OneBot API
-        logger.debug(`[群昵称设置] 使用用户ID: ${normalizedUserId}`)
-
-        // 先获取当前群昵称进行比对
-        try {
-          logger.debug(`[群昵称设置] 正在获取QQ(${normalizedUserId})在群${targetGroupId}的当前昵称...`)
-          const currentGroupInfo = await session.bot.internal.getGroupMemberInfo(targetGroupId, normalizedUserId)
-          const currentNickname = currentGroupInfo.card || currentGroupInfo.nickname || ''
-          logger.debug(`[群昵称设置] 当前昵称: "${currentNickname}"`)
-
-          // 如果当前昵称和目标昵称一致，跳过修改
-          if (currentNickname === newNickname) {
-            logger.info(`[群昵称设置] QQ(${normalizedUserId})群昵称已经是"${newNickname}"，跳过修改`)
-            return
-          }
-
-          // 昵称不一致，先尝试获取最新的B站用户信息
-          if (buidUid) {
-            logger.debug(`[群昵称设置] 检测到昵称不一致，尝试获取B站UID ${buidUid} 的最新信息...`)
-
-            // 1. 提取当前群昵称中的B站用户名
-            const currentNicknameUsername = extractBuidUsernameFromNickname(currentNickname)
-            logger.debug(`[群昵称设置] 从当前群昵称"${currentNickname}"中提取到B站名称: ${currentNicknameUsername || '(无法提取)'}`)
-
-            try {
-              const latestBuidUser = await validateBUID(buidUid)
-              if (latestBuidUser && latestBuidUser.username) {
-                logger.debug(`[群昵称设置] API返回B站用户名: "${latestBuidUser.username}"`)
-
-                // 2. 智能三层判断
-
-                // 情况A: API返回 == 当前群昵称中的名称
-                if (currentNicknameUsername && latestBuidUser.username === currentNicknameUsername) {
-                  logger.info(`[群昵称设置] ✅ 当前群昵称"${currentNickname}"已包含正确的B站名称"${currentNicknameUsername}"`)
-
-                  // 群昵称已经正确，仅需更新数据库（如果数据库是旧的）
-                  if (latestBuidUser.username !== buidUsername) {
-                    logger.info(`[群昵称设置] 数据库中的B站名称需要更新: "${buidUsername}" → "${latestBuidUser.username}"`)
-                    try {
-                      await updateBuidInfoOnly(normalizedUserId, latestBuidUser)
-                      logger.info(`[群昵称设置] 已更新数据库中的B站用户名`)
-                    } catch (updateError) {
-                      logger.warn(`[群昵称设置] 更新数据库失败: ${updateError.message}`)
-                    }
-                  } else {
-                    logger.debug(`[群昵称设置] 数据库中的B站名称已是最新，无需更新`)
-                  }
-
-                  // 跳过群昵称修改
-                  logger.info(`[群昵称设置] 群昵称格式正确且名称最新，跳过修改`)
-                  return
-                }
-
-                // 情况B: API返回 == 数据库（都是旧的）
-                if (latestBuidUser.username === buidUsername) {
-                  logger.warn(`[群昵称设置] ⚠️ API返回的B站名称"${latestBuidUser.username}"与数据库一致，但与群昵称不符`)
-                  logger.warn(`[群昵称设置] 可能是API缓存未刷新，采用保守策略：不修改群昵称`)
-                  return
-                }
-
-                // 情况C: API返回新数据（!= 群昵称 且 != 数据库）
-                logger.info(`[群昵称设置] 检测到B站用户名已更新: "${buidUsername}" → "${latestBuidUser.username}"`)
-                currentBuidUsername = latestBuidUser.username
-
-                // 更新数据库中的B站信息
-                try {
-                  await updateBuidInfoOnly(normalizedUserId, latestBuidUser)
-                  logger.info(`[群昵称设置] 已更新数据库中的B站用户名为: ${currentBuidUsername}`)
-                } catch (updateError) {
-                  logger.warn(`[群昵称设置] 更新数据库中的B站用户名失败: ${updateError.message}`)
-                  // 即使更新数据库失败，也继续使用最新的用户名设置昵称
-                }
-              } else {
-                logger.warn(`[群昵称设置] 获取最新B站用户信息失败，使用数据库中的用户名: ${currentBuidUsername}`)
-              }
-            } catch (validateError) {
-              logger.warn(`[群昵称设置] 获取最新B站用户信息时出错: ${validateError.message}，使用数据库中的用户名: ${currentBuidUsername}`)
-              // API调用失败时降级处理，使用数据库中的旧名称
-            }
-          }
-
-          // 使用（可能已更新的）用户名重新生成昵称
-          const finalNickname = `${currentBuidUsername}（ID:${mcInfo}）`
-
-          // 昵称不一致，执行修改
-          logger.debug(`[群昵称设置] 昵称不一致，正在修改群昵称为: "${finalNickname}"`)
-          await session.bot.internal.setGroupCard(targetGroupId, normalizedUserId, finalNickname)
-          logger.info(`[群昵称设置] 成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称从"${currentNickname}"修改为"${finalNickname}"`)
-          
-          // 验证设置是否生效 - 再次获取群昵称确认
-          try {
-            await new Promise(resolve => setTimeout(resolve, 1000)) // 等待1秒
-            const verifyGroupInfo = await session.bot.internal.getGroupMemberInfo(targetGroupId, normalizedUserId)
-            const verifyNickname = verifyGroupInfo.card || verifyGroupInfo.nickname || ''
-            if (verifyNickname === finalNickname) {
-              logger.info(`[群昵称设置] ✅ 验证成功，群昵称已生效: "${verifyNickname}"`)
-            } else {
-              logger.warn(`[群昵称设置] ⚠️ 验证失败，期望"${finalNickname}"，实际"${verifyNickname}"，可能是权限不足或API延迟`)
-            }
-          } catch (verifyError) {
-            logger.warn(`[群昵称设置] 无法验证群昵称设置结果: ${verifyError.message}`)
-          }
-        } catch (getInfoError) {
-          // 如果获取当前昵称失败，直接尝试设置新昵称
-          logger.warn(`[群昵称设置] 获取QQ(${normalizedUserId})当前群昵称失败: ${getInfoError.message}`)
-          logger.warn(`[群昵称设置] 错误详情: ${JSON.stringify(getInfoError)}`)
-          logger.debug(`[群昵称设置] 将直接尝试设置新昵称...`)
-
-          // 如果传入了 buidUid，尝试获取最新的B站用户信息
-          if (buidUid) {
-            logger.debug(`[群昵称设置] 尝试获取B站UID ${buidUid} 的最新信息...`)
-            try {
-              const latestBuidUser = await validateBUID(buidUid)
-              if (latestBuidUser && latestBuidUser.username) {
-                logger.debug(`[群昵称设置] API返回B站用户名: "${latestBuidUser.username}"`)
-
-                // 智能判断：API返回 == 数据库（都是旧的）
-                if (latestBuidUser.username === buidUsername) {
-                  logger.warn(`[群昵称设置] ⚠️ API返回的B站名称"${latestBuidUser.username}"与数据库一致`)
-                  logger.warn(`[群昵称设置] 可能是API缓存未刷新，且无法获取当前群昵称，采用保守策略：跳过修改`)
-                  return
-                }
-
-                // API返回新数据（!= 数据库）
-                logger.info(`[群昵称设置] 检测到B站用户名已更新: "${buidUsername}" → "${latestBuidUser.username}"`)
-                currentBuidUsername = latestBuidUser.username
-
-                // 更新数据库
-                try {
-                  await updateBuidInfoOnly(normalizedUserId, latestBuidUser)
-                  logger.info(`[群昵称设置] 已更新数据库中的B站用户名为: ${currentBuidUsername}`)
-                } catch (updateError) {
-                  logger.warn(`[群昵称设置] 更新数据库失败: ${updateError.message}`)
-                }
-              } else {
-                logger.warn(`[群昵称设置] 获取最新B站用户信息失败`)
-              }
-            } catch (validateError) {
-              logger.warn(`[群昵称设置] 获取最新B站用户信息失败: ${validateError.message}`)
-            }
-          }
-
-          try {
-          // 使用（可能已更新的）用户名生成昵称
-          const fallbackNickname = `${currentBuidUsername}（ID:${mcInfo}）`
-          await session.bot.internal.setGroupCard(targetGroupId, normalizedUserId, fallbackNickname)
-          logger.info(`[群昵称设置] 成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称设置为: ${fallbackNickname}`)
-
-            // 验证设置是否生效
-            try {
-              await new Promise(resolve => setTimeout(resolve, 1000)) // 等待1秒
-              const verifyGroupInfo = await session.bot.internal.getGroupMemberInfo(targetGroupId, normalizedUserId)
-              const verifyNickname = verifyGroupInfo.card || verifyGroupInfo.nickname || ''
-              if (verifyNickname === fallbackNickname) {
-                logger.info(`[群昵称设置] ✅ 验证成功，群昵称已生效: "${verifyNickname}"`)
-              } else {
-                logger.warn(`[群昵称设置] ⚠️ 验证失败，期望"${fallbackNickname}"，实际"${verifyNickname}"，可能是权限不足`)
-                logger.warn(`[群昵称设置] 建议检查: 1.机器人是否为群管理员 2.群设置是否允许管理员修改昵称 3.OneBot实现是否支持该功能`)
-              }
-            } catch (verifyError) {
-              logger.warn(`[群昵称设置] 无法验证群昵称设置结果: ${verifyError.message}`)
-            }
-          } catch (setCardError) {
-            logger.error(`[群昵称设置] 设置群昵称失败: ${setCardError.message}`)
-            logger.error(`[群昵称设置] 错误详情: ${JSON.stringify(setCardError)}`)
-            throw setCardError
-          }
-        }
-      } else if (!session.bot.internal) {
-        logger.debug(`[群昵称设置] QQ(${normalizedUserId})bot不支持OneBot内部API，跳过自动群昵称设置`)
-      } else if (!targetGroupId) {
-        logger.debug(`[群昵称设置] QQ(${normalizedUserId})未配置自动群昵称设置目标群，跳过群昵称设置`)
-      }
-    } catch (error) {
-      const actualUserId = targetUserId || session.userId
-      const normalizedUserId = normalizeQQId(actualUserId)
-      logger.error(`[群昵称设置] QQ(${normalizedUserId})自动群昵称设置失败: ${error.message}`)
-      logger.error(`[群昵称称设置] 完整错误信息: ${JSON.stringify(error)}`)
-    }
-  }
 
   // 检查是否为无关输入
   const checkIrrelevantInput = (bindingSession: BindingSession, content: string): boolean => {
@@ -690,7 +493,7 @@ export function apply(ctx: Context, config: IConfig) {
       logger.info(`[新人绑定] 用户QQ(${normalizedUserId})加入群聊，准备发送绑定提醒`);
       
       // 检查用户是否已有绑定记录
-      const existingBind = await getMcBindByQQId(normalizedUserId);
+      const existingBind = await services.database.getMcBindByQQId(normalizedUserId);
       
       // 如果用户已完成全部绑定，不需要提醒
       if (existingBind && existingBind.mcUsername && existingBind.buidUid) {
@@ -845,7 +648,7 @@ export function apply(ctx: Context, config: IConfig) {
       }
       
       // 异步处理天选开奖数据（不阻塞响应）
-      handleLotteryResult(lotteryData).catch(error => {
+      lotteryHandler.handleLotteryResult(lotteryData).catch(error => {
         logger.error(`[天选开奖] 异步处理天选开奖数据失败: ${error.message}`)
       })
       
@@ -1160,6 +963,16 @@ export function apply(ctx: Context, config: IConfig) {
     return extractedId
   }
 
+  // =========== 实例化服务容器 ===========
+  // 统一管理所有服务的实例化，解决服务初始化分散的问题
+  const services = new ServiceContainer(
+    ctx,
+    config,
+    loggerService,
+    mcidbindRepo,
+    normalizeQQId
+  )
+
   // 获取用户友好的错误信息
 
   // 封装发送消息的函数，处理私聊和群聊的不同格式
@@ -1292,807 +1105,6 @@ export function apply(ctx: Context, config: IConfig) {
   }
   
   // 根据QQ号查询MCIDBIND表中的绑定信息
-  const getMcBindByQQId = async (qqId: string): Promise<MCIDBIND | null> => {
-    try {
-      // 处理空值
-      if (!qqId) {
-        logger.warn(`[MCIDBIND] 尝试查询空QQ号`)
-        return null
-      }
-      
-      const normalizedQQId = normalizeQQId(qqId)
-      // 查询MCIDBIND表中对应QQ号的绑定记录
-      return await mcidbindRepo.findByQQId(normalizedQQId)
-    } catch (error) {
-      logError('MCIDBIND', qqId, `根据QQ号查询绑定信息失败: ${error.message}`)
-      return null
-    }
-  }
-  
-  // 根据MC用户名查询MCIDBIND表中的绑定信息
-  const getMcBindByUsername = async (mcUsername: string): Promise<MCIDBIND | null> => {
-    // 处理空值
-    if (!mcUsername) {
-      logger.warn(`[MCIDBIND] 尝试查询空MC用户名`)
-      return null
-    }
-
-    // 使用 Repository 查询
-    return await mcidbindRepo.findByMCUsername(mcUsername)
-  }
-  
-  // 根据QQ号确保获取完整的用户ID (处理纯QQ号的情况)
-  const ensureFullUserId = (userId: string): string => {
-    // 如果已经包含冒号，说明已经是完整的用户ID
-    if (userId.includes(':')) return userId
-    
-    // 否则，检查是否为数字（纯QQ号）
-    if (/^\d+$/.test(userId)) {
-      // 默认使用onebot平台前缀
-      return `onebot:${userId}`
-    }
-    
-    // 如果不是数字也没有冒号，保持原样返回
-    logger.warn(`[用户ID] 无法确定用户ID格式: ${userId}`)
-    return userId
-  }
-
-  // 创建或更新MCIDBIND表中的绑定信息
-  const createOrUpdateMcBind = async (userId: string, mcUsername: string, mcUuid: string, isAdmin?: boolean): Promise<boolean> => {
-    try {
-      // 验证输入参数
-      if (!userId) {
-        logger.error(`[MCIDBIND] 创建/更新绑定失败: 无效的用户ID`)
-        return false
-      }
-      
-      if (!mcUsername) {
-        logger.error(`[MCIDBIND] 创建/更新绑定失败: 无效的MC用户名`)
-        return false
-      }
-      
-      const normalizedQQId = normalizeQQId(userId)
-      if (!normalizedQQId) {
-        logger.error(`[MCIDBIND] 创建/更新绑定失败: 无法提取有效的QQ号`)
-        return false
-      }
-      
-      // 查询是否已存在绑定记录
-      let bind = await getMcBindByQQId(normalizedQQId)
-      
-      if (bind) {
-        // 更新现有记录，但保留管理员状态
-        const updateData: any = {
-          mcUsername,
-          mcUuid,
-          lastModified: new Date()
-        }
-        
-        // 仅当指定了isAdmin参数时更新管理员状态
-        if (typeof isAdmin !== 'undefined') {
-          updateData.isAdmin = isAdmin
-        }
-
-        await mcidbindRepo.update(normalizedQQId, updateData)
-        logger.info(`[MCIDBIND] 更新绑定: QQ=${normalizedQQId}, MC用户名=${mcUsername}, UUID=${mcUuid}`)
-        return true
-      } else {
-        // 创建新记录
-        try {
-          await mcidbindRepo.create({
-            qqId: normalizedQQId,
-            mcUsername,
-            mcUuid,
-            lastModified: new Date(),
-            isAdmin: isAdmin || false
-          })
-          logger.info(`[MCIDBIND] 创建绑定: QQ=${normalizedQQId}, MC用户名=${mcUsername}, UUID=${mcUuid}`)
-          return true
-        } catch (createError) {
-          logError('MCIDBIND', userId, `创建绑定失败: MC用户名=${mcUsername}, 错误=${createError.message}`)
-          return false
-        }
-      }
-    } catch (error) {
-      logError('MCIDBIND', userId, `创建/更新绑定失败: MC用户名=${mcUsername}, 错误=${error.message}`)
-      return false
-    }
-  }
-  
-  // 删除MCIDBIND表中的绑定信息 (同时解绑MC和B站账号)
-  const deleteMcBind = async (userId: string): Promise<boolean> => {
-    try {
-      // 验证输入参数
-      if (!userId) {
-        logger.error(`[MCIDBIND] 删除绑定失败: 无效的用户ID`)
-        return false
-      }
-      
-      const normalizedQQId = normalizeQQId(userId)
-      if (!normalizedQQId) {
-        logger.error(`[MCIDBIND] 删除绑定失败: 无法提取有效的QQ号`)
-        return false
-      }
-      
-      // 查询是否存在绑定记录
-      const bind = await getMcBindByQQId(normalizedQQId)
-      
-      if (bind) {
-        // 删除整个绑定记录，包括MC和B站账号
-        const removedCount = await mcidbindRepo.delete(normalizedQQId)
-
-        // 检查是否真正删除成功
-        if (removedCount > 0) {
-          let logMessage = `[MCIDBIND] 删除绑定: QQ=${normalizedQQId}`
-          if (bind.mcUsername) logMessage += `, MC用户名=${bind.mcUsername}`
-          if (bind.buidUid) logMessage += `, B站UID=${bind.buidUid}(${bind.buidUsername})`
-          logger.info(logMessage)
-          return true
-        } else {
-          logger.warn(`[MCIDBIND] 删除绑定异常: QQ=${normalizedQQId}, 可能未实际删除`)
-          return false
-        }
-      }
-      
-      logger.warn(`[MCIDBIND] 删除绑定失败: QQ=${normalizedQQId}不存在绑定记录`)
-      return false
-    } catch (error) {
-      logError('MCIDBIND', userId, `删除绑定失败: 错误=${error.message}`)
-      return false
-    }
-  }
-
-  // 检查MC用户名是否已被其他QQ号绑定（支持不区分大小写和UUID检查）
-  const checkUsernameExists = async (username: string, currentUserId?: string, uuid?: string): Promise<boolean> => {
-    try {
-      // 验证输入参数
-      if (!username) {
-        logger.warn(`[绑定检查] 尝试检查空MC用户名`)
-        return false
-      }
-
-      // 跳过临时用户名的检查
-      if (username.startsWith('_temp_')) {
-        return false
-      }
-
-      // 使用不区分大小写的查询
-      const bind = await mcidbindRepo.findByUsernameIgnoreCase(username)
-
-      // 如果没有绑定，返回false
-      if (!bind) return false
-
-      // 如果绑定的用户名是临时用户名，视为未绑定
-      if (bind.mcUsername && bind.mcUsername.startsWith('_temp_')) {
-        return false
-      }
-
-      // 如果提供了 UUID，检查是否为同一个 MC 账号（用户改名场景）
-      if (uuid && bind.mcUuid) {
-        const cleanUuid = uuid.replace(/-/g, '')
-        const bindCleanUuid = bind.mcUuid.replace(/-/g, '')
-
-        if (cleanUuid === bindCleanUuid) {
-          // 同一个 UUID，说明是用户改名，允许绑定
-          logger.info(`[绑定检查] 检测到MC账号改名: UUID=${uuid}, 旧用户名=${bind.mcUsername}, 新用户名=${username}`)
-          return false
-        }
-      }
-
-      // 如果提供了当前用户ID，需要排除当前用户
-      if (currentUserId) {
-        const normalizedCurrentId = normalizeQQId(currentUserId)
-        // 如果绑定的用户就是当前用户，返回false，表示没有被其他用户绑定
-        return normalizedCurrentId ? bind.qqId !== normalizedCurrentId : true
-      }
-
-      return true
-    } catch (error) {
-      logError('绑定检查', currentUserId || 'system', `检查用户名"${username}"是否已被绑定失败: ${error.message}`)
-      return false
-    }
-  }
-
-  // 使用Mojang API验证用户名并获取UUID
-  const validateUsername = async (username: string): Promise<MojangProfile | null> => {
-    try {
-      logger.debug(`[Mojang API] 开始验证用户名: ${username}`)
-      const response = await axios.get(`https://api.mojang.com/users/profiles/minecraft/${username}`, {
-        timeout: 10000, // 添加10秒超时
-        headers: {
-          'User-Agent': 'KoishiMCVerifier/1.0', // 添加User-Agent头
-        }
-      })
-      
-      if (response.status === 200 && response.data) {
-        logger.debug(`[Mojang API] 用户名"${username}"验证成功，UUID: ${response.data.id}，标准名称: ${response.data.name}`)
-        return {
-          id: response.data.id,
-          name: response.data.name // 使用Mojang返回的正确大小写
-        }
-      }
-     
-      return null
-    } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 404) {
-        logger.warn(`[Mojang API] 用户名"${username}"不存在`)
-      } else if (axios.isAxiosError(error) && error.code === 'ECONNABORTED') {
-        logger.error(`[Mojang API] 验证用户名"${username}"时请求超时: ${error.message}`)
-      } else {
-        // 记录更详细的错误信息
-        const errorMessage = axios.isAxiosError(error) 
-          ? `${error.message}，响应状态: ${error.response?.status || '未知'}\n响应数据: ${JSON.stringify(error.response?.data || '无数据')}`
-          : error.message || '未知错误';
-        logger.error(`[Mojang API] 验证用户名"${username}"时发生错误: ${errorMessage}`)
-        
-        // 如果是网络相关错误，尝试使用备用API检查
-        if (axios.isAxiosError(error) && (
-            error.code === 'ENOTFOUND' || 
-            error.code === 'ETIMEDOUT' || 
-            error.code === 'ECONNRESET' || 
-            error.code === 'ECONNREFUSED' || 
-            error.code === 'ECONNABORTED' || 
-            error.response?.status === 429 || // 添加429 (Too Many Requests)
-            error.response?.status === 403)) { // 添加403 (Forbidden)
-          // 尝试使用playerdb.co作为备用API
-          logger.info(`[Mojang API] 遇到错误(${error.code || error.response?.status})，将尝试使用备用API`)
-          return tryBackupAPI(username);
-        }
-      }
-      return null;
-    }
-  }
-
-  // 使用备用API验证用户名
-  const tryBackupAPI = async (username: string): Promise<MojangProfile | null> => {
-    logger.info(`[备用API] 尝试使用备用API验证用户名"${username}"`)
-    try {
-      // 使用playerdb.co作为备用API
-      const backupResponse = await axios.get(`https://playerdb.co/api/player/minecraft/${username}`, { 
-        timeout: 10000,
-        headers: {
-          'User-Agent': 'KoishiMCVerifier/1.0'
-        }
-      })
-      
-      if (backupResponse.status === 200 && backupResponse.data?.code === "player.found") {
-        const playerData = backupResponse.data.data.player;
-        const rawId = playerData.raw_id || playerData.id.replace(/-/g, ''); // 确保使用不带连字符的UUID
-        logger.info(`[备用API] 用户名"${username}"验证成功，UUID: ${rawId}，标准名称: ${playerData.username}`)
-        return {
-          id: rawId, // 确保使用不带连字符的UUID
-          name: playerData.username
-        }
-      }
-      logger.warn(`[备用API] 用户名"${username}"验证失败: ${JSON.stringify(backupResponse.data)}`)
-      return null;
-    } catch (backupError) {
-      const errorMsg = axios.isAxiosError(backupError) 
-        ? `${backupError.message}, 状态码: ${backupError.response?.status || '未知'}`
-        : backupError.message || '未知错误';
-      logger.error(`[备用API] 验证用户名"${username}"失败: ${errorMsg}`)
-      return null;
-    }
-  }
-
-  // 获取MC头图URL
-  const getCrafatarUrl = (uuid: string): string | null => {
-    if (!uuid) return null
-    
-    // 检查UUID格式 (不带连字符应为32位，带连字符应为36位)
-    const uuidRegex = /^[0-9a-f]{32}$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-    if (!uuidRegex.test(uuid)) {
-      logger.warn(`[MC头图] UUID "${uuid}" 格式无效，无法生成头图URL`)
-      return null
-    }
-    
-    // 移除任何连字符，Crafatar接受不带连字符的UUID
-    const cleanUuid = uuid.replace(/-/g, '')
-    
-    // 直接生成URL
-    const url = `https://crafatar.com/avatars/${cleanUuid}`
-    
-    logger.debug(`[MC头图] 为UUID "${cleanUuid}" 生成头图URL`)
-    return url
-  }
-
-  // 使用Starlight SkinAPI获取皮肤渲染
-  const getStarlightSkinUrl = (username: string): string | null => {
-    if (!username) return null
-    
-    // 可用的动作列表 (共16种)
-    const poses = [
-      'default',    // 默认站立
-      'marching',   // 行军
-      'walking',    // 行走
-      'crouching',  // 下蹲
-      'crossed',    // 交叉手臂
-      'crisscross', // 交叉腿
-      'cheering',   // 欢呼
-      'relaxing',   // 放松
-      'trudging',   // 艰难行走
-      'cowering',   // 退缩
-      'pointing',   // 指向
-      'lunging',    // 前冲
-      'dungeons',   // 地下城风格
-      'facepalm',   // 捂脸
-      'mojavatar',  // Mojave姿态
-      'head',   // 头部特写
-    ]
-    
-    // 随机选择一个动作
-    const randomPose = poses[Math.floor(Math.random() * poses.length)]
-    
-    // 视图类型（full为全身图）
-    const viewType = 'full'
-    
-    // 生成URL
-    const url = `https://starlightskins.lunareclipse.studio/render/${randomPose}/${username}/${viewType}`
-    
-    logger.debug(`[Starlight皮肤] 为用户名"${username}"生成动作"${randomPose}"的渲染URL`)
-    return url
-  }
-
-  // 格式化UUID (添加连字符，使其符合标准格式)
-  const formatUuid = (uuid: string): string => {
-    if (!uuid) return '未知'
-    if (uuid.includes('-')) return uuid // 已经是带连字符的格式
-    
-    // 确保UUID长度正确
-    if (uuid.length !== 32) {
-      logger.warn(`[UUID] UUID "${uuid}" 长度异常，无法格式化`)
-      return uuid
-    }
-    
-    return `${uuid.substring(0, 8)}-${uuid.substring(8, 12)}-${uuid.substring(12, 16)}-${uuid.substring(16, 20)}-${uuid.substring(20)}`
-  }
-
-  // 检查是否为管理员 (QQ号作为主键检查)
-  const isAdmin = async (userId: string): Promise<boolean> => {
-    // 主人始终是管理员
-    const normalizedMasterId = normalizeQQId(config.masterId)
-    const normalizedQQId = normalizeQQId(userId)
-    
-    if (normalizedQQId === normalizedMasterId) return true
-    
-    // 查询MCIDBIND表中是否是管理员
-    try {
-      const bind = await getMcBindByQQId(normalizedQQId)
-      return bind && bind.isAdmin === true
-    } catch (error) {
-      logger.error(`[权限检查] QQ(${normalizedQQId})的管理员状态查询失败: ${error.message}`)
-      return false
-    }
-  }
-
-  // 检查是否为主人 (QQ号作为主键检查)
-  const isMaster = (qqId: string): boolean => {
-    const normalizedMasterId = normalizeQQId(config.masterId)
-    const normalizedQQId = normalizeQQId(qqId)
-    return normalizedQQId === normalizedMasterId
-  }
-
-  // =========== BUID相关功能 ===========
-  
-  // 验证BUID是否存在
-  const validateBUID = async (buid: string): Promise<ZminfoUser | null> => {
-    try {
-      if (!buid || !/^\d+$/.test(buid)) {
-        logWarn('B站账号验证', `无效的B站UID格式: ${buid}`)
-        return null
-      }
-
-      logDebug('B站账号验证', `验证B站UID: ${buid}`)
-      
-      const response = await axios.get(`${config.zminfoApiUrl}/api/user/${buid}`, {
-        timeout: 10000,
-        headers: {
-          'User-Agent': 'Koishi-MCID-Bot/1.0'
-        }
-      })
-
-      if (response.data.success && response.data.data && response.data.data.user) {
-        const user = response.data.data.user
-        logDebug('B站账号验证', `B站UID ${buid} 验证成功: ${user.username}`)
-        return user
-      } else {
-        logWarn('B站账号验证', `B站UID ${buid} 不存在或API返回失败: ${response.data.message}`)
-        return null
-      }
-    } catch (error) {
-      if (error.response?.status === 404) {
-        logWarn('B站账号验证', `B站UID ${buid} 不存在`)
-        return null
-      }
-      
-      logError('B站账号验证', 'system', `验证B站UID ${buid} 时出错: ${error.message}`)
-      throw new Error(`无法验证B站UID: ${error.message}`)
-    }
-  }
-
-  // 根据B站UID查询绑定信息
-  const getBuidBindByBuid = async (buid: string): Promise<MCIDBIND | null> => {
-    try {
-      if (!buid) {
-        logger.warn(`[B站账号绑定] 尝试查询空B站UID`)
-        return null
-      }
-
-      const bind = await mcidbindRepo.findByBuidUid(buid)
-      return bind
-    } catch (error) {
-      logError('B站账号绑定', 'system', `根据B站UID(${buid})查询绑定信息失败: ${error.message}`)
-      return null
-    }
-  }
-
-  // 检查B站UID是否已被绑定
-  const checkBuidExists = async (buid: string, currentUserId?: string): Promise<boolean> => {
-    try {
-      const bind = await getBuidBindByBuid(buid)
-      if (!bind) return false
-      
-      // 如果指定了当前用户ID，则排除当前用户的绑定
-      if (currentUserId) {
-        const normalizedCurrentId = normalizeQQId(currentUserId)
-        return bind.qqId !== normalizedCurrentId
-      }
-      
-      return true
-    } catch (error) {
-      logError('B站账号绑定', 'system', `检查B站UID(${buid})是否存在时出错: ${error.message}`)
-      return false
-    }
-  }
-
-  // 创建或更新B站账号绑定
-  const createOrUpdateBuidBind = async (userId: string, buidUser: ZminfoUser): Promise<boolean> => {
-    try {
-      const normalizedQQId = normalizeQQId(userId)
-      if (!normalizedQQId) {
-        logger.error(`[B站账号绑定] 创建/更新绑定失败: 无法提取有效的QQ号`)
-        return false
-      }
-      
-      // 检查该UID是否已被其他用户绑定（安全检查）
-      const existingBuidBind = await getBuidBindByBuid(buidUser.uid)
-      if (existingBuidBind && existingBuidBind.qqId !== normalizedQQId) {
-        logger.error(`[B站账号绑定] 安全检查失败: B站UID ${buidUser.uid} 已被QQ(${existingBuidBind.qqId})绑定，无法为QQ(${normalizedQQId})绑定`)
-        return false
-      }
-      
-      // 查询是否已存在绑定记录
-      let bind = await getMcBindByQQId(normalizedQQId)
-      const updateData: any = {
-        buidUid: buidUser.uid,
-        buidUsername: buidUser.username,
-        guardLevel: buidUser.guard_level || 0,
-        guardLevelText: buidUser.guard_level_text || '',
-        maxGuardLevel: buidUser.max_guard_level || 0,
-        maxGuardLevelText: buidUser.max_guard_level_text || '',
-        medalName: buidUser.medal?.name || '',
-        medalLevel: buidUser.medal?.level || 0,
-        wealthMedalLevel: buidUser.wealthMedalLevel || 0,
-        lastActiveTime: buidUser.last_active_time ? new Date(buidUser.last_active_time) : new Date(),
-        lastModified: new Date()
-      }
-      if (bind) {
-        await mcidbindRepo.update(normalizedQQId, updateData)
-        logger.info(`[B站账号绑定] 更新绑定: QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}`)
-      } else {
-        // 为跳过MC绑定的用户生成唯一的临时用户名，避免UNIQUE constraint冲突
-        const tempMcUsername = `_temp_skip_${normalizedQQId}_${Date.now()}`;
-        const newBind: any = {
-          qqId: normalizedQQId,
-          mcUsername: tempMcUsername,
-          mcUuid: '',
-          isAdmin: false,
-          whitelist: [],
-          tags: [],
-          ...updateData
-        }
-        await mcidbindRepo.create(newBind)
-        logger.info(`[B站账号绑定] 创建绑定(跳过MC): QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}, 临时MC用户名=${tempMcUsername}`)
-      }
-      return true
-    } catch (error) {
-      logError('B站账号绑定', userId, `创建/更新B站账号绑定失败: ${error.message}`)
-      return false
-    }
-  }
-
-  // 仅更新B站信息，不更新绑定时间（用于查询时刷新数据）
-  const updateBuidInfoOnly = async (userId: string, buidUser: ZminfoUser): Promise<boolean> => {
-    try {
-      const normalizedQQId = normalizeQQId(userId)
-      if (!normalizedQQId) {
-        logger.error(`[B站账号信息更新] 更新失败: 无法提取有效的QQ号`)
-        return false
-      }
-      
-      // 查询是否已存在绑定记录
-      const bind = await getMcBindByQQId(normalizedQQId)
-      if (!bind) {
-        logger.warn(`[B站账号信息更新] QQ(${normalizedQQId})没有绑定记录，无法更新B站信息`)
-        return false
-      }
-      
-      // 仅更新B站相关字段，不更新lastModified
-      const updateData: any = {
-        buidUsername: buidUser.username,
-        guardLevel: buidUser.guard_level || 0,
-        guardLevelText: buidUser.guard_level_text || '',
-        maxGuardLevel: buidUser.max_guard_level || 0,
-        maxGuardLevelText: buidUser.max_guard_level_text || '',
-        medalName: buidUser.medal?.name || '',
-        medalLevel: buidUser.medal?.level || 0,
-        wealthMedalLevel: buidUser.wealthMedalLevel || 0,
-        lastActiveTime: buidUser.last_active_time ? new Date(buidUser.last_active_time) : new Date()
-      }
-
-      await mcidbindRepo.update(normalizedQQId, updateData)
-      logger.info(`[B站账号信息更新] 刷新信息: QQ=${normalizedQQId}, B站UID=${bind.buidUid}, 用户名=${buidUser.username}`)
-      return true
-    } catch (error) {
-      logError('B站账号信息更新', userId, `更新B站账号信息失败: ${error.message}`)
-      return false
-    }
-  }
-
-  // =========== 辅助函数 ===========
-  // RCON连接检查
-  const checkRconConnections = async (): Promise<void> => {
-    if (!config.servers || config.servers.length === 0) {
-      logger.info('[RCON检查] 未配置任何服务器，跳过RCON检查')
-      return
-    }
-
-    const results: { [id: string]: boolean } = {}
-
-    for (const server of config.servers) {
-      try {
-        logger.info(`[RCON检查] 正在检查服务器 ${server.name} (${server.rconAddress}) 的连接状态`)
-
-        // 尝试执行/list命令来测试连接 (使用RCON管理器)
-        await rconManager.executeCommand(server, 'list')
-
-        // 如果没有抛出异常，表示连接成功
-        logger.info(`[RCON检查] 服务器 ${server.name} 连接成功`)
-        results[server.id] = true
-      } catch (error) {
-        logger.error(`[RCON检查] 服务器 ${server.name} 连接失败: ${error.message}`)
-        results[server.id] = false
-      }
-    }
-
-    // 生成检查结果摘要
-    const totalServers = config.servers.length
-    const successCount = Object.values(results).filter(Boolean).length
-    const failCount = totalServers - successCount
-
-    logger.info(`[RCON检查] 检查完成: ${successCount}/${totalServers} 个服务器连接成功，${failCount} 个连接失败`)
-
-    if (failCount > 0) {
-      const failedServers = config.servers
-        .filter(server => !results[server.id])
-        .map(server => server.name)
-        .join(', ')
-
-      logger.warn(`[RCON检查] 以下服务器连接失败，白名单功能可能无法正常工作: ${failedServers}`)
-    }
-  }
-
-  // 使用Mojang API通过UUID查询用户名
-  const getUsernameByUuid = async (uuid: string): Promise<string | null> => {
-    try {
-      // 确保UUID格式正确（去除连字符）
-      const cleanUuid = uuid.replace(/-/g, '');
-
-      logger.debug(`[Mojang API] 通过UUID "${cleanUuid}" 查询用户名`);
-      const response = await axios.get(`https://api.mojang.com/user/profile/${cleanUuid}`, {
-        timeout: 10000,
-        headers: {
-          'User-Agent': 'KoishiMCVerifier/1.0',
-        }
-      });
-
-      if (response.status === 200 && response.data) {
-        // 从返回数据中提取用户名
-        const username = response.data.name;
-        logger.debug(`[Mojang API] UUID "${cleanUuid}" 当前用户名: ${username}`);
-        return username;
-      }
-
-      logger.warn(`[Mojang API] UUID "${cleanUuid}" 查询不到用户名`);
-      return null;
-    } catch (error) {
-      // 如果是网络相关错误，尝试使用备用API
-      if (axios.isAxiosError(error) && (
-        error.code === 'ENOTFOUND' ||
-        error.code === 'ETIMEDOUT' ||
-        error.code === 'ECONNRESET' ||
-        error.code === 'ECONNREFUSED' ||
-        error.code === 'ECONNABORTED' ||
-        error.response?.status === 429 || // 添加429 (Too Many Requests)
-        error.response?.status === 403)) { // 添加403 (Forbidden)
-
-        logger.info(`[Mojang API] 通过UUID查询用户名时遇到错误(${error.code || error.response?.status})，将尝试使用备用API`);
-        return getUsernameByUuidBackupAPI(uuid);
-      }
-
-      const errorMessage = axios.isAxiosError(error)
-        ? `${error.message}，响应状态: ${error.response?.status || '未知'}\n响应数据: ${JSON.stringify(error.response?.data || '无数据')}`
-        : error.message || '未知错误';
-      logger.error(`[Mojang API] 通过UUID "${uuid}" 查询用户名失败: ${errorMessage}`);
-      return null;
-    }
-  };
-
-  // 使用备用API通过UUID查询用户名
-  const getUsernameByUuidBackupAPI = async (uuid: string): Promise<string | null> => {
-    try {
-      // 确保UUID格式正确，备用API支持带连字符的UUID
-      const formattedUuid = uuid.includes('-') ? uuid : formatUuid(uuid);
-
-      logger.debug(`[备用API] 通过UUID "${formattedUuid}" 查询用户名`);
-      const response = await axios.get(`https://playerdb.co/api/player/minecraft/${formattedUuid}`, {
-        timeout: 10000,
-        headers: {
-          'User-Agent': 'KoishiMCVerifier/1.0',
-        }
-      });
-
-      if (response.status === 200 && response.data?.code === "player.found") {
-        const playerData = response.data.data.player;
-        logger.debug(`[备用API] UUID "${formattedUuid}" 当前用户名: ${playerData.username}`);
-        return playerData.username;
-      }
-
-      logger.warn(`[备用API] UUID "${formattedUuid}" 查询不到用户名: ${JSON.stringify(response.data)}`);
-      return null;
-    } catch (error) {
-      const errorMessage = axios.isAxiosError(error)
-        ? `${error.message}，响应状态: ${error.response?.status || '未知'}\n响应数据: ${JSON.stringify(error.response?.data || '无数据')}`
-        : error.message || '未知错误';
-      logger.error(`[备用API] 通过UUID "${uuid}" 查询用户名失败: ${errorMessage}`);
-      return null;
-    }
-  };
-
-  // 检查并更新用户名（如果与当前数据库中的不同）
-  const checkAndUpdateUsername = async (bind: MCIDBIND): Promise<MCIDBIND> => {
-    try {
-      if (!bind || !bind.mcUuid) {
-        logger.warn(`[用户名更新] 无法检查用户名更新: 空绑定或空UUID`);
-        return bind;
-      }
-
-      // 通过UUID查询最新用户名
-      const latestUsername = await getUsernameByUuid(bind.mcUuid);
-
-      if (!latestUsername) {
-        logger.warn(`[用户名更新] 无法获取UUID "${bind.mcUuid}" 的最新用户名`);
-        return bind;
-      }
-
-      // 如果用户名与数据库中的不同，更新数据库（使用规范化比较，不区分大小写）
-      const normalizedLatest = normalizeUsernameHelper(latestUsername)
-      const normalizedCurrent = normalizeUsernameHelper(bind.mcUsername)
-
-      if (normalizedLatest !== normalizedCurrent) {
-        logger.info(`[用户名更新] 用户 QQ(${bind.qqId}) 的Minecraft用户名已变更: ${bind.mcUsername} -> ${latestUsername}`);
-
-        // 更新数据库中的用户名
-        await ctx.database.set('mcidbind', { qqId: bind.qqId }, {
-          mcUsername: latestUsername
-        });
-
-        // 更新返回的绑定对象
-        bind.mcUsername = latestUsername;
-      }
-
-      return bind;
-    } catch (error) {
-      logger.error(`[用户名更新] 检查和更新用户名失败: ${error.message}`);
-      return bind;
-    }
-  };
-
-  /**
-   * 智能缓存版本的改名检测函数
-   * 特性：
-   * - 24小时冷却期（失败>=3次时延长到72小时）
-   * - 失败计数追踪
-   * - 成功时重置失败计数
-   * @param bind 绑定记录
-   * @returns 更新后的绑定记录
-   */
-  const checkAndUpdateUsernameWithCache = async (bind: MCIDBIND): Promise<MCIDBIND> => {
-    try {
-      if (!bind || !bind.mcUuid) {
-        logger.warn(`[改名检测缓存] 无法检查用户名更新: 空绑定或空UUID`);
-        return bind;
-      }
-
-      const now = new Date();
-      const failCount = bind.usernameCheckFailCount || 0;
-
-      // 根据失败次数决定冷却期：普通24小时，失败>=3次则72小时
-      const cooldownHours = failCount >= 3 ? 72 : 24;
-
-      // 检查是否在冷却期内
-      if (bind.usernameLastChecked) {
-        const lastCheck = new Date(bind.usernameLastChecked);
-        const hoursSinceCheck = (now.getTime() - lastCheck.getTime()) / (1000 * 60 * 60);
-
-        if (hoursSinceCheck < cooldownHours) {
-          logger.debug(`[改名检测缓存] QQ(${bind.qqId}) 在冷却期内(${hoursSinceCheck.toFixed(1)}h/${cooldownHours}h)，跳过检查`);
-          return bind;
-        }
-      }
-
-      logger.debug(`[改名检测缓存] QQ(${bind.qqId}) 开始检查用户名变更（失败计数: ${failCount}）`);
-
-      // 执行实际的改名检测
-      const oldUsername = bind.mcUsername;
-      const updatedBind = await checkAndUpdateUsername(bind);
-
-      // 判断检测是否成功
-      const detectionSuccess = updatedBind.mcUsername !== null && updatedBind.mcUsername !== undefined;
-
-      if (detectionSuccess) {
-        // 检测成功
-        const usernameChanged = normalizeUsernameHelper(updatedBind.mcUsername) !== normalizeUsernameHelper(oldUsername);
-
-        // 更新检查时间和重置失败计数
-        await mcidbindRepo.update(bind.qqId, {
-          usernameLastChecked: now,
-          usernameCheckFailCount: 0
-        });
-
-        if (usernameChanged) {
-          logger.info(`[改名检测缓存] QQ(${bind.qqId}) 用户名已变更: ${oldUsername} -> ${updatedBind.mcUsername}`);
-        } else {
-          logger.debug(`[改名检测缓存] QQ(${bind.qqId}) 用户名无变更: ${updatedBind.mcUsername}`);
-        }
-
-        // 更新返回对象的缓存字段
-        updatedBind.usernameLastChecked = now;
-        updatedBind.usernameCheckFailCount = 0;
-      } else {
-        // 检测失败��API失败或返回null）
-        const newFailCount = failCount + 1;
-
-        await mcidbindRepo.update(bind.qqId, {
-          usernameLastChecked: now,
-          usernameCheckFailCount: newFailCount
-        });
-
-        logger.warn(`[改名检测缓存] QQ(${bind.qqId}) 检测失败，失败计数: ${newFailCount}`);
-
-        // 更新返回对象的缓存字段
-        updatedBind.usernameLastChecked = now;
-        updatedBind.usernameCheckFailCount = newFailCount;
-      }
-
-      return updatedBind;
-    } catch (error) {
-      logger.error(`[改名检测缓存] 检查和更新用户名失败: ${error.message}`);
-
-      // 失败时也更新检查时间和递增失败计数
-      try {
-        const failCount = bind.usernameCheckFailCount || 0;
-        await mcidbindRepo.update(bind.qqId, {
-          usernameLastChecked: new Date(),
-          usernameCheckFailCount: failCount + 1
-        });
-      } catch (updateError) {
-        logger.error(`[改名检测缓存] 更新失败计数时出错: ${updateError.message}`);
-      }
-
-      return bind;
-    }
-  };
 
   // 安全地替换命令模板
   const safeCommandReplace = (template: string, mcid: string): string => {
@@ -2165,6 +1177,32 @@ export function apply(ctx: Context, config: IConfig) {
     return getServerConfigByName(serverIdOrName)
   }
 
+  // =========== 权限检查函数 ===========
+  // 检查用户是否为管理员
+  const isAdmin = async (userId: string): Promise<boolean> => {
+    // 主人始终是管理员
+    const normalizedMasterId = normalizeQQId(config.masterId)
+    const normalizedQQId = normalizeQQId(userId)
+
+    if (normalizedQQId === normalizedMasterId) return true
+
+    // 查询MCIDBIND表中是否是管理员
+    try {
+      const bind = await services.database.getMcBindByQQId(normalizedQQId)
+      return bind && bind.isAdmin === true
+    } catch (error) {
+      logger.error(`[权限检查] QQ(${normalizedQQId})的管理员状态查询失败: ${error.message}`)
+      return false
+    }
+  }
+
+  // 检查是否为主人 (QQ号作为主键检查)
+  const isMaster = (qqId: string): boolean => {
+    const normalizedMasterId = normalizeQQId(config.masterId)
+    const normalizedQQId = normalizeQQId(qqId)
+    return normalizedQQId === normalizedMasterId
+  }
+
   // =========== Handler 服务实例创建 ===========
   // 创建 MessageUtils 实例（暂时使用null，因为MessageUtils需要重构）
   const messageUtils = null as any
@@ -2190,59 +1228,40 @@ export function apply(ctx: Context, config: IConfig) {
     scheduleMute: scheduleMuteRepo
   }
 
-  // 创建依赖对象，包含所有wrapper函数和服务
+  // 创建依赖对象，直接传入服务实例
   const handlerDependencies: HandlerDependencies = {
-    // Utility functions
+    // ========== 核心服务实例 ==========
+    apiService: services.api,
+    databaseService: services.database,
+    nicknameService: services.nickname,
+
+    // ========== 工具函数 ==========
     normalizeQQId,
     formatCommand,
-    formatUuid,
     checkCooldown,
-    getCrafatarUrl,
-    getStarlightSkinUrl,
 
-    // Database operations (for McidCommandHandler)
-    getMcBindByQQId,
-    getMcBindByUsername,
-    createOrUpdateMcBind,
-    deleteMcBind,
-    checkUsernameExists,
-    checkAndUpdateUsername,
-    checkAndUpdateUsernameWithCache,
-
-    // API operations
-    validateUsername,
-    validateBUID,
-    updateBuidInfoOnly,
-
-    // Permission check functions
+    // ========== 权限检查函数 ==========
     isAdmin,
     isMaster,
 
-    // Business functions
+    // ========== 业务函数 ==========
     sendMessage,
-    autoSetGroupNickname,
-    checkNicknameFormat,
-    getBindInfo: getMcBindByQQId,
-
-    // Config operations
+    getFriendlyErrorMessage,
     getServerConfigById,
 
-    // Error handling
-    getFriendlyErrorMessage,
-
-    // Service instances
+    // ========== 服务实例 ==========
     rconManager,
     messageUtils,
     forceBinder,
     groupExporter,
 
-    // Session management
+    // ========== 会话管理 ==========
     getBindingSession,
     createBindingSession,
     updateBindingSession,
     removeBindingSession,
 
-    // Shared state
+    // ========== 其他共享状态 ==========
     avatarCache: new Map(Object.entries(avatarCache).map(([k, v]) => [k, v])),
     bindingSessions
   }
@@ -2252,6 +1271,7 @@ export function apply(ctx: Context, config: IConfig) {
   const tagHandler = new TagHandler(ctx, config, loggerService, repositories, handlerDependencies)
   const whitelistHandler = new WhitelistHandler(ctx, config, loggerService, repositories, handlerDependencies)
   const buidHandler = new BuidHandler(ctx, config, loggerService, repositories, handlerDependencies)
+  const lotteryHandler = new LotteryHandler(ctx, config, loggerService, repositories, handlerDependencies)
 
   // 注册Handler命令
   bindingHandler.register()
@@ -2378,7 +1398,7 @@ export function apply(ctx: Context, config: IConfig) {
       }
 
       // 获取用户绑定信息
-      const bind = await getMcBindByQQId(normalizedUserId)
+      const bind = await services.database.getMcBindByQQId(normalizedUserId)
       
       // 获取用户群昵称信息
       let currentNickname = ''
@@ -2432,7 +1452,7 @@ export function apply(ctx: Context, config: IConfig) {
       // 情况2：只绑定了B站，未绑定MC
       if (bind.buidUid && bind.buidUsername && (!bind.mcUsername || bind.mcUsername.startsWith('_temp_'))) {
         const mcInfo = null
-        const isNicknameCorrect = checkNicknameFormat(currentNickname, bind.buidUsername, mcInfo)
+        const isNicknameCorrect = services.nickname.checkNicknameFormat(currentNickname, bind.buidUsername, mcInfo)
         
         if (!isNicknameCorrect) {
           // 更新提醒次数
@@ -2444,7 +1464,7 @@ export function apply(ctx: Context, config: IConfig) {
           const reminderPrefix = `【第${reminderCount}次${reminderType}】`
 
           // 自动修改群昵称
-          await autoSetGroupNickname(session, mcInfo, bind.buidUsername, bind.buidUid)
+          await services.nickname.autoSetGroupNickname(session, mcInfo, bind.buidUsername, bind.buidUid)
           setReminderCooldown(normalizedUserId)
           logger.info(`[随机提醒] 为仅绑定B站的用户QQ(${normalizedUserId})修复群昵称并发送第${reminderCount}次${reminderType}`)
 
@@ -2457,7 +1477,7 @@ export function apply(ctx: Context, config: IConfig) {
 
       // 情况3：都已绑定，但群昵称格式不正确
       if (bind.buidUid && bind.buidUsername && bind.mcUsername && !bind.mcUsername.startsWith('_temp_')) {
-        const isNicknameCorrect = checkNicknameFormat(currentNickname, bind.buidUsername, bind.mcUsername)
+        const isNicknameCorrect = services.nickname.checkNicknameFormat(currentNickname, bind.buidUsername, bind.mcUsername)
 
         if (!isNicknameCorrect) {
           // 更新提醒次数
@@ -2469,7 +1489,7 @@ export function apply(ctx: Context, config: IConfig) {
           const reminderPrefix = `【第${reminderCount}次${reminderType}】`
           
           // 自动修改群昵称
-          await autoSetGroupNickname(session, bind.mcUsername, bind.buidUsername, bind.buidUid)
+          await services.nickname.autoSetGroupNickname(session, bind.mcUsername, bind.buidUsername, bind.buidUid)
           setReminderCooldown(normalizedUserId)
           logger.info(`[随机提醒] 为已完全绑定的用户QQ(${normalizedUserId})修复群昵称并发送第${reminderCount}次${reminderType}`)
           
@@ -2599,7 +1619,7 @@ export function apply(ctx: Context, config: IConfig) {
     // 处理跳过MC绑定，直接完成绑定流程
     if (content === '跳过' || content === 'skip') {
       // 检查用户是否已绑定B站账号
-      const existingBind = await getMcBindByQQId(normalizedUserId)
+      const existingBind = await services.database.getMcBindByQQId(normalizedUserId)
       if (existingBind && existingBind.buidUid && existingBind.buidUsername) {
         // 用户已绑定B站账号，直接完成绑定
         logger.info(`[交互绑定] QQ(${normalizedUserId})跳过了MC账号绑定，已有B站绑定，完成绑定流程`)
@@ -2609,7 +1629,7 @@ export function apply(ctx: Context, config: IConfig) {
         
         // 设置群昵称
         try {
-          await autoSetGroupNickname(session, null, existingBind.buidUsername, existingBind.buidUid)
+          await services.nickname.autoSetGroupNickname(session, null, existingBind.buidUsername, existingBind.buidUid)
           logger.info(`[交互绑定] QQ(${normalizedUserId})完成绑定，已设置群昵称`)
         } catch (renameError) {
           logger.warn(`[交互绑定] QQ(${normalizedUserId})自动群昵称设置失败: ${renameError.message}`)
@@ -2629,7 +1649,7 @@ export function apply(ctx: Context, config: IConfig) {
         const tempMcUsername = `_temp_skip_${timestamp}`
         
         // 创建临时MC绑定
-        const tempBindResult = await createOrUpdateMcBind(session.userId, tempMcUsername, '', false)
+        const tempBindResult = await services.database.createOrUpdateMcBind(session.userId, tempMcUsername, '', false)
         if (!tempBindResult) {
           logger.error(`[交互绑定] QQ(${normalizedUserId})创建临时MC绑定失败`)
           await sendMessage(session, [h.text('❌ 创建临时绑定失败，请稍后重试')])
@@ -2656,7 +1676,7 @@ export function apply(ctx: Context, config: IConfig) {
     }
     
     // 验证用户名是否存在
-    const profile = await validateUsername(content)
+    const profile = await services.api.validateUsername(content)
     if (!profile) {
       logger.warn(`[交互绑定] QQ(${normalizedUserId})输入的MC用户名"${content}"不存在`)
       await sendMessage(session, [h.text(`❌ 用户名 ${content} 不存在\n请重新输入或发送"跳过"完成绑定`)])
@@ -2667,7 +1687,7 @@ export function apply(ctx: Context, config: IConfig) {
     const uuid = profile.id
     
     // 检查用户是否已绑定MC账号
-    const existingBind = await getMcBindByQQId(normalizedUserId)
+    const existingBind = await services.database.getMcBindByQQId(normalizedUserId)
     if (existingBind && existingBind.mcUsername && !existingBind.mcUsername.startsWith('_temp_')) {
       // 检查冷却时间
       if (!await isAdmin(session.userId) && !checkCooldown(existingBind.lastModified)) {
@@ -2685,14 +1705,14 @@ export function apply(ctx: Context, config: IConfig) {
     }
     
     // 检查用户名是否已被其他人绑定
-    if (await checkUsernameExists(username, session.userId, uuid)) {
+    if (await services.database.checkUsernameExists(username, session.userId, uuid)) {
       logger.warn(`[交互绑定] MC用户名"${username}"已被其他用户绑定`)
       await sendMessage(session, [h.text(`❌ 用户名 ${username} 已被其他用户绑定\n\n请输入其他MC用户名或发送"跳过"完成绑定`)])
       return
     }
     
     // 绑定MC账号
-    const bindResult = await createOrUpdateMcBind(session.userId, username, uuid)
+    const bindResult = await services.database.createOrUpdateMcBind(session.userId, username, uuid)
     if (!bindResult) {
       logger.error(`[交互绑定] QQ(${normalizedUserId})绑定MC账号失败`)
       removeBindingSession(session.userId, session.channelId)
@@ -2703,7 +1723,7 @@ export function apply(ctx: Context, config: IConfig) {
     logger.info(`[交互绑定] QQ(${normalizedUserId})成功绑定MC账号: ${username}`)
     
     // 检查用户是否已经绑定了B站账号
-    const updatedBind = await getMcBindByQQId(normalizedUserId)
+    const updatedBind = await services.database.getMcBindByQQId(normalizedUserId)
     if (updatedBind && updatedBind.buidUid && updatedBind.buidUsername) {
       // 用户已经绑定了B站账号，直接完成绑定流程
       logger.info(`[交互绑定] QQ(${normalizedUserId})已绑定B站账号，完成绑定流程`)
@@ -2713,7 +1733,7 @@ export function apply(ctx: Context, config: IConfig) {
       
       // 设置群昵称
       try {
-        await autoSetGroupNickname(session, username, updatedBind.buidUsername, updatedBind.buidUid)
+        await services.nickname.autoSetGroupNickname(session, username, updatedBind.buidUsername, updatedBind.buidUid)
         logger.info(`[交互绑定] QQ(${normalizedUserId})绑定完成，已设置群昵称`)
       } catch (renameError) {
         logger.warn(`[交互绑定] QQ(${normalizedUserId})自动群昵称设置失败: ${renameError.message}`)
@@ -2723,9 +1743,9 @@ export function apply(ctx: Context, config: IConfig) {
       let mcAvatarUrl = null
       if (config?.showAvatar) {
         if (config?.showMcSkin) {
-          mcAvatarUrl = getStarlightSkinUrl(username)
+          mcAvatarUrl = services.api.getStarlightSkinUrl(username)
         } else {
-          mcAvatarUrl = getCrafatarUrl(uuid)
+          mcAvatarUrl = services.api.getCrafatarUrl(uuid)
         }
       }
       
@@ -2749,13 +1769,13 @@ export function apply(ctx: Context, config: IConfig) {
     let mcAvatarUrl = null
     if (config?.showAvatar) {
       if (config?.showMcSkin) {
-        mcAvatarUrl = getStarlightSkinUrl(username)
+        mcAvatarUrl = services.api.getStarlightSkinUrl(username)
       } else {
-        mcAvatarUrl = getCrafatarUrl(uuid)
+        mcAvatarUrl = services.api.getCrafatarUrl(uuid)
       }
     }
     
-    const formattedUuid = formatUuid(uuid)
+    const formattedUuid = services.api.formatUuid(uuid)
     
     // 发送简化的MC绑定成功消息
     await sendMessage(session, [
@@ -2817,14 +1837,14 @@ export function apply(ctx: Context, config: IConfig) {
     }
     
     // 检查UID是否已被绑定
-    if (await checkBuidExists(actualUid, session.userId)) {
+    if (await services.database.checkBuidExists(actualUid, session.userId)) {
       logger.warn(`[交互绑定] B站UID"${actualUid}"已被其他用户绑定`)
       await sendMessage(session, [h.text(`❌ UID ${actualUid} 已被其他用户绑定\n\n请输入其他B站UID\n或发送"跳过"仅绑定MC账号`)])
       return
     }
     
     // 验证UID是否存在
-    const buidUser = await validateBUID(actualUid)
+    const buidUser = await services.api.validateBUID(actualUid)
     if (!buidUser) {
       logger.warn(`[交互绑定] QQ(${normalizedUserId})输入的B站UID"${actualUid}"不存在`)
       await sendMessage(session, [h.text(`❌ 无法验证UID: ${actualUid}\n\n该用户可能不存在或未被发现\n可以去直播间发个弹幕后重试绑定\n或发送"跳过"仅绑定MC账号`)])
@@ -2832,7 +1852,7 @@ export function apply(ctx: Context, config: IConfig) {
     }
     
     // 绑定B站账号
-    const bindResult = await createOrUpdateBuidBind(session.userId, buidUser)
+    const bindResult = await services.database.createOrUpdateBuidBind(session.userId, buidUser)
     if (!bindResult) {
       logger.error(`[交互绑定] QQ(${normalizedUserId})绑定B站账号失败`)
       removeBindingSession(session.userId, session.channelId)
@@ -2853,7 +1873,7 @@ export function apply(ctx: Context, config: IConfig) {
     try {
       // 检查是否有有效的MC用户名（不是临时用户名）
       const mcName = bindingSession.mcUsername && !bindingSession.mcUsername.startsWith('_temp_') ? bindingSession.mcUsername : null
-      await autoSetGroupNickname(session, mcName, buidUser.username, String(buidUser.uid))
+      await services.nickname.autoSetGroupNickname(session, mcName, buidUser.username, String(buidUser.uid))
       logger.info(`[交互绑定] QQ(${normalizedUserId})绑定完成，已设置群昵称`)
     } catch (renameError) {
       logger.warn(`[交互绑定] QQ(${normalizedUserId})自动群昵称设置失败: ${renameError.message}`)
@@ -2926,215 +1946,4 @@ export function apply(ctx: Context, config: IConfig) {
   }
 
 
-  // =========== 天选开奖 Webhook 处理 ===========
-  
-  // 处理天选开奖结果
-  const handleLotteryResult = async (lotteryData: LotteryResult): Promise<void> => {
-    try {
-      // 检查天选播报开关
-      if (!config?.enableLotteryBroadcast) {
-        logger.debug(`[天选开奖] 天选播报功能已禁用，跳过处理天选事件: ${lotteryData.lottery_id}`)
-        return
-      }
-      
-      logger.info(`[天选开奖] 开始处理天选事件: ${lotteryData.lottery_id}，奖品: ${lotteryData.reward_name}，中奖人数: ${lotteryData.winners.length}`)
-      
-      // 生成标签名称
-      const tagName = `天选-${lotteryData.lottery_id}`
-      
-      // 统计信息
-      let matchedCount = 0
-      let notBoundCount = 0
-      let tagAddedCount = 0
-      let tagExistedCount = 0
-      const matchedUsers: Array<{qqId: string, mcUsername: string, buidUsername: string, uid: number, username: string}> = []
-      
-      // 处理每个中奖用户
-      for (const winner of lotteryData.winners) {
-        try {
-          // 根据B站UID查找绑定的QQ用户
-          const bind = await getBuidBindByBuid(winner.uid.toString())
-          
-          if (bind && bind.qqId) {
-            matchedCount++
-            matchedUsers.push({
-              qqId: bind.qqId,
-              mcUsername: bind.mcUsername || '未绑定MC',
-              buidUsername: bind.buidUsername,
-              uid: winner.uid,
-              username: winner.username
-            })
-            
-            // 检查是否已有该标签
-            if (bind.tags && bind.tags.includes(tagName)) {
-              tagExistedCount++
-              logger.debug(`[天选开奖] QQ(${bind.qqId})已有标签"${tagName}"`)
-            } else {
-              // 添加标签
-              const newTags = [...(bind.tags || []), tagName]
-              await mcidbindRepo.update(bind.qqId, { tags: newTags })
-              tagAddedCount++
-              logger.debug(`[天选开奖] 为QQ(${bind.qqId})添加标签"${tagName}"`)
-            }
-          } else {
-            notBoundCount++
-            logger.debug(`[天选开奖] B站UID(${winner.uid})未绑定QQ账号`)
-          }
-        } catch (error) {
-          logger.error(`[天选开奖] 处理中奖用户UID(${winner.uid})时出错: ${error.message}`)
-        }
-      }
-      
-      logger.info(`[天选开奖] 处理完成: 总计${lotteryData.winners.length}人中奖，匹配${matchedCount}人，未绑定${notBoundCount}人，新增标签${tagAddedCount}人，已有标签${tagExistedCount}人`)
-      
-      // 生成并发送结果消息
-      await sendLotteryResultToGroup(lotteryData, {
-        totalWinners: lotteryData.winners.length,
-        matchedCount,
-        notBoundCount,
-        tagAddedCount,
-        tagExistedCount,
-        matchedUsers,
-        tagName
-      })
-      
-    } catch (error) {
-      logger.error(`[天选开奖] 处理天选事件"${lotteryData.lottery_id}"失败: ${error.message}`)
-    }
-  }
-  
-  // 发送天选开奖结果到群
-  const sendLotteryResultToGroup = async (
-    lotteryData: LotteryResult, 
-    stats: {
-      totalWinners: number
-      matchedCount: number
-      notBoundCount: number
-      tagAddedCount: number
-      tagExistedCount: number
-      matchedUsers: Array<{qqId: string, mcUsername: string, buidUsername: string, uid: number, username: string}>
-      tagName: string
-    }
-  ): Promise<void> => {
-    try {
-      const targetChannelId = '123456789' // 目标群号
-      const privateTargetId = 'private:3431185320' // 私聊目标
-      
-      // 格式化时间
-      const lotteryTime = new Date(lotteryData.timestamp).toLocaleString('zh-CN', { 
-        timeZone: 'Asia/Shanghai',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-      })
-      
-      // 构建简化版群消息（去掉主播信息、统计信息和标签提示）
-      let groupMessage = `🎉 天选开奖结果通知\n\n`
-      groupMessage += `📅 开奖时间: ${lotteryTime}\n`
-      groupMessage += `🎁 奖品名称: ${lotteryData.reward_name}\n`
-      groupMessage += `📊 奖品数量: ${lotteryData.reward_num}个\n`
-      groupMessage += `🎲 总中奖人数: ${stats.totalWinners}人`
-      
-      // 添加未绑定用户说明
-      if (stats.notBoundCount > 0) {
-        groupMessage += `（其中${stats.notBoundCount}人未绑定跳过）`
-      }
-      groupMessage += `\n\n`
-      
-      // 如果有匹配的用户，显示详细信息
-      if (stats.matchedUsers.length > 0) {
-        groupMessage += `🎯 已绑定的中奖用户:\n`
-        
-        // 限制显示前10个用户，避免消息过长
-        const displayUsers = stats.matchedUsers.slice(0, 10)
-        for (let i = 0; i < displayUsers.length; i++) {
-          const user = displayUsers[i]
-          const index = i + 1
-          const displayMcName = user.mcUsername && !user.mcUsername.startsWith('_temp_') ? user.mcUsername : '未绑定'
-          groupMessage += `${index}. ${user.buidUsername} (UID: ${user.uid})\n`
-          groupMessage += `   QQ: ${user.qqId} | MC: ${displayMcName}\n`
-        }
-        
-        // 如果用户太多，显示省略信息
-        if (stats.matchedUsers.length > 10) {
-          groupMessage += `... 还有${stats.matchedUsers.length - 10}位中奖用户\n`
-        }
-      } else {
-        groupMessage += `😔 暂无已绑定用户中奖\n`
-      }
-      
-      // 构建完整版私聊消息（包含所有信息和未绑定用户）
-      let privateMessage = `🎉 天选开奖结果通知\n\n`
-      privateMessage += `📅 开奖时间: ${lotteryTime}\n`
-      privateMessage += `🎁 奖品名称: ${lotteryData.reward_name}\n`
-      privateMessage += `📊 奖品数量: ${lotteryData.reward_num}个\n`
-      privateMessage += `🏷️ 事件ID: ${lotteryData.lottery_id}\n`
-      privateMessage += `👤 主播: ${lotteryData.host_username} (UID: ${lotteryData.host_uid})\n`
-      privateMessage += `🏠 房间号: ${lotteryData.room_id}\n\n`
-      
-      // 统计信息
-      privateMessage += `📈 处理统计:\n`
-      privateMessage += `• 总中奖人数: ${stats.totalWinners}人\n`
-      privateMessage += `• 已绑定用户: ${stats.matchedCount}人 ✅\n`
-      privateMessage += `• 未绑定用户: ${stats.notBoundCount}人 ⚠️\n`
-      privateMessage += `• 新增标签: ${stats.tagAddedCount}人\n`
-      privateMessage += `• 已有标签: ${stats.tagExistedCount}人\n\n`
-      
-      // 显示所有中奖用户（包括未绑定的）
-      if (lotteryData.winners.length > 0) {
-        privateMessage += `🎯 所有中奖用户:\n`
-        
-        for (let i = 0; i < lotteryData.winners.length; i++) {
-          const winner = lotteryData.winners[i]
-          const index = i + 1
-          
-          // 查找对应的绑定用户
-          const matchedUser = stats.matchedUsers.find(user => user.uid === winner.uid)
-          
-          if (matchedUser) {
-            const displayMcName = matchedUser.mcUsername && !matchedUser.mcUsername.startsWith('_temp_') ? matchedUser.mcUsername : '未绑定'
-            privateMessage += `${index}. ${winner.username} (UID: ${winner.uid})\n`
-            privateMessage += `   QQ: ${matchedUser.qqId} | MC: ${displayMcName}\n`
-          } else {
-            privateMessage += `${index}. ${winner.username} (UID: ${winner.uid})\n`
-            privateMessage += `   无绑定信息，自动跳过\n`
-          }
-        }
-        
-        privateMessage += `\n🏷️ 标签"${stats.tagName}"已自动添加到已绑定用户\n`
-      }
-      
-      // 准备消息元素
-      const groupMessageElements = [h.text(groupMessage)]
-      const privateMessageElements = [h.text(privateMessage)]
-      
-      // 发送消息到指定群（简化版）
-      for (const bot of ctx.bots) {
-        try {
-          await bot.sendMessage(targetChannelId, groupMessageElements)
-          logger.info(`[天选开奖] 成功发送简化开奖结果到群${targetChannelId}`)
-          break // 成功发送后退出循环
-        } catch (error) {
-          logger.error(`[天选开奖] 发送消息到群${targetChannelId}失败: ${error.message}`)
-        }
-      }
-      
-      // 发送消息到私聊（完整版）
-      for (const bot of ctx.bots) {
-        try {
-          await bot.sendMessage(privateTargetId, privateMessageElements)
-          logger.info(`[天选开奖] 成功发送完整开奖结果到私聊${privateTargetId}`)
-          break // 成功发送后退出循环
-        } catch (error) {
-          logger.error(`[天选开奖] 发送消息到私聊${privateTargetId}失败: ${error.message}`)
-        }
-      }
-      
-    } catch (error) {
-      logger.error(`[天选开奖] 发送开奖结果失败: ${error.message}`)
-    }
-  }
 }
