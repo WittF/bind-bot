@@ -386,3 +386,25 @@ export function isSameUsername(username1: string, username2: string): boolean {
   if (!username1 || !username2) return false
   return normalizeUsername(username1) === normalizeUsername(username2)
 }
+
+/**
+ * 从群昵称中提取B站用户名
+ * 用于解析标准格式的群昵称：B站名称（ID:MC名称）
+ *
+ * @param nickname 群昵称字符串
+ * @returns B站用户名，如果格式不匹配返回 null
+ *
+ * @example
+ * extractBuidUsernameFromNickname("张三（ID:Steve）") // => "张三"
+ * extractBuidUsernameFromNickname("李四（ID:未绑定）") // => "李四"
+ * extractBuidUsernameFromNickname("无效格式") // => null
+ */
+export function extractBuidUsernameFromNickname(nickname: string): string | null {
+  if (!nickname) return null
+
+  // 匹配格式：任意内容（ID:任意内容）
+  // 使用非贪婪匹配 .+? 确保正确提取第一个括号前的内容
+  const match = nickname.match(/^(.+?)（ID:.+）$/)
+
+  return match ? match[1].trim() : null
+}

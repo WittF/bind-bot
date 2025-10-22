@@ -257,7 +257,7 @@ export class McidCommandHandler extends BaseHandler {
     // 异步设置群昵称
     if (bind.buidUid && bind.buidUsername) {
       const mcName = bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? bind.mcUsername : null
-      this.deps.autoSetGroupNickname(session, mcName, bind.buidUsername, targetId || undefined)
+      this.deps.autoSetGroupNickname(session, mcName, bind.buidUsername, bind.buidUid, targetId || undefined)
         .catch(err => this.logger.warn('查询', `群昵称设置失败: ${err.message}`))
     } else {
       this.logger.info('查询', `QQ(${bind.qqId})未绑定B站账号，跳过群昵称设置`)
@@ -414,7 +414,7 @@ export class McidCommandHandler extends BaseHandler {
     try {
       const latestTargetBind = await this.deps.getMcBindByQQId(normalizedTargetId)
       if (latestTargetBind && latestTargetBind.buidUid && latestTargetBind.buidUsername) {
-        await this.deps.autoSetGroupNickname(session, username, latestTargetBind.buidUsername, normalizedTargetId)
+        await this.deps.autoSetGroupNickname(session, username, latestTargetBind.buidUsername, latestTargetBind.buidUid, normalizedTargetId)
         this.logger.info('绑定', `管理员QQ(${operatorId})为QQ(${normalizedTargetId})MC绑定完成，已尝试设置群昵称`)
         targetBuidStatus = '\n✅ 该用户已绑定B站账号，群昵称已更新'
       } else {
@@ -491,7 +491,7 @@ export class McidCommandHandler extends BaseHandler {
     try {
       const latestBind = await this.deps.getMcBindByQQId(operatorId)
       if (latestBind && latestBind.buidUid && latestBind.buidUsername) {
-        await this.deps.autoSetGroupNickname(session, username, latestBind.buidUsername)
+        await this.deps.autoSetGroupNickname(session, username, latestBind.buidUsername, latestBind.buidUid)
         this.logger.info('绑定', `QQ(${operatorId})MC绑定完成，已尝试设置群昵称`)
       } else {
         buidReminder = `\n\n💡 提醒：您还未绑定B站账号，建议使用 ${this.deps.formatCommand('buid bind <B站UID>')} 完成B站绑定以享受完整功能`
@@ -1008,7 +1008,7 @@ export class McidCommandHandler extends BaseHandler {
 
           if (!isCorrect) {
             // 修复群昵称
-            await this.deps.autoSetGroupNickname(session, mcInfo, bind.buidUsername, bind.qqId, targetGroupId)
+            await this.deps.autoSetGroupNickname(session, mcInfo, bind.buidUsername, bind.buidUid, bind.qqId, targetGroupId)
             fixedCount++
 
             const expectedFormat = `${bind.buidUsername}（ID:${mcInfo || '未绑定'}）`

@@ -19,6 +19,7 @@ import {
   cleanUserInput as cleanUserInputHelper,
   normalizeUsername as normalizeUsernameHelper,
   isSameUsername as isSameUsernameHelper,
+  extractBuidUsernameFromNickname,
   escapeRegExp,
   levenshteinDistance,
   calculateSimilarity
@@ -335,52 +336,121 @@ export function apply(ctx: Context, config: IConfig) {
   }
 
   // 自动群昵称设置功能
-  const autoSetGroupNickname = async (session: Session, mcUsername: string | null, buidUsername: string, targetUserId?: string, specifiedGroupId?: string): Promise<void> => {
+  const autoSetGroupNickname = async (session: Session, mcUsername: string | null, buidUsername: string, buidUid?: string, targetUserId?: string, specifiedGroupId?: string): Promise<void> => {
     try {
       // 如果指定了目标用户ID，使用目标用户ID，否则使用session的用户ID
       const actualUserId = targetUserId || session.userId
       const normalizedUserId = normalizeQQId(actualUserId)
-      
+
       // 根据MC绑定状态设置不同的格式（临时用户名视为未绑定）
       const mcInfo = (mcUsername && !mcUsername.startsWith('_temp_')) ? mcUsername : "未绑定"
-      const newNickname = `${buidUsername}（ID:${mcInfo}）`
+      let currentBuidUsername = buidUsername
+      const newNickname = `${currentBuidUsername}（ID:${mcInfo}）`
       // 使用指定的群ID，如果没有指定则使用配置的默认群ID
       const targetGroupId = specifiedGroupId || config.autoNicknameGroupId
-      
+
       logger.debug(`[群昵称设置] 开始处理QQ(${normalizedUserId})的群昵称设置，目标群: ${targetGroupId}`)
       logger.debug(`[群昵称设置] 期望昵称: "${newNickname}"`)
-      
+
       if (session.bot.internal && targetGroupId) {
         // 使用规范化的QQ号调用OneBot API
         logger.debug(`[群昵称设置] 使用用户ID: ${normalizedUserId}`)
-        
+
         // 先获取当前群昵称进行比对
         try {
           logger.debug(`[群昵称设置] 正在获取QQ(${normalizedUserId})在群${targetGroupId}的当前昵称...`)
           const currentGroupInfo = await session.bot.internal.getGroupMemberInfo(targetGroupId, normalizedUserId)
           const currentNickname = currentGroupInfo.card || currentGroupInfo.nickname || ''
           logger.debug(`[群昵称设置] 当前昵称: "${currentNickname}"`)
-          
+
           // 如果当前昵称和目标昵称一致，跳过修改
           if (currentNickname === newNickname) {
             logger.info(`[群昵称设置] QQ(${normalizedUserId})群昵称已经是"${newNickname}"，跳过修改`)
             return
           }
-          
+
+          // 昵称不一致，先尝试获取最新的B站用户信息
+          if (buidUid) {
+            logger.debug(`[群昵称设置] 检测到昵称不一致，尝试获取B站UID ${buidUid} 的最新信息...`)
+
+            // 1. 提取当前群昵称中的B站用户名
+            const currentNicknameUsername = extractBuidUsernameFromNickname(currentNickname)
+            logger.debug(`[群昵称设置] 从当前群昵称"${currentNickname}"中提取到B站名称: ${currentNicknameUsername || '(无法提取)'}`)
+
+            try {
+              const latestBuidUser = await validateBUID(buidUid)
+              if (latestBuidUser && latestBuidUser.username) {
+                logger.debug(`[群昵称设置] API返回B站用户名: "${latestBuidUser.username}"`)
+
+                // 2. 智能三层判断
+
+                // 情况A: API返回 == 当前群昵称中的名称
+                if (currentNicknameUsername && latestBuidUser.username === currentNicknameUsername) {
+                  logger.info(`[群昵称设置] ✅ 当前群昵称"${currentNickname}"已包含正确的B站名称"${currentNicknameUsername}"`)
+
+                  // 群昵称已经正确，仅需更新数据库（如果数据库是旧的）
+                  if (latestBuidUser.username !== buidUsername) {
+                    logger.info(`[群昵称设置] 数据库中的B站名称需要更新: "${buidUsername}" → "${latestBuidUser.username}"`)
+                    try {
+                      await updateBuidInfoOnly(normalizedUserId, latestBuidUser)
+                      logger.info(`[群昵称设置] 已更新数据库中的B站用户名`)
+                    } catch (updateError) {
+                      logger.warn(`[群昵称设置] 更新数据库失败: ${updateError.message}`)
+                    }
+                  } else {
+                    logger.debug(`[群昵称设置] 数据库中的B站名称已是最新，无需更新`)
+                  }
+
+                  // 跳过群昵称修改
+                  logger.info(`[群昵称设置] 群昵称格式正确且名称最新，跳过修改`)
+                  return
+                }
+
+                // 情况B: API返回 == 数据库（都是旧的）
+                if (latestBuidUser.username === buidUsername) {
+                  logger.warn(`[群昵称设置] ⚠️ API返回的B站名称"${latestBuidUser.username}"与数据库一致，但与群昵称不符`)
+                  logger.warn(`[群昵称设置] 可能是API缓存未刷新，采用保守策略：不修改群昵称`)
+                  return
+                }
+
+                // 情况C: API返回新数据（!= 群昵称 且 != 数据库）
+                logger.info(`[群昵称设置] 检测到B站用户名已更新: "${buidUsername}" → "${latestBuidUser.username}"`)
+                currentBuidUsername = latestBuidUser.username
+
+                // 更新数据库中的B站信息
+                try {
+                  await updateBuidInfoOnly(normalizedUserId, latestBuidUser)
+                  logger.info(`[群昵称设置] 已更新数据库中的B站用户名为: ${currentBuidUsername}`)
+                } catch (updateError) {
+                  logger.warn(`[群昵称设置] 更新数据库中的B站用户名失败: ${updateError.message}`)
+                  // 即使更新数据库失败，也继续使用最新的用户名设置昵称
+                }
+              } else {
+                logger.warn(`[群昵称设置] 获取最新B站用户信息失败，使用数据库中的用户名: ${currentBuidUsername}`)
+              }
+            } catch (validateError) {
+              logger.warn(`[群昵称设置] 获取最新B站用户信息时出错: ${validateError.message}，使用数据库中的用户名: ${currentBuidUsername}`)
+              // API调用失败时降级处理，使用数据库中的旧名称
+            }
+          }
+
+          // 使用（可能已更新的）用户名重新生成昵称
+          const finalNickname = `${currentBuidUsername}（ID:${mcInfo}）`
+
           // 昵称不一致，执行修改
-          logger.debug(`[群昵称设置] 昵称不一致，正在修改群昵称...`)
-          await session.bot.internal.setGroupCard(targetGroupId, normalizedUserId, newNickname)
-          logger.info(`[群昵称设置] 成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称从"${currentNickname}"修改为"${newNickname}"`)
+          logger.debug(`[群昵称设置] 昵称不一致，正在修改群昵称为: "${finalNickname}"`)
+          await session.bot.internal.setGroupCard(targetGroupId, normalizedUserId, finalNickname)
+          logger.info(`[群昵称设置] 成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称从"${currentNickname}"修改为"${finalNickname}"`)
           
           // 验证设置是否生效 - 再次获取群昵称确认
           try {
             await new Promise(resolve => setTimeout(resolve, 1000)) // 等待1秒
             const verifyGroupInfo = await session.bot.internal.getGroupMemberInfo(targetGroupId, normalizedUserId)
             const verifyNickname = verifyGroupInfo.card || verifyGroupInfo.nickname || ''
-            if (verifyNickname === newNickname) {
+            if (verifyNickname === finalNickname) {
               logger.info(`[群昵称设置] ✅ 验证成功，群昵称已生效: "${verifyNickname}"`)
             } else {
-              logger.warn(`[群昵称设置] ⚠️ 验证失败，期望"${newNickname}"，实际"${verifyNickname}"，可能是权限不足或API延迟`)
+              logger.warn(`[群昵称设置] ⚠️ 验证失败，期望"${finalNickname}"，实际"${verifyNickname}"，可能是权限不足或API延迟`)
             }
           } catch (verifyError) {
             logger.warn(`[群昵称设置] 无法验证群昵称设置结果: ${verifyError.message}`)
@@ -390,20 +460,56 @@ export function apply(ctx: Context, config: IConfig) {
           logger.warn(`[群昵称设置] 获取QQ(${normalizedUserId})当前群昵称失败: ${getInfoError.message}`)
           logger.warn(`[群昵称设置] 错误详情: ${JSON.stringify(getInfoError)}`)
           logger.debug(`[群昵称设置] 将直接尝试设置新昵称...`)
-          
+
+          // 如果传入了 buidUid，尝试获取最新的B站用户信息
+          if (buidUid) {
+            logger.debug(`[群昵称设置] 尝试获取B站UID ${buidUid} 的最新信息...`)
+            try {
+              const latestBuidUser = await validateBUID(buidUid)
+              if (latestBuidUser && latestBuidUser.username) {
+                logger.debug(`[群昵称设置] API返回B站用户名: "${latestBuidUser.username}"`)
+
+                // 智能判断：API返回 == 数据库（都是旧的）
+                if (latestBuidUser.username === buidUsername) {
+                  logger.warn(`[群昵称设置] ⚠️ API返回的B站名称"${latestBuidUser.username}"与数据库一致`)
+                  logger.warn(`[群昵称设置] 可能是API缓存未刷新，且无法获取当前群昵称，采用保守策略：跳过修改`)
+                  return
+                }
+
+                // API返回新数据（!= 数据库）
+                logger.info(`[群昵称设置] 检测到B站用户名已更新: "${buidUsername}" → "${latestBuidUser.username}"`)
+                currentBuidUsername = latestBuidUser.username
+
+                // 更新数据库
+                try {
+                  await updateBuidInfoOnly(normalizedUserId, latestBuidUser)
+                  logger.info(`[群昵称设置] 已更新数据库中的B站用户名为: ${currentBuidUsername}`)
+                } catch (updateError) {
+                  logger.warn(`[群昵称设置] 更新数据库失败: ${updateError.message}`)
+                }
+              } else {
+                logger.warn(`[群昵称设置] 获取最新B站用户信息失败`)
+              }
+            } catch (validateError) {
+              logger.warn(`[群昵称设置] 获取最新B站用户信息失败: ${validateError.message}`)
+            }
+          }
+
           try {
-          await session.bot.internal.setGroupCard(targetGroupId, normalizedUserId, newNickname)
-          logger.info(`[群昵称设置] 成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称设置为: ${newNickname}`)
-            
+          // 使用（可能已更新的）用户名生成昵称
+          const fallbackNickname = `${currentBuidUsername}（ID:${mcInfo}）`
+          await session.bot.internal.setGroupCard(targetGroupId, normalizedUserId, fallbackNickname)
+          logger.info(`[群昵称设置] 成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称设置为: ${fallbackNickname}`)
+
             // 验证设置是否生效
             try {
               await new Promise(resolve => setTimeout(resolve, 1000)) // 等待1秒
               const verifyGroupInfo = await session.bot.internal.getGroupMemberInfo(targetGroupId, normalizedUserId)
               const verifyNickname = verifyGroupInfo.card || verifyGroupInfo.nickname || ''
-              if (verifyNickname === newNickname) {
+              if (verifyNickname === fallbackNickname) {
                 logger.info(`[群昵称设置] ✅ 验证成功，群昵称已生效: "${verifyNickname}"`)
               } else {
-                logger.warn(`[群昵称设置] ⚠️ 验证失败，期望"${newNickname}"，实际"${verifyNickname}"，可能是权限不足`)
+                logger.warn(`[群昵称设置] ⚠️ 验证失败，期望"${fallbackNickname}"，实际"${verifyNickname}"，可能是权限不足`)
                 logger.warn(`[群昵称设置] 建议检查: 1.机器人是否为群管理员 2.群设置是否允许管理员修改昵称 3.OneBot实现是否支持该功能`)
               }
             } catch (verifyError) {
@@ -424,7 +530,7 @@ export function apply(ctx: Context, config: IConfig) {
       const actualUserId = targetUserId || session.userId
       const normalizedUserId = normalizeQQId(actualUserId)
       logger.error(`[群昵称设置] QQ(${normalizedUserId})自动群昵称设置失败: ${error.message}`)
-      logger.error(`[群昵称设置] 完整错误信息: ${JSON.stringify(error)}`)
+      logger.error(`[群昵称称设置] 完整错误信息: ${JSON.stringify(error)}`)
     }
   }
 
@@ -2338,7 +2444,7 @@ export function apply(ctx: Context, config: IConfig) {
           const reminderPrefix = `【第${reminderCount}次${reminderType}】`
 
           // 自动修改群昵称
-          await autoSetGroupNickname(session, mcInfo, bind.buidUsername)
+          await autoSetGroupNickname(session, mcInfo, bind.buidUsername, bind.buidUid)
           setReminderCooldown(normalizedUserId)
           logger.info(`[随机提醒] 为仅绑定B站的用户QQ(${normalizedUserId})修复群昵称并发送第${reminderCount}次${reminderType}`)
 
@@ -2363,7 +2469,7 @@ export function apply(ctx: Context, config: IConfig) {
           const reminderPrefix = `【第${reminderCount}次${reminderType}】`
           
           // 自动修改群昵称
-          await autoSetGroupNickname(session, bind.mcUsername, bind.buidUsername)
+          await autoSetGroupNickname(session, bind.mcUsername, bind.buidUsername, bind.buidUid)
           setReminderCooldown(normalizedUserId)
           logger.info(`[随机提醒] 为已完全绑定的用户QQ(${normalizedUserId})修复群昵称并发送第${reminderCount}次${reminderType}`)
           
@@ -2503,7 +2609,7 @@ export function apply(ctx: Context, config: IConfig) {
         
         // 设置群昵称
         try {
-          await autoSetGroupNickname(session, null, existingBind.buidUsername)
+          await autoSetGroupNickname(session, null, existingBind.buidUsername, existingBind.buidUid)
           logger.info(`[交互绑定] QQ(${normalizedUserId})完成绑定，已设置群昵称`)
         } catch (renameError) {
           logger.warn(`[交互绑定] QQ(${normalizedUserId})自动群昵称设置失败: ${renameError.message}`)
@@ -2607,7 +2713,7 @@ export function apply(ctx: Context, config: IConfig) {
       
       // 设置群昵称
       try {
-        await autoSetGroupNickname(session, username, updatedBind.buidUsername)
+        await autoSetGroupNickname(session, username, updatedBind.buidUsername, updatedBind.buidUid)
         logger.info(`[交互绑定] QQ(${normalizedUserId})绑定完成，已设置群昵称`)
       } catch (renameError) {
         logger.warn(`[交互绑定] QQ(${normalizedUserId})自动群昵称设置失败: ${renameError.message}`)
@@ -2747,7 +2853,7 @@ export function apply(ctx: Context, config: IConfig) {
     try {
       // 检查是否有有效的MC用户名（不是临时用户名）
       const mcName = bindingSession.mcUsername && !bindingSession.mcUsername.startsWith('_temp_') ? bindingSession.mcUsername : null
-      await autoSetGroupNickname(session, mcName, buidUser.username)
+      await autoSetGroupNickname(session, mcName, buidUser.username, String(buidUser.uid))
       logger.info(`[交互绑定] QQ(${normalizedUserId})绑定完成，已设置群昵称`)
     } catch (renameError) {
       logger.warn(`[交互绑定] QQ(${normalizedUserId})自动群昵称设置失败: ${renameError.message}`)

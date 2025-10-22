@@ -53,6 +53,7 @@ export interface HandlerDependencies {
     session: Session,
     mcUsername: string | null,
     buidUsername: string,
+    buidUid?: string,
     targetUserId?: string,
     specifiedGroupId?: string
   ) => Promise<void>
