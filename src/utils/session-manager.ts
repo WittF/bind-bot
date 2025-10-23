@@ -66,7 +66,14 @@ export class SessionManager {
       // 发送超时消息，@用户
       const normalizedUser = normalizeQQId(userId)
       this.ctx.bots.forEach(bot => {
-        bot.sendMessage(channelId, [h.at(normalizedUser), h.text(' 绑定会话已超时，请重新开始绑定流程\n\n⚠️ 温馨提醒：若在管理员多次提醒后仍不配合绑定账号信息，将按群规进行相应处理。')]).catch(() => {})
+        bot
+          .sendMessage(channelId, [
+            h.at(normalizedUser),
+            h.text(
+              ' 绑定会话已超时，请重新开始绑定流程\n\n⚠️ 温馨提醒：若在管理员多次提醒后仍不配合绑定账号信息，将按群规进行相应处理。'
+            )
+          ])
+          .catch(() => {})
       })
       this.logger.info('交互绑定', `QQ(${normalizedUser})的绑定会话因超时被清理`, true)
     }, this.sessionTimeout)

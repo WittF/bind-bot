@@ -22,15 +22,21 @@ export class ApiService {
   async validateUsername(username: string): Promise<MojangProfile | null> {
     try {
       this.logger.debug('Mojang API', `开始验证用户名: ${username}`)
-      const response = await axios.get(`https://api.mojang.com/users/profiles/minecraft/${username}`, {
-        timeout: 10000, // 添加10秒超时
-        headers: {
-          'User-Agent': 'KoishiMCVerifier/1.0', // 添加User-Agent头
+      const response = await axios.get(
+        `https://api.mojang.com/users/profiles/minecraft/${username}`,
+        {
+          timeout: 10000, // 添加10秒超时
+          headers: {
+            'User-Agent': 'KoishiMCVerifier/1.0' // 添加User-Agent头
+          }
         }
-      })
+      )
 
       if (response.status === 200 && response.data) {
-        this.logger.debug('Mojang API', `用户名"${username}"验证成功，UUID: ${response.data.id}，标准名称: ${response.data.name}`)
+        this.logger.debug(
+          'Mojang API',
+          `用户名"${username}"验证成功，UUID: ${response.data.id}，标准名称: ${response.data.name}`
+        )
         return {
           id: response.data.id,
           name: response.data.name // 使用Mojang返回的正确大小写
@@ -47,24 +53,30 @@ export class ApiService {
         // 记录更详细的错误信息
         const errorMessage = axios.isAxiosError(error)
           ? `${error.message}，响应状态: ${error.response?.status || '未知'}\n响应数据: ${JSON.stringify(error.response?.data || '无数据')}`
-          : error.message || '未知错误';
+          : error.message || '未知错误'
         this.logger.error('Mojang API', `验证用户名"${username}"时发生错误: ${errorMessage}`)
 
         // 如果是网络相关错误，尝试使用备用API检查
-        if (axios.isAxiosError(error) && (
-            error.code === 'ENOTFOUND' ||
+        if (
+          axios.isAxiosError(error) &&
+          (error.code === 'ENOTFOUND' ||
             error.code === 'ETIMEDOUT' ||
             error.code === 'ECONNRESET' ||
             error.code === 'ECONNREFUSED' ||
             error.code === 'ECONNABORTED' ||
             error.response?.status === 429 || // 添加429 (Too Many Requests)
-            error.response?.status === 403)) { // 添加403 (Forbidden)
+            error.response?.status === 403)
+        ) {
+          // 添加403 (Forbidden)
           // 尝试使用playerdb.co作为备用API
-          this.logger.info('Mojang API', `遇到错误(${error.code || error.response?.status})，将尝试使用备用API`)
-          return this.tryBackupAPI(username);
+          this.logger.info(
+            'Mojang API',
+            `遇到错误(${error.code || error.response?.status})，将尝试使用备用API`
+          )
+          return this.tryBackupAPI(username)
         }
       }
-      return null;
+      return null
     }
   }
 
@@ -77,30 +89,39 @@ export class ApiService {
     this.logger.info('备用API', `尝试使用备用API验证用户名"${username}"`)
     try {
       // 使用playerdb.co作为备用API
-      const backupResponse = await axios.get(`https://playerdb.co/api/player/minecraft/${username}`, {
-        timeout: 10000,
-        headers: {
-          'User-Agent': 'KoishiMCVerifier/1.0'
+      const backupResponse = await axios.get(
+        `https://playerdb.co/api/player/minecraft/${username}`,
+        {
+          timeout: 10000,
+          headers: {
+            'User-Agent': 'KoishiMCVerifier/1.0'
+          }
         }
-      })
+      )
 
-      if (backupResponse.status === 200 && backupResponse.data?.code === "player.found") {
-        const playerData = backupResponse.data.data.player;
-        const rawId = playerData.raw_id || playerData.id.replace(/-/g, ''); // 确保使用不带连字符的UUID
-        this.logger.info('备用API', `用户名"${username}"验证成功，UUID: ${rawId}，标准名称: ${playerData.username}`)
+      if (backupResponse.status === 200 && backupResponse.data?.code === 'player.found') {
+        const playerData = backupResponse.data.data.player
+        const rawId = playerData.raw_id || playerData.id.replace(/-/g, '') // 确保使用不带连字符的UUID
+        this.logger.info(
+          '备用API',
+          `用户名"${username}"验证成功，UUID: ${rawId}，标准名称: ${playerData.username}`
+        )
         return {
           id: rawId, // 确保使用不带连字符的UUID
           name: playerData.username
         }
       }
-      this.logger.warn('备用API', `用户名"${username}"验证失败: ${JSON.stringify(backupResponse.data)}`)
-      return null;
+      this.logger.warn(
+        '备用API',
+        `用户名"${username}"验证失败: ${JSON.stringify(backupResponse.data)}`
+      )
+      return null
     } catch (backupError) {
       const errorMsg = axios.isAxiosError(backupError)
         ? `${backupError.message}, 状态码: ${backupError.response?.status || '未知'}`
-        : backupError.message || '未知错误';
+        : backupError.message || '未知错误'
       this.logger.error('备用API', `验证用户名"${username}"失败: ${errorMsg}`)
-      return null;
+      return null
     }
   }
 
@@ -112,45 +133,51 @@ export class ApiService {
   async getUsernameByUuid(uuid: string): Promise<string | null> {
     try {
       // 确保UUID格式正确（去除连字符）
-      const cleanUuid = uuid.replace(/-/g, '');
+      const cleanUuid = uuid.replace(/-/g, '')
 
-      this.logger.debug('Mojang API', `通过UUID "${cleanUuid}" 查询用户名`);
+      this.logger.debug('Mojang API', `通过UUID "${cleanUuid}" 查询用户名`)
       const response = await axios.get(`https://api.mojang.com/user/profile/${cleanUuid}`, {
         timeout: 10000,
         headers: {
-          'User-Agent': 'KoishiMCVerifier/1.0',
+          'User-Agent': 'KoishiMCVerifier/1.0'
         }
-      });
+      })
 
       if (response.status === 200 && response.data) {
         // 从返回数据中提取用户名
-        const username = response.data.name;
-        this.logger.debug('Mojang API', `UUID "${cleanUuid}" 当前用户名: ${username}`);
-        return username;
+        const username = response.data.name
+        this.logger.debug('Mojang API', `UUID "${cleanUuid}" 当前用户名: ${username}`)
+        return username
       }
 
-      this.logger.warn('Mojang API', `UUID "${cleanUuid}" 查询不到用户名`);
-      return null;
+      this.logger.warn('Mojang API', `UUID "${cleanUuid}" 查询不到用户名`)
+      return null
     } catch (error) {
       // 如果是网络相关错误，尝试使用备用API
-      if (axios.isAxiosError(error) && (
-        error.code === 'ENOTFOUND' ||
-        error.code === 'ETIMEDOUT' ||
-        error.code === 'ECONNRESET' ||
-        error.code === 'ECONNREFUSED' ||
-        error.code === 'ECONNABORTED' ||
-        error.response?.status === 429 || // 添加429 (Too Many Requests)
-        error.response?.status === 403)) { // 添加403 (Forbidden)
+      if (
+        axios.isAxiosError(error) &&
+        (error.code === 'ENOTFOUND' ||
+          error.code === 'ETIMEDOUT' ||
+          error.code === 'ECONNRESET' ||
+          error.code === 'ECONNREFUSED' ||
+          error.code === 'ECONNABORTED' ||
+          error.response?.status === 429 || // 添加429 (Too Many Requests)
+          error.response?.status === 403)
+      ) {
+        // 添加403 (Forbidden)
 
-        this.logger.info('Mojang API', `通过UUID查询用户名时遇到错误(${error.code || error.response?.status})，将尝试使用备用API`);
-        return this.getUsernameByUuidBackupAPI(uuid);
+        this.logger.info(
+          'Mojang API',
+          `通过UUID查询用户名时遇到错误(${error.code || error.response?.status})，将尝试使用备用API`
+        )
+        return this.getUsernameByUuidBackupAPI(uuid)
       }
 
       const errorMessage = axios.isAxiosError(error)
         ? `${error.message}，响应状态: ${error.response?.status || '未知'}\n响应数据: ${JSON.stringify(error.response?.data || '无数据')}`
-        : error.message || '未知错误';
-      this.logger.error('Mojang API', `通过UUID "${uuid}" 查询用户名失败: ${errorMessage}`);
-      return null;
+        : error.message || '未知错误'
+      this.logger.error('Mojang API', `通过UUID "${uuid}" 查询用户名失败: ${errorMessage}`)
+      return null
     }
   }
 
@@ -162,30 +189,36 @@ export class ApiService {
   private async getUsernameByUuidBackupAPI(uuid: string): Promise<string | null> {
     try {
       // 确保UUID格式正确，备用API支持带连字符的UUID
-      const formattedUuid = uuid.includes('-') ? uuid : this.formatUuid(uuid);
+      const formattedUuid = uuid.includes('-') ? uuid : this.formatUuid(uuid)
 
-      this.logger.debug('备用API', `通过UUID "${formattedUuid}" 查询用户名`);
-      const response = await axios.get(`https://playerdb.co/api/player/minecraft/${formattedUuid}`, {
-        timeout: 10000,
-        headers: {
-          'User-Agent': 'KoishiMCVerifier/1.0',
+      this.logger.debug('备用API', `通过UUID "${formattedUuid}" 查询用户名`)
+      const response = await axios.get(
+        `https://playerdb.co/api/player/minecraft/${formattedUuid}`,
+        {
+          timeout: 10000,
+          headers: {
+            'User-Agent': 'KoishiMCVerifier/1.0'
+          }
         }
-      });
+      )
 
-      if (response.status === 200 && response.data?.code === "player.found") {
-        const playerData = response.data.data.player;
-        this.logger.debug('备用API', `UUID "${formattedUuid}" 当前用户名: ${playerData.username}`);
-        return playerData.username;
+      if (response.status === 200 && response.data?.code === 'player.found') {
+        const playerData = response.data.data.player
+        this.logger.debug('备用API', `UUID "${formattedUuid}" 当前用户名: ${playerData.username}`)
+        return playerData.username
       }
 
-      this.logger.warn('备用API', `UUID "${formattedUuid}" 查询不到用户名: ${JSON.stringify(response.data)}`);
-      return null;
+      this.logger.warn(
+        '备用API',
+        `UUID "${formattedUuid}" 查询不到用户名: ${JSON.stringify(response.data)}`
+      )
+      return null
     } catch (error) {
       const errorMessage = axios.isAxiosError(error)
         ? `${error.message}，响应状态: ${error.response?.status || '未知'}\n响应数据: ${JSON.stringify(error.response?.data || '无数据')}`
-        : error.message || '未知错误';
-      this.logger.error('备用API', `通过UUID "${uuid}" 查询用户名失败: ${errorMessage}`);
-      return null;
+        : error.message || '未知错误'
+      this.logger.error('备用API', `通过UUID "${uuid}" 查询用户名失败: ${errorMessage}`)
+      return null
     }
   }
 
@@ -205,13 +238,14 @@ export class ApiService {
 
       this.logger.debug('B站官方API', `开始查询UID ${uid} 的官方信息`)
 
-      const response = await axios.get(`https://api.bilibili.com/x/space/acc/info`, {
+      const response = await axios.get('https://api.bilibili.com/x/space/acc/info', {
         params: { mid: uid },
         timeout: 10000,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Referer': 'https://space.bilibili.com/',
-          'Origin': 'https://space.bilibili.com'
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          Referer: 'https://space.bilibili.com/',
+          Origin: 'https://space.bilibili.com'
         }
       })
 
@@ -224,7 +258,10 @@ export class ApiService {
           mid: userData.mid
         }
       } else {
-        this.logger.warn('B站官方API', `UID ${uid} 查询失败: ${response.data.message || '未知错误'}`)
+        this.logger.warn(
+          'B站官方API',
+          `UID ${uid} 查询失败: ${response.data.message || '未知错误'}`
+        )
         return null
       }
     } catch (error) {
@@ -269,7 +306,10 @@ export class ApiService {
         this.logger.debug('B站账号验证', `B站UID ${buid} 验证成功: ${user.username}`)
         return user
       } else {
-        this.logger.warn('B站账号验证', `B站UID ${buid} 不存在或API返回失败: ${response.data.message}`)
+        this.logger.warn(
+          'B站账号验证',
+          `B站UID ${buid} 不存在或API返回失败: ${response.data.message}`
+        )
         return null
       }
     } catch (error) {
@@ -294,7 +334,8 @@ export class ApiService {
     if (!uuid) return null
 
     // 检查UUID格式 (不带连字符应为32位，带连字符应为36位)
-    const uuidRegex = /^[0-9a-f]{32}$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    const uuidRegex =
+      /^[0-9a-f]{32}$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
     if (!uuidRegex.test(uuid)) {
       this.logger.warn('MC头图', `UUID "${uuid}" 格式无效，无法生成头图URL`)
       return null
@@ -320,22 +361,22 @@ export class ApiService {
 
     // 可用的动作列表 (共16种)
     const poses = [
-      'default',    // 默认站立
-      'marching',   // 行军
-      'walking',    // 行走
-      'crouching',  // 下蹲
-      'crossed',    // 交叉手臂
+      'default', // 默认站立
+      'marching', // 行军
+      'walking', // 行走
+      'crouching', // 下蹲
+      'crossed', // 交叉手臂
       'crisscross', // 交叉腿
-      'cheering',   // 欢呼
-      'relaxing',   // 放松
-      'trudging',   // 艰难行走
-      'cowering',   // 退缩
-      'pointing',   // 指向
-      'lunging',    // 前冲
-      'dungeons',   // 地下城风格
-      'facepalm',   // 捂脸
-      'mojavatar',  // Mojave姿态
-      'head',   // 头部特写
+      'cheering', // 欢呼
+      'relaxing', // 放松
+      'trudging', // 艰难行走
+      'cowering', // 退缩
+      'pointing', // 指向
+      'lunging', // 前冲
+      'dungeons', // 地下城风格
+      'facepalm', // 捂脸
+      'mojavatar', // Mojave姿态
+      'head' // 头部特写
     ]
 
     // 随机选择一个动作

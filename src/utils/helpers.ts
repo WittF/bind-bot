@@ -19,7 +19,7 @@ import { Logger, Session } from 'koishi'
 export function normalizeQQId(userId: string, logger?: Logger): string {
   // 处理空值情况
   if (!userId) {
-    logger?.warn(`[用户ID] 收到空用户ID`)
+    logger?.warn('[用户ID] 收到空用户ID')
     return ''
   }
 
@@ -28,7 +28,7 @@ export function normalizeQQId(userId: string, logger?: Logger): string {
   // 检查是否是手动输入的@符号（错误用法）
   if (userId.startsWith('@') && !userId.match(/<at\s+id="[^"]+"\s*\/>/)) {
     logger?.warn(`[用户ID] 检测到手动输入的@符号"${userId}"，应使用真正的@功能`)
-    return ''  // 返回空字符串表示无效
+    return '' // 返回空字符串表示无效
   }
 
   // 处理 <at id="..."/> 格式的@用户字符串
@@ -48,7 +48,7 @@ export function normalizeQQId(userId: string, logger?: Logger): string {
   // 验证提取的ID是否为纯数字QQ号
   if (!/^\d+$/.test(extractedId)) {
     logger?.warn(`[用户ID] 提取的ID"${extractedId}"不是有效的QQ号(必须为纯数字)，来源: ${userId}`)
-    return ''  // 返回空字符串表示无效
+    return '' // 返回空字符串表示无效
   }
 
   // 检查QQ号长度是否合理(QQ号通常为5-12位数字)
@@ -70,10 +70,10 @@ export function normalizeQQId(userId: string, logger?: Logger): string {
 export function formatCommand(cmd: string, allowTextPrefix: boolean, botNickname: string): string {
   if (allowTextPrefix && botNickname) {
     // 检查botNickname是否已经包含@符号，避免重复添加
-    const nickname = botNickname.startsWith('@') ? botNickname : `@${botNickname}`;
-    return `${nickname} ${cmd}`;
+    const nickname = botNickname.startsWith('@') ? botNickname : `@${botNickname}`
+    return `${nickname} ${cmd}`
   }
-  return cmd;
+  return cmd
 }
 
 /**
@@ -102,7 +102,11 @@ export function formatUuid(uuid: string, logger?: Logger): string {
  * @param multiplier 倍数（用于B站UID冷却时间）
  * @returns 是否已过冷却期
  */
-export function checkCooldown(lastModified: Date | null, cooldownDays: number, multiplier: number = 1): boolean {
+export function checkCooldown(
+  lastModified: Date | null,
+  cooldownDays: number,
+  multiplier: number = 1
+): boolean {
   if (!lastModified) return true
   const now = new Date()
   const diffTime = now.getTime() - lastModified.getTime()
@@ -148,22 +152,22 @@ export function getStarlightSkinUrl(username: string, logger?: Logger): string |
 
   // 可用的动作列表 (共16种)
   const poses = [
-    'default',    // 默认站立
-    'marching',   // 行军
-    'walking',    // 行走
-    'crouching',  // 下蹲
-    'crossed',    // 交叉手臂
+    'default', // 默认站立
+    'marching', // 行军
+    'walking', // 行走
+    'crouching', // 下蹲
+    'crossed', // 交叉手臂
     'crisscross', // 交叉腿
-    'cheering',   // 欢呼
-    'relaxing',   // 放松
-    'trudging',   // 艰难行走
-    'cowering',   // 退缩
-    'pointing',   // 指向
-    'lunging',    // 前冲
-    'dungeons',   // 地下城风格
-    'facepalm',   // 捂脸
-    'mojavatar',  // Mojave姿态
-    'head',   // 头部特写
+    'cheering', // 欢呼
+    'relaxing', // 放松
+    'trudging', // 艰难行走
+    'cowering', // 退缩
+    'pointing', // 指向
+    'lunging', // 前冲
+    'dungeons', // 地下城风格
+    'facepalm', // 捂脸
+    'mojavatar', // Mojave姿态
+    'head' // 头部特写
   ]
 
   // 随机选择一个动作
@@ -185,11 +189,46 @@ export function getStarlightSkinUrl(username: string, logger?: Logger): string |
  * @param content 用户输入内容
  * @returns 是否为无关输入
  */
-export function checkIrrelevantInput(state: 'waiting_mc_username' | 'waiting_buid', content: string): boolean {
+export function checkIrrelevantInput(
+  state: 'waiting_mc_username' | 'waiting_buid',
+  content: string
+): boolean {
   if (!content) return false
 
   // 常见的聊天用语或明显无关的内容
-  const chatKeywords = ['你好', 'hello', 'hi', '在吗', '在不在', '怎么样', '什么', '为什么', '好的', '谢谢', '哈哈', '呵呵', '早上好', '晚上好', '晚安', '再见', '拜拜', '666', '牛', '厉害', '真的吗', '不是吧', '哇', '哦', '嗯', '好吧', '行', '可以', '没事', '没问题', '没关系']
+  const chatKeywords = [
+    '你好',
+    'hello',
+    'hi',
+    '在吗',
+    '在不在',
+    '怎么样',
+    '什么',
+    '为什么',
+    '好的',
+    '谢谢',
+    '哈哈',
+    '呵呵',
+    '早上好',
+    '晚上好',
+    '晚安',
+    '再见',
+    '拜拜',
+    '666',
+    '牛',
+    '厉害',
+    '真的吗',
+    '不是吧',
+    '哇',
+    '哦',
+    '嗯',
+    '好吧',
+    '行',
+    '可以',
+    '没事',
+    '没问题',
+    '没关系'
+  ]
   const lowercaseContent = content.toLowerCase()
 
   // 检查是否包含明显的聊天用语
@@ -198,8 +237,10 @@ export function checkIrrelevantInput(state: 'waiting_mc_username' | 'waiting_bui
   }
 
   // 检查是否为明显的聊天模式（多个连续的标点符号、表情等）
-  if (/[！？。，；：""''（）【】〈〉《》「」『』〔〕〖〗〘〙〚〛]{2,}/.test(content) ||
-      /[!?.,;:"'()[\]<>{}]{3,}/.test(content)) {
+  if (
+    /[！？。，；：""''（）【】〈〉《》「」『』〔〕〖〗〘〙〚〛]{2,}/.test(content) ||
+    /[!?.,;:"'()[\]<>{}]{3,}/.test(content)
+  ) {
     return true
   }
 
@@ -219,7 +260,12 @@ export function checkIrrelevantInput(state: 'waiting_mc_username' | 'waiting_bui
       return true
     }
     // 如果是明显的指令格式
-    if (content.startsWith('.') || content.startsWith('/') || content.startsWith('mcid') || content.startsWith('buid')) {
+    if (
+      content.startsWith('.') ||
+      content.startsWith('/') ||
+      content.startsWith('mcid') ||
+      content.startsWith('buid')
+    ) {
       return true
     }
   } else if (state === 'waiting_buid') {
@@ -236,7 +282,12 @@ export function checkIrrelevantInput(state: 'waiting_mc_username' | 'waiting_bui
         return true
       }
       // 如果是明显的指令格式
-      if (content.startsWith('.') || content.startsWith('/') || content.startsWith('mcid') || content.startsWith('buid')) {
+      if (
+        content.startsWith('.') ||
+        content.startsWith('/') ||
+        content.startsWith('mcid') ||
+        content.startsWith('buid')
+      ) {
         return true
       }
     }
@@ -262,7 +313,12 @@ export function escapeRegExp(string: string): string {
  * @param logger Koishi Logger实例（用于日志）
  * @returns 清理后的输入内容
  */
-export function cleanUserInput(content: string, session: Session, botNickname: string, logger?: Logger): string {
+export function cleanUserInput(
+  content: string,
+  session: Session,
+  botNickname: string,
+  logger?: Logger
+): string {
   if (!content) return content
 
   // 获取机器人的用户ID
@@ -275,7 +331,7 @@ export function cleanUserInput(content: string, session: Session, botNickname: s
     // @Bot昵称 格式（如果配置了botNickname）
     botNickname ? new RegExp(`^@${escapeRegExp(botNickname)}\\s+`, 'i') : null,
     // @botUserId 格式
-    new RegExp(`^@${escapeRegExp(botUserId)}\\s+`, 'i'),
+    new RegExp(`^@${escapeRegExp(botUserId)}\\s+`, 'i')
   ].filter(Boolean)
 
   let cleanedContent = content.trim()
@@ -320,8 +376,8 @@ export function levenshteinDistance(str1: string, str2: string): number {
       } else {
         matrix[i][j] = Math.min(
           matrix[i - 1][j - 1] + 1, // 替换
-          matrix[i][j - 1] + 1,     // 插入
-          matrix[i - 1][j] + 1      // 删除
+          matrix[i][j - 1] + 1, // 插入
+          matrix[i - 1][j] + 1 // 删除
         )
       }
     }
@@ -353,7 +409,7 @@ export function calculateSimilarity(str1: string, str2: string): number {
  */
 export function normalizeUsername(username: string, logger?: Logger): string {
   if (!username) {
-    logger?.warn(`[用户名规范化] 收到空用户名`)
+    logger?.warn('[用户名规范化] 收到空用户名')
     return ''
   }
 

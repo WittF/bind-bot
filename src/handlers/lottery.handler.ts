@@ -41,11 +41,18 @@ export class LotteryHandler extends BaseHandler {
     try {
       // 检查天选播报开关
       if (!this.config?.enableLotteryBroadcast) {
-        this.logger.debug('天选开奖', `天选播报功能已禁用，跳过处理天选事件: ${lotteryData.lottery_id}`)
+        this.logger.debug(
+          '天选开奖',
+          `天选播报功能已禁用，跳过处理天选事件: ${lotteryData.lottery_id}`
+        )
         return
       }
 
-      this.logger.info('天选开奖', `开始处理天选事件: ${lotteryData.lottery_id}，奖品: ${lotteryData.reward_name}，中奖人数: ${lotteryData.winners.length}`, true)
+      this.logger.info(
+        '天选开奖',
+        `开始处理天选事件: ${lotteryData.lottery_id}，奖品: ${lotteryData.reward_name}，中奖人数: ${lotteryData.winners.length}`,
+        true
+      )
 
       // 生成标签名称
       const tagName = `天选-${lotteryData.lottery_id}`
@@ -55,7 +62,13 @@ export class LotteryHandler extends BaseHandler {
       let notBoundCount = 0
       let tagAddedCount = 0
       let tagExistedCount = 0
-      const matchedUsers: Array<{qqId: string, mcUsername: string, buidUsername: string, uid: number, username: string}> = []
+      const matchedUsers: Array<{
+        qqId: string
+        mcUsername: string
+        buidUsername: string
+        uid: number
+        username: string
+      }> = []
 
       // 处理每个中奖用户
       for (const winner of lotteryData.winners) {
@@ -93,7 +106,11 @@ export class LotteryHandler extends BaseHandler {
         }
       }
 
-      this.logger.info('天选开奖', `处理完成: 总计${lotteryData.winners.length}人中奖，匹配${matchedCount}人，未绑定${notBoundCount}人，新增标签${tagAddedCount}人，已有标签${tagExistedCount}人`, true)
+      this.logger.info(
+        '天选开奖',
+        `处理完成: 总计${lotteryData.winners.length}人中奖，匹配${matchedCount}人，未绑定${notBoundCount}人，新增标签${tagAddedCount}人，已有标签${tagExistedCount}人`,
+        true
+      )
 
       // 生成并发送结果消息
       await this.sendLotteryResultToGroup(lotteryData, {
@@ -105,7 +122,6 @@ export class LotteryHandler extends BaseHandler {
         matchedUsers,
         tagName
       })
-
     } catch (error) {
       this.logger.error('天选开奖', `处理天选事件"${lotteryData.lottery_id}"失败: ${error.message}`)
     }
@@ -128,7 +144,10 @@ export class LotteryHandler extends BaseHandler {
   /**
    * 发送天选开奖结果到群
    */
-  private async sendLotteryResultToGroup(lotteryData: LotteryResult, stats: LotteryStats): Promise<void> {
+  private async sendLotteryResultToGroup(
+    lotteryData: LotteryResult,
+    stats: LotteryStats
+  ): Promise<void> {
     try {
       // 从配置中获取目标群号和私聊目标
       const targetChannelId = this.config?.lotteryTargetGroupId || ''
@@ -152,7 +171,7 @@ export class LotteryHandler extends BaseHandler {
       })
 
       // 构建简化版群消息（去掉主播信息、统计信息和标签提示）
-      let groupMessage = `🎉 天选开奖结果通知\n\n`
+      let groupMessage = '🎉 天选开奖结果通知\n\n'
       groupMessage += `📅 开奖时间: ${lotteryTime}\n`
       groupMessage += `🎁 奖品名称: ${lotteryData.reward_name}\n`
       groupMessage += `📊 奖品数量: ${lotteryData.reward_num}个\n`
@@ -162,18 +181,19 @@ export class LotteryHandler extends BaseHandler {
       if (stats.notBoundCount > 0) {
         groupMessage += `（其中${stats.notBoundCount}人未绑定跳过）`
       }
-      groupMessage += `\n\n`
+      groupMessage += '\n\n'
 
       // 如果有匹配的用户，显示详细信息
       if (stats.matchedUsers.length > 0) {
-        groupMessage += `🎯 已绑定的中奖用户:\n`
+        groupMessage += '🎯 已绑定的中奖用户:\n'
 
         // 限制显示前10个用户，避免消息过长
         const displayUsers = stats.matchedUsers.slice(0, 10)
         for (let i = 0; i < displayUsers.length; i++) {
           const user = displayUsers[i]
           const index = i + 1
-          const displayMcName = user.mcUsername && !user.mcUsername.startsWith('_temp_') ? user.mcUsername : '未绑定'
+          const displayMcName =
+            user.mcUsername && !user.mcUsername.startsWith('_temp_') ? user.mcUsername : '未绑定'
           groupMessage += `${index}. ${user.buidUsername} (UID: ${user.uid})\n`
           groupMessage += `   QQ: ${user.qqId} | MC: ${displayMcName}\n`
         }
@@ -183,11 +203,11 @@ export class LotteryHandler extends BaseHandler {
           groupMessage += `... 还有${stats.matchedUsers.length - 10}位中奖用户\n`
         }
       } else {
-        groupMessage += `😔 暂无已绑定用户中奖\n`
+        groupMessage += '😔 暂无已绑定用户中奖\n'
       }
 
       // 构建完整版私聊消息（包含所有信息和未绑定用户）
-      let privateMessage = `🎉 天选开奖结果通知\n\n`
+      let privateMessage = '🎉 天选开奖结果通知\n\n'
       privateMessage += `📅 开奖时间: ${lotteryTime}\n`
       privateMessage += `🎁 奖品名称: ${lotteryData.reward_name}\n`
       privateMessage += `📊 奖品数量: ${lotteryData.reward_num}个\n`
@@ -196,7 +216,7 @@ export class LotteryHandler extends BaseHandler {
       privateMessage += `🏠 房间号: ${lotteryData.room_id}\n\n`
 
       // 统计信息
-      privateMessage += `📈 处理统计:\n`
+      privateMessage += '📈 处理统计:\n'
       privateMessage += `• 总中奖人数: ${stats.totalWinners}人\n`
       privateMessage += `• 已绑定用户: ${stats.matchedCount}人 ✅\n`
       privateMessage += `• 未绑定用户: ${stats.notBoundCount}人 ⚠️\n`
@@ -205,7 +225,7 @@ export class LotteryHandler extends BaseHandler {
 
       // 显示所有中奖用户（包括未绑定的）
       if (lotteryData.winners.length > 0) {
-        privateMessage += `🎯 所有中奖用户:\n`
+        privateMessage += '🎯 所有中奖用户:\n'
 
         for (let i = 0; i < lotteryData.winners.length; i++) {
           const winner = lotteryData.winners[i]
@@ -215,12 +235,15 @@ export class LotteryHandler extends BaseHandler {
           const matchedUser = stats.matchedUsers.find(user => user.uid === winner.uid)
 
           if (matchedUser) {
-            const displayMcName = matchedUser.mcUsername && !matchedUser.mcUsername.startsWith('_temp_') ? matchedUser.mcUsername : '未绑定'
+            const displayMcName =
+              matchedUser.mcUsername && !matchedUser.mcUsername.startsWith('_temp_')
+                ? matchedUser.mcUsername
+                : '未绑定'
             privateMessage += `${index}. ${winner.username} (UID: ${winner.uid})\n`
             privateMessage += `   QQ: ${matchedUser.qqId} | MC: ${displayMcName}\n`
           } else {
             privateMessage += `${index}. ${winner.username} (UID: ${winner.uid})\n`
-            privateMessage += `   无绑定信息，自动跳过\n`
+            privateMessage += '   无绑定信息，自动跳过\n'
           }
         }
 
@@ -256,7 +279,6 @@ export class LotteryHandler extends BaseHandler {
           }
         }
       }
-
     } catch (error) {
       this.logger.error('天选开奖', `发送开奖结果失败: ${error.message}`)
     }

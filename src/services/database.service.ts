@@ -2,7 +2,14 @@ import { Context } from 'koishi'
 import { LoggerService } from '../utils/logger'
 import { MCIDBINDRepository } from '../repositories/mcidbind.repository'
 import { normalizeUsername as normalizeUsernameHelper } from '../utils/helpers'
-import type { MCIDBIND, ZminfoUser, UpdateMcBindData, UpdateBuidBindData, UpdateBuidInfoData, CreateBindData } from '../types'
+import type {
+  MCIDBIND,
+  ZminfoUser,
+  UpdateMcBindData,
+  UpdateBuidBindData,
+  UpdateBuidInfoData,
+  CreateBindData
+} from '../types'
 
 /**
  * 数据库服务层
@@ -26,7 +33,7 @@ export class DatabaseService {
     try {
       // 处理空值
       if (!qqId) {
-        this.logger.warn('MCIDBIND', `尝试查询空QQ号`)
+        this.logger.warn('MCIDBIND', '尝试查询空QQ号')
         return null
       }
 
@@ -45,7 +52,7 @@ export class DatabaseService {
   async getMcBindByUsername(mcUsername: string): Promise<MCIDBIND | null> {
     // 处理空值
     if (!mcUsername) {
-      this.logger.warn('MCIDBIND', `尝试查询空MC用户名`)
+      this.logger.warn('MCIDBIND', '尝试查询空MC用户名')
       return null
     }
 
@@ -56,22 +63,27 @@ export class DatabaseService {
   /**
    * 创建或更新 MC 绑定
    */
-  async createOrUpdateMcBind(userId: string, mcUsername: string, mcUuid: string, isAdmin?: boolean): Promise<boolean> {
+  async createOrUpdateMcBind(
+    userId: string,
+    mcUsername: string,
+    mcUuid: string,
+    isAdmin?: boolean
+  ): Promise<boolean> {
     try {
       // 验证输入参数
       if (!userId) {
-        this.logger.error('MCIDBIND', `创建/更新绑定失败: 无效的用户ID`)
+        this.logger.error('MCIDBIND', '创建/更新绑定失败: 无效的用户ID')
         return false
       }
 
       if (!mcUsername) {
-        this.logger.error('MCIDBIND', `创建/更新绑定失败: 无效的MC用户名`)
+        this.logger.error('MCIDBIND', '创建/更新绑定失败: 无效的MC用户名')
         return false
       }
 
       const normalizedQQId = this.normalizeQQId(userId)
       if (!normalizedQQId) {
-        this.logger.error('MCIDBIND', `创建/更新绑定失败: 无法提取有效的QQ号`)
+        this.logger.error('MCIDBIND', '创建/更新绑定失败: 无法提取有效的QQ号')
         return false
       }
 
@@ -92,7 +104,11 @@ export class DatabaseService {
         }
 
         await this.mcidbindRepo.update(normalizedQQId, updateData)
-        this.logger.info('MCIDBIND', `更新绑定: QQ=${normalizedQQId}, MC用户名=${mcUsername}, UUID=${mcUuid}`, true)
+        this.logger.info(
+          'MCIDBIND',
+          `更新绑定: QQ=${normalizedQQId}, MC用户名=${mcUsername}, UUID=${mcUuid}`,
+          true
+        )
         return true
       } else {
         // 创建新记录
@@ -104,15 +120,25 @@ export class DatabaseService {
             lastModified: new Date(),
             isAdmin: isAdmin || false
           })
-          this.logger.info('MCIDBIND', `创建绑定: QQ=${normalizedQQId}, MC用户名=${mcUsername}, UUID=${mcUuid}`, true)
+          this.logger.info(
+            'MCIDBIND',
+            `创建绑定: QQ=${normalizedQQId}, MC用户名=${mcUsername}, UUID=${mcUuid}`,
+            true
+          )
           return true
         } catch (createError) {
-          this.logger.error('MCIDBIND', `创建绑定失败: MC用户名=${mcUsername}, 错误=${createError.message}`)
+          this.logger.error(
+            'MCIDBIND',
+            `创建绑定失败: MC用户名=${mcUsername}, 错误=${createError.message}`
+          )
           return false
         }
       }
     } catch (error) {
-      this.logger.error('MCIDBIND', `创建/更新绑定失败: MC用户名=${mcUsername}, 错误=${error.message}`)
+      this.logger.error(
+        'MCIDBIND',
+        `创建/更新绑定失败: MC用户名=${mcUsername}, 错误=${error.message}`
+      )
       return false
     }
   }
@@ -124,13 +150,13 @@ export class DatabaseService {
     try {
       // 验证输入参数
       if (!userId) {
-        this.logger.error('MCIDBIND', `删除绑定失败: 无效的用户ID`)
+        this.logger.error('MCIDBIND', '删除绑定失败: 无效的用户ID')
         return false
       }
 
       const normalizedQQId = this.normalizeQQId(userId)
       if (!normalizedQQId) {
-        this.logger.error('MCIDBIND', `删除绑定失败: 无法提取有效的QQ号`)
+        this.logger.error('MCIDBIND', '删除绑定失败: 无法提取有效的QQ号')
         return false
       }
 
@@ -165,11 +191,15 @@ export class DatabaseService {
   /**
    * 检查 MC 用户名是否已被其他 QQ 号绑定（支持不区分大小写和 UUID 检查）
    */
-  async checkUsernameExists(username: string, currentUserId?: string, uuid?: string): Promise<boolean> {
+  async checkUsernameExists(
+    username: string,
+    currentUserId?: string,
+    uuid?: string
+  ): Promise<boolean> {
     try {
       // 验证输入参数
       if (!username) {
-        this.logger.warn('绑定检查', `尝试检查空MC用户名`)
+        this.logger.warn('绑定检查', '尝试检查空MC用户名')
         return false
       }
 
@@ -196,7 +226,11 @@ export class DatabaseService {
 
         if (cleanUuid === bindCleanUuid) {
           // 同一个 UUID，说明是用户改名，允许绑定
-          this.logger.info('绑定检查', `检测到MC账号改名: UUID=${uuid}, 旧用户名=${bind.mcUsername}, 新用户名=${username}`, true)
+          this.logger.info(
+            '绑定检查',
+            `检测到MC账号改名: UUID=${uuid}, 旧用户名=${bind.mcUsername}, 新用户名=${username}`,
+            true
+          )
           return false
         }
       }
@@ -223,7 +257,7 @@ export class DatabaseService {
   async getBuidBindByBuid(buid: string): Promise<MCIDBIND | null> {
     try {
       if (!buid) {
-        this.logger.warn('B站账号绑定', `尝试查询空B站UID`)
+        this.logger.warn('B站账号绑定', '尝试查询空B站UID')
         return null
       }
 
@@ -263,21 +297,24 @@ export class DatabaseService {
     try {
       const normalizedQQId = this.normalizeQQId(userId)
       if (!normalizedQQId) {
-        this.logger.error('B站账号绑定', `创建/更新绑定失败: 无法提取有效的QQ号`)
+        this.logger.error('B站账号绑定', '创建/更新绑定失败: 无法提取有效的QQ号')
         return false
       }
 
       // 检查该UID是否已被其他用户绑定（安全检查）
       const existingBuidBind = await this.getBuidBindByBuid(buidUser.uid)
       if (existingBuidBind && existingBuidBind.qqId !== normalizedQQId) {
-        this.logger.error('B站账号绑定', `安全检查失败: B站UID ${buidUser.uid} 已被QQ(${existingBuidBind.qqId})绑定，无法为QQ(${normalizedQQId})绑定`)
+        this.logger.error(
+          'B站账号绑定',
+          `安全检查失败: B站UID ${buidUser.uid} 已被QQ(${existingBuidBind.qqId})绑定，无法为QQ(${normalizedQQId})绑定`
+        )
         return false
       }
 
       // 查询是否已存在绑定记录
       let bind = await this.getMcBindByQQId(normalizedQQId)
       const updateData: UpdateBuidBindData = {
-        buidUid: buidUser.uid.toString(),  // 转换为字符串存储
+        buidUid: buidUser.uid.toString(), // 转换为字符串存储
         buidUsername: buidUser.username,
         guardLevel: buidUser.guard_level || 0,
         guardLevelText: buidUser.guard_level_text || '',
@@ -286,15 +323,21 @@ export class DatabaseService {
         medalName: buidUser.medal?.name || '',
         medalLevel: buidUser.medal?.level || 0,
         wealthMedalLevel: buidUser.wealthMedalLevel || 0,
-        lastActiveTime: buidUser.last_active_time ? new Date(buidUser.last_active_time) : new Date(),
+        lastActiveTime: buidUser.last_active_time
+          ? new Date(buidUser.last_active_time)
+          : new Date(),
         lastModified: new Date()
       }
       if (bind) {
         await this.mcidbindRepo.update(normalizedQQId, updateData)
-        this.logger.info('B站账号绑定', `更新绑定: QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}`, true)
+        this.logger.info(
+          'B站账号绑定',
+          `更新绑定: QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}`,
+          true
+        )
       } else {
         // 为跳过MC绑定的用户生成唯一的临时用户名，避免UNIQUE constraint冲突
-        const tempMcUsername = `_temp_skip_${normalizedQQId}_${Date.now()}`;
+        const tempMcUsername = `_temp_skip_${normalizedQQId}_${Date.now()}`
         const newBind: CreateBindData = {
           qqId: normalizedQQId,
           mcUsername: tempMcUsername,
@@ -305,7 +348,11 @@ export class DatabaseService {
           ...updateData
         }
         await this.mcidbindRepo.create(newBind)
-        this.logger.info('B站账号绑定', `创建绑定(跳过MC): QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}, 临时MC用户名=${tempMcUsername}`, true)
+        this.logger.info(
+          'B站账号绑定',
+          `创建绑定(跳过MC): QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}, 临时MC用户名=${tempMcUsername}`,
+          true
+        )
       }
       return true
     } catch (error) {
@@ -321,7 +368,7 @@ export class DatabaseService {
     try {
       const normalizedQQId = this.normalizeQQId(userId)
       if (!normalizedQQId) {
-        this.logger.error('B站账号信息更新', `更新失败: 无法提取有效的QQ号`)
+        this.logger.error('B站账号信息更新', '更新失败: 无法提取有效的QQ号')
         return false
       }
 
@@ -346,7 +393,11 @@ export class DatabaseService {
       }
 
       await this.mcidbindRepo.update(normalizedQQId, updateData)
-      this.logger.info('B站账号信息更新', `刷新信息: QQ=${normalizedQQId}, B站UID=${bind.buidUid}, 用户名=${buidUser.username}`, true)
+      this.logger.info(
+        'B站账号信息更新',
+        `刷新信息: QQ=${normalizedQQId}, B站UID=${bind.buidUid}, 用户名=${buidUser.username}`,
+        true
+      )
       return true
     } catch (error) {
       this.logger.error('B站账号信息更新', `更新B站账号信息失败: ${error.message}`)
@@ -362,16 +413,16 @@ export class DatabaseService {
   async checkAndUpdateUsername(bind: MCIDBIND): Promise<MCIDBIND> {
     try {
       if (!bind || !bind.mcUuid) {
-        this.logger.warn('用户名更新', `无法检查用户名更新: 空绑定或空UUID`);
-        return bind;
+        this.logger.warn('用户名更新', '无法检查用户名更新: 空绑定或空UUID')
+        return bind
       }
 
       // 通过UUID查询最新用户名
-      const latestUsername = await this.getUsernameByUuid(bind.mcUuid);
+      const latestUsername = await this.getUsernameByUuid(bind.mcUuid)
 
       if (!latestUsername) {
-        this.logger.warn('用户名更新', `无法获取UUID "${bind.mcUuid}" 的最新用户名`);
-        return bind;
+        this.logger.warn('用户名更新', `无法获取UUID "${bind.mcUuid}" 的最新用户名`)
+        return bind
       }
 
       // 如果用户名与数据库中的不同，更新数据库（使用规范化比较，不区分大小写）
@@ -379,21 +430,25 @@ export class DatabaseService {
       const normalizedCurrent = normalizeUsernameHelper(bind.mcUsername)
 
       if (normalizedLatest !== normalizedCurrent) {
-        this.logger.info('用户名更新', `用户 QQ(${bind.qqId}) 的Minecraft用户名已变更: ${bind.mcUsername} -> ${latestUsername}`, true);
+        this.logger.info(
+          '用户名更新',
+          `用户 QQ(${bind.qqId}) 的Minecraft用户名已变更: ${bind.mcUsername} -> ${latestUsername}`,
+          true
+        )
 
         // 更新数据库中的用户名
         await this.mcidbindRepo.update(bind.qqId, {
           mcUsername: latestUsername
-        });
+        })
 
         // 更新返回的绑定对象
-        bind.mcUsername = latestUsername;
+        bind.mcUsername = latestUsername
       }
 
-      return bind;
+      return bind
     } catch (error) {
-      this.logger.error('用户名更新', `检查和更新用户名失败: ${error.message}`);
-      return bind;
+      this.logger.error('用户名更新', `检查和更新用户名失败: ${error.message}`)
+      return bind
     }
   }
 
@@ -407,87 +462,102 @@ export class DatabaseService {
   async checkAndUpdateUsernameWithCache(bind: MCIDBIND): Promise<MCIDBIND> {
     try {
       if (!bind || !bind.mcUuid) {
-        this.logger.warn('改名检测缓存', `无法检查用户名更新: 空绑定或空UUID`);
-        return bind;
+        this.logger.warn('改名检测缓存', '无法检查用户名更新: 空绑定或空UUID')
+        return bind
       }
 
-      const now = new Date();
-      const failCount = bind.usernameCheckFailCount || 0;
+      const now = new Date()
+      const failCount = bind.usernameCheckFailCount || 0
 
       // 根据失败次数决定冷却期：普通24小时，失败>=3次则72小时
-      const cooldownHours = failCount >= 3 ? 72 : 24;
+      const cooldownHours = failCount >= 3 ? 72 : 24
 
       // 检查是否在冷却期内
       if (bind.usernameLastChecked) {
-        const lastCheck = new Date(bind.usernameLastChecked);
-        const hoursSinceCheck = (now.getTime() - lastCheck.getTime()) / (1000 * 60 * 60);
+        const lastCheck = new Date(bind.usernameLastChecked)
+        const hoursSinceCheck = (now.getTime() - lastCheck.getTime()) / (1000 * 60 * 60)
 
         if (hoursSinceCheck < cooldownHours) {
-          this.logger.debug('改名检测缓存', `QQ(${bind.qqId}) 在冷却期内(${hoursSinceCheck.toFixed(1)}h/${cooldownHours}h)，跳过检查`);
-          return bind;
+          this.logger.debug(
+            '改名检测缓存',
+            `QQ(${bind.qqId}) 在冷却期内(${hoursSinceCheck.toFixed(1)}h/${cooldownHours}h)，跳过检查`
+          )
+          return bind
         }
       }
 
-      this.logger.debug('改名检测缓存', `QQ(${bind.qqId}) 开始检查用户名变更（失败计数: ${failCount}）`);
+      this.logger.debug(
+        '改名检测缓存',
+        `QQ(${bind.qqId}) 开始检查用户名变更（失败计数: ${failCount}）`
+      )
 
       // 执行实际的改名检测
-      const oldUsername = bind.mcUsername;
-      const updatedBind = await this.checkAndUpdateUsername(bind);
+      const oldUsername = bind.mcUsername
+      const updatedBind = await this.checkAndUpdateUsername(bind)
 
       // 判断检测是否成功
-      const detectionSuccess = updatedBind.mcUsername !== null && updatedBind.mcUsername !== undefined;
+      const detectionSuccess =
+        updatedBind.mcUsername !== null && updatedBind.mcUsername !== undefined
 
       if (detectionSuccess) {
         // 检测成功
-        const usernameChanged = normalizeUsernameHelper(updatedBind.mcUsername) !== normalizeUsernameHelper(oldUsername);
+        const usernameChanged =
+          normalizeUsernameHelper(updatedBind.mcUsername) !== normalizeUsernameHelper(oldUsername)
 
         // 更新检查时间和重置失败计数
         await this.mcidbindRepo.update(bind.qqId, {
           usernameLastChecked: now,
           usernameCheckFailCount: 0
-        });
+        })
 
         if (usernameChanged) {
-          this.logger.info('改名检测缓存', `QQ(${bind.qqId}) 用户名已变更: ${oldUsername} -> ${updatedBind.mcUsername}`, true);
+          this.logger.info(
+            '改名检测缓存',
+            `QQ(${bind.qqId}) 用户名已变更: ${oldUsername} -> ${updatedBind.mcUsername}`,
+            true
+          )
         } else {
-          this.logger.debug('改名检测缓存', `QQ(${bind.qqId}) 用户名无变更: ${updatedBind.mcUsername}`);
+          this.logger.debug(
+            '改名检测缓存',
+            `QQ(${bind.qqId}) 用户名无变更: ${updatedBind.mcUsername}`
+          )
         }
 
         // 更新返回对象的缓存字段
-        updatedBind.usernameLastChecked = now;
-        updatedBind.usernameCheckFailCount = 0;
+        updatedBind.usernameLastChecked = now
+        updatedBind.usernameCheckFailCount = 0
       } else {
         // 检测失败（API失败或返回null）
-        const newFailCount = failCount + 1;
+        const newFailCount = failCount + 1
 
         await this.mcidbindRepo.update(bind.qqId, {
           usernameLastChecked: now,
           usernameCheckFailCount: newFailCount
-        });
+        })
 
-        this.logger.warn('改名检测缓存', `QQ(${bind.qqId}) 检测失败，失败计数: ${newFailCount}`);
+        this.logger.warn('改名检测缓存', `QQ(${bind.qqId}) 检测失败，失败计数: ${newFailCount}`)
 
         // 更新返回对象的缓存字段
-        updatedBind.usernameLastChecked = now;
-        updatedBind.usernameCheckFailCount = newFailCount;
+        updatedBind.usernameLastChecked = now
+        updatedBind.usernameCheckFailCount = newFailCount
       }
 
-      return updatedBind;
+      return updatedBind
     } catch (error) {
-      this.logger.error('改名检测缓存', `检查和更新用户名失败: ${error.message}`);
+      this.logger.error('改名检测缓存', `检查和更新用户名失败: ${error.message}`)
 
       // 失败时也更新检查时间和递增失败计数
       try {
-        const failCount = bind.usernameCheckFailCount || 0;
+        const failCount = bind.usernameCheckFailCount || 0
         await this.mcidbindRepo.update(bind.qqId, {
           usernameLastChecked: new Date(),
           usernameCheckFailCount: failCount + 1
-        });
+        })
       } catch (updateError) {
-        this.logger.error('改名检测缓存', `更新失败计数时出错: ${updateError.message}`);
+        this.logger.error('改名检测缓存', `更新失败计数时出错: ${updateError.message}`)
       }
 
-      return bind;
+      return bind
     }
   }
 }

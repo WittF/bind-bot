@@ -13,19 +13,19 @@ export function getFriendlyErrorMessage(error: Error | string): string {
   const errorMsg = error instanceof Error ? error.message : error
 
   // 拆分错误信息
-  const userError = getUserFacingErrorMessage(errorMsg);
+  const userError = getUserFacingErrorMessage(errorMsg)
 
   // 将警告级别错误标记出来
   if (isWarningError(userError)) {
-    return `⚠️ ${userError}`;
+    return `⚠️ ${userError}`
   }
 
   // 将严重错误标记出来
   if (isCriticalError(userError)) {
-    return `❌ ${userError}`;
+    return `❌ ${userError}`
   }
 
-  return userError;
+  return userError
 }
 
 /**
@@ -55,10 +55,18 @@ export function getUserFacingErrorMessage(errorMsg: string): string {
 
   // RCON相关错误
   if (errorMsg.includes('RCON') || errorMsg.includes('服务器')) {
-    if (errorMsg.includes('authentication') || errorMsg.includes('auth') || errorMsg.includes('认证')) {
+    if (
+      errorMsg.includes('authentication') ||
+      errorMsg.includes('auth') ||
+      errorMsg.includes('认证')
+    ) {
       return 'RCON认证失败，服务器拒绝访问，请联系管理员检查密码'
     }
-    if (errorMsg.includes('ECONNREFUSED') || errorMsg.includes('ETIMEDOUT') || errorMsg.includes('无法连接')) {
+    if (
+      errorMsg.includes('ECONNREFUSED') ||
+      errorMsg.includes('ETIMEDOUT') ||
+      errorMsg.includes('无法连接')
+    ) {
       return '无法连接到游戏服务器，请确认服务器是否在线或联系管理员'
     }
     if (errorMsg.includes('command') || errorMsg.includes('执行命令')) {
@@ -99,9 +107,9 @@ export function isWarningError(errorMsg: string): boolean {
     '不在白名单中',
     '未绑定MC账号',
     '冷却期内'
-  ];
+  ]
 
-  return warningPatterns.some(pattern => errorMsg.includes(pattern));
+  return warningPatterns.some(pattern => errorMsg.includes(pattern))
 }
 
 /**
@@ -110,12 +118,7 @@ export function isWarningError(errorMsg: string): boolean {
  * @returns 是否为严重错误
  */
 export function isCriticalError(errorMsg: string): boolean {
-  const criticalPatterns = [
-    '无法连接',
-    'RCON认证失败',
-    '服务器通信失败',
-    '数据库操作出错'
-  ];
+  const criticalPatterns = ['无法连接', 'RCON认证失败', '服务器通信失败', '数据库操作出错']
 
-  return criticalPatterns.some(pattern => errorMsg.includes(pattern));
+  return criticalPatterns.some(pattern => errorMsg.includes(pattern))
 }

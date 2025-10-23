@@ -26,7 +26,8 @@ export class BindingHandler extends BaseHandler {
    * 注册交互式绑定命令
    */
   register(): void {
-    this.ctx.command('绑定 [target:string]', '交互式绑定流程')
+    this.ctx
+      .command('绑定 [target:string]', '交互式绑定流程')
       .alias('bind')
       .alias('interact')
       .action(async ({ session }, target) => {
@@ -37,9 +38,14 @@ export class BindingHandler extends BaseHandler {
           // 如果指定了目标用户（管理员功能）
           if (target) {
             // 检查权限
-            if (!await this.isAdmin(session.userId)) {
-              this.logger.warn('交互绑定', `权限不足: QQ(${normalizedUserId})不是管理员，无法为他人启动绑定`)
-              return this.deps.sendMessage(session, [h.text('只有管理员才能为其他用户启动绑定流程')])
+            if (!(await this.isAdmin(session.userId))) {
+              this.logger.warn(
+                '交互绑定',
+                `权限不足: QQ(${normalizedUserId})不是管理员，无法为他人启动绑定`
+              )
+              return this.deps.sendMessage(session, [
+                h.text('只有管理员才能为其他用户启动绑定流程')
+              ])
             }
 
             const normalizedTargetId = this.deps.normalizeQQId(target)
@@ -48,17 +54,29 @@ export class BindingHandler extends BaseHandler {
             if (!normalizedTargetId) {
               this.logger.warn('交互绑定', `QQ(${normalizedUserId})提供的目标用户ID"${target}"无效`)
               if (target.startsWith('@')) {
-                return this.deps.sendMessage(session, [h.text('❌ 请使用真正的@功能，而不是手动输入@符号\n正确做法：点击或长按用户头像选择@功能')])
+                return this.deps.sendMessage(session, [
+                  h.text(
+                    '❌ 请使用真正的@功能，而不是手动输入@符号\n正确做法：点击或长按用户头像选择@功能'
+                  )
+                ])
               }
-              return this.deps.sendMessage(session, [h.text('❌ 目标用户ID无效\n请提供有效的QQ号或使用@功能选择用户')])
+              return this.deps.sendMessage(session, [
+                h.text('❌ 目标用户ID无效\n请提供有效的QQ号或使用@功能选择用户')
+              ])
             }
-            this.logger.info('交互绑定', `管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})启动交互式绑定流程`, true)
+            this.logger.info(
+              '交互绑定',
+              `管理员QQ(${normalizedUserId})为QQ(${normalizedTargetId})启动交互式绑定流程`,
+              true
+            )
 
             // 检查目标用户是否已有进行中的会话
             const existingTargetSession = this.deps.getBindingSession(target, channelId)
             if (existingTargetSession) {
               this.logger.warn('交互绑定', `QQ(${normalizedTargetId})已有进行中的绑定会话`)
-              return this.deps.sendMessage(session, [h.text(`用户 ${normalizedTargetId} 已有进行中的绑定会话`)])
+              return this.deps.sendMessage(session, [
+                h.text(`用户 ${normalizedTargetId} 已有进行中的绑定会话`)
+              ])
             }
 
             // 检查目标用户当前绑定状态
@@ -69,7 +87,10 @@ export class BindingHandler extends BaseHandler {
               this.logger.info('交互绑定', `QQ(${normalizedTargetId})已完成全部绑定`, true)
 
               // 显示当前绑定信息
-              const displayUsername = targetBind.mcUsername && !targetBind.mcUsername.startsWith('_temp_') ? targetBind.mcUsername : '未绑定'
+              const displayUsername =
+                targetBind.mcUsername && !targetBind.mcUsername.startsWith('_temp_')
+                  ? targetBind.mcUsername
+                  : '未绑定'
               let bindInfo = `用户 ${normalizedTargetId} 已完成全部账号绑定：\n✅ MC账号: ${displayUsername}\n✅ B站账号: ${targetBind.buidUsername} (UID: ${targetBind.buidUid})`
 
               if (targetBind.guardLevel > 0) {
@@ -87,20 +108,32 @@ export class BindingHandler extends BaseHandler {
 
             // 如果已绑定MC但未绑定B站，直接进入B站绑定流程
             if (targetBind && targetBind.mcUsername && !targetBind.buidUid) {
-              this.logger.info('交互绑定', `QQ(${normalizedTargetId})已绑定MC，进入B站绑定流程`, true)
+              this.logger.info(
+                '交互绑定',
+                `QQ(${normalizedTargetId})已绑定MC，进入B站绑定流程`,
+                true
+              )
 
               // 更新会话状态
               this.deps.updateBindingSession(target, channelId, {
                 state: 'waiting_buid',
-                mcUsername: targetBind.mcUsername && !targetBind.mcUsername.startsWith('_temp_') ? targetBind.mcUsername : null,
+                mcUsername:
+                  targetBind.mcUsername && !targetBind.mcUsername.startsWith('_temp_')
+                    ? targetBind.mcUsername
+                    : null,
                 mcUuid: targetBind.mcUuid
               })
 
               // 向目标用户发送提示（@他们）
-              const displayUsername = targetBind.mcUsername && !targetBind.mcUsername.startsWith('_temp_') ? targetBind.mcUsername : '未绑定'
+              const displayUsername =
+                targetBind.mcUsername && !targetBind.mcUsername.startsWith('_temp_')
+                  ? targetBind.mcUsername
+                  : '未绑定'
               await this.deps.sendMessage(session, [
                 h.at(normalizedTargetId),
-                h.text(` 管理员为您启动了B站绑定流程\n🎮 已绑定MC: ${displayUsername}\n🔗 请发送您的B站UID`)
+                h.text(
+                  ` 管理员为您启动了B站绑定流程\n🎮 已绑定MC: ${displayUsername}\n🔗 请发送您的B站UID`
+                )
               ])
 
               return
@@ -109,7 +142,9 @@ export class BindingHandler extends BaseHandler {
             // 向目标用户发送提示（@他们）
             await this.deps.sendMessage(session, [
               h.at(normalizedTargetId),
-              h.text(` 管理员为您启动了账号绑定流程\n📋 请选择绑定方式：\n1. 发送您的B站UID进行B站绑定\n2. 发送"跳过"仅绑定MC账号`)
+              h.text(
+                ' 管理员为您启动了账号绑定流程\n📋 请选择绑定方式：\n1. 发送您的B站UID进行B站绑定\n2. 发送"跳过"仅绑定MC账号'
+              )
             ])
 
             return
@@ -122,14 +157,21 @@ export class BindingHandler extends BaseHandler {
           const existingSession = this.deps.getBindingSession(session.userId, channelId)
           if (existingSession) {
             this.logger.warn('交互绑定', `QQ(${normalizedUserId})已有进行中的绑定会话`)
-            return this.deps.sendMessage(session, [h.text('您已有进行中的绑定会话，请先完成当前绑定或等待会话超时')])
+            return this.deps.sendMessage(session, [
+              h.text('您已有进行中的绑定会话，请先完成当前绑定或等待会话超时')
+            ])
           }
 
           // 检查用户当前绑定状态
           const existingBind = await this.deps.databaseService.getMcBindByQQId(normalizedUserId)
 
           // 如果两个账号都已绑定（且MC不是temp用户名），不需要进入绑定流程
-          if (existingBind && existingBind.mcUsername && !existingBind.mcUsername.startsWith('_temp_') && existingBind.buidUid) {
+          if (
+            existingBind &&
+            existingBind.mcUsername &&
+            !existingBind.mcUsername.startsWith('_temp_') &&
+            existingBind.buidUid
+          ) {
             this.logger.info('交互绑定', `QQ(${normalizedUserId})已完成全部绑定`, true)
 
             // 显示当前绑定信息
@@ -149,14 +191,26 @@ export class BindingHandler extends BaseHandler {
           }
 
           // 如果已绑定MC（且不是temp用户名）但未绑定B站，直接进入B站绑定流程
-          if (existingBind && existingBind.mcUsername && !existingBind.mcUsername.startsWith('_temp_') && !existingBind.buidUid) {
+          if (
+            existingBind &&
+            existingBind.mcUsername &&
+            !existingBind.mcUsername.startsWith('_temp_') &&
+            !existingBind.buidUid
+          ) {
             this.logger.info('交互绑定', `QQ(${normalizedUserId})已绑定MC，进入B站绑定流程`, true)
 
             // 创建绑定会话，状态直接设为等待B站UID
             const timeout = setTimeout(() => {
               this.deps.bindingSessions.delete(`${normalizedUserId}_${channelId}`)
               this.ctx.bots.forEach(bot => {
-                bot.sendMessage(channelId, [h.at(normalizedUserId), h.text(' 绑定会话已超时，请重新开始绑定流程\n\n⚠️ 温馨提醒：若在管理员多次提醒后仍不配合绑定账号信息，将按群规进行相应处理。')]).catch(() => {})
+                bot
+                  .sendMessage(channelId, [
+                    h.at(normalizedUserId),
+                    h.text(
+                      ' 绑定会话已超时，请重新开始绑定流程\n\n⚠️ 温馨提醒：若在管理员多次提醒后仍不配合绑定账号信息，将按群规进行相应处理。'
+                    )
+                  ])
+                  .catch(() => {})
               })
               this.logger.info('交互绑定', `QQ(${normalizedUserId})的绑定会话因超时被清理`, true)
             }, this.BINDING_SESSION_TIMEOUT)
@@ -173,12 +227,19 @@ export class BindingHandler extends BaseHandler {
 
             this.deps.bindingSessions.set(`${normalizedUserId}_${channelId}`, sessionData)
 
-            return this.deps.sendMessage(session, [h.text(`🎮 已绑定MC: ${existingBind.mcUsername}\n🔗 请发送您的B站UID`)])
+            return this.deps.sendMessage(session, [
+              h.text(`🎮 已绑定MC: ${existingBind.mcUsername}\n🔗 请发送您的B站UID`)
+            ])
           }
 
           // 如果只绑定了B站（MC是temp用户名），提醒绑定MC账号
-          if (existingBind && existingBind.buidUid && existingBind.buidUsername &&
-              existingBind.mcUsername && existingBind.mcUsername.startsWith('_temp_')) {
+          if (
+            existingBind &&
+            existingBind.buidUid &&
+            existingBind.buidUsername &&
+            existingBind.mcUsername &&
+            existingBind.mcUsername.startsWith('_temp_')
+          ) {
             this.logger.info('交互绑定', `QQ(${normalizedUserId})只绑定了B站，进入MC绑定流程`, true)
 
             // 创建绑定会话，状态设为等待MC用户名
@@ -186,17 +247,27 @@ export class BindingHandler extends BaseHandler {
             const bindingSession = this.deps.getBindingSession(session.userId, channelId)
             bindingSession.state = 'waiting_mc_username'
 
-            return this.deps.sendMessage(session, [h.text(`✅ 已绑定B站: ${existingBind.buidUsername}\n🎮 请发送您的MC用户名，或发送"跳过"保持当前状态`)])
+            return this.deps.sendMessage(session, [
+              h.text(
+                `✅ 已绑定B站: ${existingBind.buidUsername}\n🎮 请发送您的MC用户名，或发送"跳过"保持当前状态`
+              )
+            ])
           }
 
           // 如果未绑定账号，让用户选择绑定方式，优先B站绑定
           this.deps.createBindingSession(session.userId, channelId, 'waiting_buid')
 
           // 发送绑定选项提示
-          return this.deps.sendMessage(session, [h.text(`📋 请选择绑定方式：\n1. 发送您的B站UID进行B站绑定\n2. 发送"跳过"仅绑定MC账号`)])
+          return this.deps.sendMessage(session, [
+            h.text('📋 请选择绑定方式：\n1. 发送您的B站UID进行B站绑定\n2. 发送"跳过"仅绑定MC账号')
+          ])
         } catch (error) {
           const normalizedUserId = this.deps.normalizeQQId(session.userId)
-          this.logger.error('交互绑定', `QQ(${normalizedUserId})开始交互式绑定失败: ${error.message}`, error)
+          this.logger.error(
+            '交互绑定',
+            `QQ(${normalizedUserId})开始交互式绑定失败: ${error.message}`,
+            error
+          )
           return this.deps.sendMessage(session, [h.text(this.getFriendlyErrorMessage(error))])
         }
       })
@@ -220,7 +291,11 @@ export class BindingHandler extends BaseHandler {
       return bind && bind.isAdmin === true
     } catch (error) {
       const normalizedQQId = this.deps.normalizeQQId(userId)
-      this.logger.error('权限检查', `QQ(${normalizedQQId})的管理员状态查询失败: ${error.message}`, error)
+      this.logger.error(
+        '权限检查',
+        `QQ(${normalizedQQId})的管理员状态查询失败: ${error.message}`,
+        error
+      )
       return false
     }
   }
@@ -275,10 +350,18 @@ export class BindingHandler extends BaseHandler {
 
     // RCON相关错误
     if (errorMsg.includes('RCON') || errorMsg.includes('服务器')) {
-      if (errorMsg.includes('authentication') || errorMsg.includes('auth') || errorMsg.includes('认证')) {
+      if (
+        errorMsg.includes('authentication') ||
+        errorMsg.includes('auth') ||
+        errorMsg.includes('认证')
+      ) {
         return 'RCON认证失败，服务器拒绝访问，请联系管理员检查密码'
       }
-      if (errorMsg.includes('ECONNREFUSED') || errorMsg.includes('ETIMEDOUT') || errorMsg.includes('无法连接')) {
+      if (
+        errorMsg.includes('ECONNREFUSED') ||
+        errorMsg.includes('ETIMEDOUT') ||
+        errorMsg.includes('无法连接')
+      ) {
         return '无法连接到游戏服务器，请确认服务器是否在线或联系管理员'
       }
       if (errorMsg.includes('command') || errorMsg.includes('执行命令')) {
@@ -330,12 +413,7 @@ export class BindingHandler extends BaseHandler {
    * @returns 是否为严重错误
    */
   private isCriticalError(errorMsg: string): boolean {
-    const criticalPatterns = [
-      '无法连接',
-      'RCON认证失败',
-      '服务器通信失败',
-      '数据库操作出错'
-    ]
+    const criticalPatterns = ['无法连接', 'RCON认证失败', '服务器通信失败', '数据库操作出错']
 
     return criticalPatterns.some(pattern => errorMsg.includes(pattern))
   }

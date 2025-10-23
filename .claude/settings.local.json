@@ -1,7 +1,20 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(find:*)",
+      "Bash(awk:*)",
+      "Bash(git log:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm publish)",
+      "Bash(npm view:*)",
+      "Bash(git add:*)",
+      "Bash(git push)",
+      "Bash(powershell -Command \"cd ''F:\\Koishi\\koishi-dev\\external\\bind-mcid''; (Get-Content src\\index.ts | Measure-Object -Line).Lines\")",
+      "Bash(git -C \"F:\\Koishi\\koishi-dev\\external\\bind-mcid\" log --oneline --all --graph -10)",
+      "Bash(powershell -Command \"cd ''F:\\Koishi\\koishi-dev\\external\\bind-mcid\\src''; $total = 0; Get-ChildItem -Recurse -Filter *.ts | ForEach-Object { $lines = (Get-Content $_FullName | Measure-Object -Line).Lines; $total += $lines }; Write-Output $total\")",
+      "Bash(npm install:*)",
+      "mcp__fetch__fetch_markdown"
     ],
     "deny": [],
     "ask": []

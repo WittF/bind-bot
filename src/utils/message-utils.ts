@@ -52,7 +52,11 @@ export class MessageUtils {
    * @param content 消息内容数组
    * @param options 可选参数
    */
-  async sendMessage(session: Session, content: any[], options?: { isProactiveMessage?: boolean }): Promise<void> {
+  async sendMessage(
+    session: Session,
+    content: any[],
+    options?: { isProactiveMessage?: boolean }
+  ): Promise<void> {
     try {
       if (!session) {
         this.logger.error('消息', 'system操作失败: 无效的会话对象')
@@ -67,8 +71,12 @@ export class MessageUtils {
       // 处理私聊和群聊的消息格式
       // 主动消息不引用原消息
       const promptMessage = session.channelId?.startsWith('private:')
-        ? (isProactiveMessage ? content : [h.quote(session.messageId), ...content])
-        : (isProactiveMessage ? [h.at(normalizedQQId), '\n', ...content] : [h.quote(session.messageId), h.at(normalizedQQId), '\n', ...content])
+        ? isProactiveMessage
+          ? content
+          : [h.quote(session.messageId), ...content]
+        : isProactiveMessage
+          ? [h.at(normalizedQQId), '\n', ...content]
+          : [h.quote(session.messageId), h.at(normalizedQQId), '\n', ...content]
 
       // 发送消息并获取返回的消息ID
       const messageResult = await session.send(promptMessage)
@@ -81,28 +89,49 @@ export class MessageUtils {
         // 但如果用户在绑定会话中发送聊天消息（不包括指令），不撤回
         // 主动消息不撤回用户消息
         const bindingSession = this.getBindingSessionFn(session.userId, session.channelId)
-        const isBindingCommand = session.content && (
-          session.content.trim() === '绑定' ||
-          session.content.includes('@') && session.content.includes('绑定')
-        )
-        const shouldNotRecallUserMessage = bindingSession && session.content &&
-          !isBindingCommand && checkIrrelevantInput(bindingSession.state, session.content.trim())
+        const isBindingCommand =
+          session.content &&
+          (session.content.trim() === '绑定' ||
+            (session.content.includes('@') && session.content.includes('绑定')))
+        const shouldNotRecallUserMessage =
+          bindingSession &&
+          session.content &&
+          !isBindingCommand &&
+          checkIrrelevantInput(bindingSession.state, session.content.trim())
 
-        if (this.config.recallUserMessage && isGroupMessage && session.messageId && !shouldNotRecallUserMessage && !isProactiveMessage) {
+        if (
+          this.config.recallUserMessage &&
+          isGroupMessage &&
+          session.messageId &&
+          !shouldNotRecallUserMessage &&
+          !isProactiveMessage
+        ) {
           setTimeout(async () => {
             try {
               await session.bot.deleteMessage(session.channelId, session.messageId)
-              this.logger.debug('消息', `成功撤回用户QQ(${normalizedQQId})的指令消息 ${session.messageId}`)
+              this.logger.debug(
+                '消息',
+                `成功撤回用户QQ(${normalizedQQId})的指令消息 ${session.messageId}`
+              )
             } catch (userRecallError) {
-              this.logger.error('消息', `QQ(${normalizedQQId})操作失败: 撤回用户指令消息 ${session.messageId} 失败: ${userRecallError.message}`)
+              this.logger.error(
+                '消息',
+                `QQ(${normalizedQQId})操作失败: 撤回用户指令消息 ${session.messageId} 失败: ${userRecallError.message}`
+              )
             }
           }, this.config.autoRecallTime * 1000)
 
-          this.logger.debug('消息', `已设置 ${this.config.autoRecallTime} 秒后自动撤回用户QQ(${normalizedQQId})的群聊指令消息 ${session.messageId}`)
+          this.logger.debug(
+            '消息',
+            `已设置 ${this.config.autoRecallTime} 秒后自动撤回用户QQ(${normalizedQQId})的群聊指令消息 ${session.messageId}`
+          )
         } else if (shouldNotRecallUserMessage) {
-          this.logger.debug('消息', `QQ(${normalizedQQId})在绑定会话中发送聊天消息，跳过撤回用户消息`)
+          this.logger.debug(
+            '消息',
+            `QQ(${normalizedQQId})在绑定会话中发送聊天消息，跳过撤回用户消息`
+          )
         } else if (isProactiveMessage) {
-          this.logger.debug('消息', `主动发送的消息，跳过撤回用户消息`)
+          this.logger.debug('消息', '主动发送的消息，跳过撤回用户消息')
         }
 
         // 处理撤回机器人消息 - 只在群聊中撤回机器人自己的消息
@@ -130,7 +159,8 @@ export class MessageUtils {
             messageId = messageResult[0]
           } else if (messageResult && typeof messageResult === 'object') {
             // 尝试提取各种可能的消息ID格式
-            messageId = (messageResult as any).messageId ||
+            messageId =
+              (messageResult as any).messageId ||
               (messageResult as any).id ||
               (messageResult as any).message_id
           }
@@ -142,21 +172,30 @@ export class MessageUtils {
                 await session.bot.deleteMessage(session.channelId, messageId)
                 this.logger.debug('消息', `成功撤回机器人消息 ${messageId}`)
               } catch (recallError) {
-                this.logger.error('消息', `QQ(${normalizedQQId})操作失败: 撤回机器人消息 ${messageId} 失败: ${recallError.message}`)
+                this.logger.error(
+                  '消息',
+                  `QQ(${normalizedQQId})操作失败: 撤回机器人消息 ${messageId} 失败: ${recallError.message}`
+                )
               }
             }, this.config.autoRecallTime * 1000)
 
-            this.logger.debug('消息', `已设置 ${this.config.autoRecallTime} 秒后自动撤回机器人消息 ${messageId}`)
+            this.logger.debug(
+              '消息',
+              `已设置 ${this.config.autoRecallTime} 秒后自动撤回机器人消息 ${messageId}`
+            )
           } else {
-            this.logger.warn('消息', `无法获取消息ID，自动撤回功能无法生效`)
+            this.logger.warn('消息', '无法获取消息ID，自动撤回功能无法生效')
           }
         } else {
-          this.logger.debug('消息', `检测到私聊消息，不撤回机器人回复`)
+          this.logger.debug('消息', '检测到私聊消息，不撤回机器人回复')
         }
       }
     } catch (error) {
       const normalizedUserId = normalizeQQId(session.userId)
-      this.logger.error('消息', `QQ(${normalizedUserId})操作失败: 向QQ(${normalizedUserId})发送消息失败: ${error.message}`)
+      this.logger.error(
+        '消息',
+        `QQ(${normalizedUserId})操作失败: 向QQ(${normalizedUserId})发送消息失败: ${error.message}`
+      )
     }
   }
 
@@ -183,13 +222,16 @@ export class MessageUtils {
       const normalizedUserId = normalizeQQId(actualUserId)
 
       // 根据MC绑定状态设置不同的格式（临时用户名视为未绑定）
-      const mcInfo = (mcUsername && !mcUsername.startsWith('_temp_')) ? mcUsername : "未绑定"
+      const mcInfo = mcUsername && !mcUsername.startsWith('_temp_') ? mcUsername : '未绑定'
       let currentBuidUsername = buidUsername
       const newNickname = `${currentBuidUsername}（ID:${mcInfo}）`
       // 使用指定的群ID，如果没有指定则使用配置的默认群ID
       const targetGroupId = specifiedGroupId || this.config.autoNicknameGroupId
 
-      this.logger.debug('群昵称设置', `开始处理QQ(${normalizedUserId})的群昵称设置，目标群: ${targetGroupId}`)
+      this.logger.debug(
+        '群昵称设置',
+        `开始处理QQ(${normalizedUserId})的群昵称设置，目标群: ${targetGroupId}`
+      )
       this.logger.debug('群昵称设置', `期望昵称: "${newNickname}"`)
 
       if (session.bot.internal && targetGroupId) {
@@ -198,24 +240,39 @@ export class MessageUtils {
 
         // 先获取当前群昵称进行比对
         try {
-          this.logger.debug('群昵称设置', `正在获取QQ(${normalizedUserId})在群${targetGroupId}的当前昵称...`)
-          const currentGroupInfo = await session.bot.internal.getGroupMemberInfo(targetGroupId, normalizedUserId)
+          this.logger.debug(
+            '群昵称设置',
+            `正在获取QQ(${normalizedUserId})在群${targetGroupId}的当前昵称...`
+          )
+          const currentGroupInfo = await session.bot.internal.getGroupMemberInfo(
+            targetGroupId,
+            normalizedUserId
+          )
           const currentNickname = currentGroupInfo.card || currentGroupInfo.nickname || ''
           this.logger.debug('群昵称设置', `当前昵称: "${currentNickname}"`)
 
           // 如果当前昵称和目标昵称一致，跳过修改
           if (currentNickname === newNickname) {
-            this.logger.info('群昵称设置', `QQ(${normalizedUserId})群昵称已经是"${newNickname}"，跳过修改`)
+            this.logger.info(
+              '群昵称设置',
+              `QQ(${normalizedUserId})群昵称已经是"${newNickname}"，跳过修改`
+            )
             return
           }
 
           // 昵称不一致，先尝试获取最新的B站用户信息
           if (buidUid && this.validateBUID && this.updateBuidInfoOnly) {
-            this.logger.debug('群昵称设置', `检测到昵称不一致，尝试获取B站UID ${buidUid} 的最新信息...`)
+            this.logger.debug(
+              '群昵称设置',
+              `检测到昵称不一致，尝试获取B站UID ${buidUid} 的最新信息...`
+            )
 
             // 1. 提取当前群昵称中的B站用户名
             const currentNicknameUsername = extractBuidUsernameFromNickname(currentNickname)
-            this.logger.debug('群昵称设置', `从当前群昵称"${currentNickname}"中提取到B站名称: ${currentNicknameUsername || '(无法提取)'}`)
+            this.logger.debug(
+              '群昵称设置',
+              `从当前群昵称"${currentNickname}"中提取到B站名称: ${currentNicknameUsername || '(无法提取)'}`
+            )
 
             try {
               const latestBuidUser = await this.validateBUID(buidUid)
@@ -225,51 +282,78 @@ export class MessageUtils {
                 // 2. 智能三层判断
 
                 // 情况A: API返回 == 当前群昵称中的名称
-                if (currentNicknameUsername && latestBuidUser.username === currentNicknameUsername) {
-                  this.logger.info('群昵称设置', `✅ 当前群昵称"${currentNickname}"已包含正确的B站名称"${currentNicknameUsername}"`)
+                if (
+                  currentNicknameUsername &&
+                  latestBuidUser.username === currentNicknameUsername
+                ) {
+                  this.logger.info(
+                    '群昵称设置',
+                    `✅ 当前群昵称"${currentNickname}"已包含正确的B站名称"${currentNicknameUsername}"`
+                  )
 
                   // 群昵称已经正确，仅需更新数据库（如果数据库是旧的）
                   if (latestBuidUser.username !== buidUsername) {
-                    this.logger.info('群昵称设置', `数据库中的B站名称需要更新: "${buidUsername}" → "${latestBuidUser.username}"`)
+                    this.logger.info(
+                      '群昵称设置',
+                      `数据库中的B站名称需要更新: "${buidUsername}" → "${latestBuidUser.username}"`
+                    )
                     try {
                       await this.updateBuidInfoOnly(normalizedUserId, latestBuidUser)
-                      this.logger.info('群昵称设置', `已更新数据库中的B站用户名`)
+                      this.logger.info('群昵称设置', '已更新数据库中的B站用户名')
                     } catch (updateError) {
                       this.logger.warn('群昵称设置', `更新数据库失败: ${updateError.message}`)
                     }
                   } else {
-                    this.logger.debug('群昵称设置', `数据库中的B站名称已是最新，无需更新`)
+                    this.logger.debug('群昵称设置', '数据库中的B站名称已是最新，无需更新')
                   }
 
                   // 跳过群昵称修改
-                  this.logger.info('群昵称设置', `群昵称格式正确且名称最新，跳过修改`)
+                  this.logger.info('群昵称设置', '群昵称格式正确且名称最新，跳过修改')
                   return
                 }
 
                 // 情况B: API返回 == 数据库（都是旧的）
                 if (latestBuidUser.username === buidUsername) {
-                  this.logger.warn('群昵称设置', `⚠️ API返回的B站名称"${latestBuidUser.username}"与数据库一致，但与群昵称不符`)
-                  this.logger.warn('群昵称设置', `可能是API缓存未刷新，采用保守策略：不修改群昵称`)
+                  this.logger.warn(
+                    '群昵称设置',
+                    `⚠️ API返回的B站名称"${latestBuidUser.username}"与数据库一致，但与群昵称不符`
+                  )
+                  this.logger.warn('群昵称设置', '可能是API缓存未刷新，采用保守策略：不修改群昵称')
                   return
                 }
 
                 // 情况C: API返回新数据（!= 群昵称 且 != 数据库）
-                this.logger.info('群昵称设置', `检测到B站用户名已更新: "${buidUsername}" → "${latestBuidUser.username}"`)
+                this.logger.info(
+                  '群昵称设置',
+                  `检测到B站用户名已更新: "${buidUsername}" → "${latestBuidUser.username}"`
+                )
                 currentBuidUsername = latestBuidUser.username
 
                 // 更新数据库中的B站信息
                 try {
                   await this.updateBuidInfoOnly(normalizedUserId, latestBuidUser)
-                  this.logger.info('群昵称设置', `已更新数据库中的B站用户名为: ${currentBuidUsername}`)
+                  this.logger.info(
+                    '群昵称设置',
+                    `已更新数据库中的B站用户名为: ${currentBuidUsername}`
+                  )
                 } catch (updateError) {
-                  this.logger.warn('群昵称设置', `更新数据库中的B站用户名失败: ${updateError.message}`)
+                  this.logger.warn(
+                    '群昵称设置',
+                    `更新数据库中的B站用户名失败: ${updateError.message}`
+                  )
                   // 即使更新数据库失败，也继续使用最新的用户名设置昵称
                 }
               } else {
-                this.logger.warn('群昵称设置', `获取最新B站用户信息失败，使用数据库中的用户名: ${currentBuidUsername}`)
+                this.logger.warn(
+                  '群昵称设置',
+                  `获取最新B站用户信息失败，使用数据库中的用户名: ${currentBuidUsername}`
+                )
               }
             } catch (validateError) {
-              this.logger.warn('群昵称设置', `获取最新B站用户信息时出错: ${validateError.message}，使用数据库中的用户名: ${currentBuidUsername}`)
+              this.logger.warn(
+                '群昵称设置',
+                `获取最新B站用户信息时出错: ${validateError.message}，使用数据库中的用户名: ${currentBuidUsername}`
+              )
               // API调用失败时降级处理，使用数据库中的旧名称
             }
           }
@@ -280,26 +364,39 @@ export class MessageUtils {
           // 昵称不一致，执行修改
           this.logger.debug('群昵称设置', `昵称不一致，正在修改群昵称为: "${finalNickname}"`)
           await session.bot.internal.setGroupCard(targetGroupId, normalizedUserId, finalNickname)
-          this.logger.info('群昵称设置', `成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称从"${currentNickname}"修改为"${finalNickname}"`, true)
+          this.logger.info(
+            '群昵称设置',
+            `成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称从"${currentNickname}"修改为"${finalNickname}"`,
+            true
+          )
 
           // 验证设置是否生效 - 再次获取群昵称确认
           try {
             await new Promise(resolve => setTimeout(resolve, 1000)) // 等待1秒
-            const verifyGroupInfo = await session.bot.internal.getGroupMemberInfo(targetGroupId, normalizedUserId)
+            const verifyGroupInfo = await session.bot.internal.getGroupMemberInfo(
+              targetGroupId,
+              normalizedUserId
+            )
             const verifyNickname = verifyGroupInfo.card || verifyGroupInfo.nickname || ''
             if (verifyNickname === finalNickname) {
               this.logger.info('群昵称设置', `✅ 验证成功，群昵称已生效: "${verifyNickname}"`, true)
             } else {
-              this.logger.warn('群昵称设置', `⚠️ 验证失败，期望"${finalNickname}"，实际"${verifyNickname}"，可能是权限不足或API延迟`)
+              this.logger.warn(
+                '群昵称设置',
+                `⚠️ 验证失败，期望"${finalNickname}"，实际"${verifyNickname}"，可能是权限不足或API延迟`
+              )
             }
           } catch (verifyError) {
             this.logger.warn('群昵称设置', `无法验证群昵称设置结果: ${verifyError.message}`)
           }
         } catch (getInfoError) {
           // 如果获取当前昵称失败，直接尝试设置新昵称
-          this.logger.warn('群昵称设置', `获取QQ(${normalizedUserId})当前群昵称失败: ${getInfoError.message}`)
+          this.logger.warn(
+            '群昵称设置',
+            `获取QQ(${normalizedUserId})当前群昵称失败: ${getInfoError.message}`
+          )
           this.logger.warn('群昵称设置', `错误详情: ${JSON.stringify(getInfoError)}`)
-          this.logger.debug('群昵称设置', `将直接尝试设置新昵称...`)
+          this.logger.debug('群昵称设置', '将直接尝试设置新昵称...')
 
           // 如果传入了 buidUid，尝试获取最新的B站用户信息
           if (buidUid && this.validateBUID && this.updateBuidInfoOnly) {
@@ -311,24 +408,36 @@ export class MessageUtils {
 
                 // 智能判断：API返回 == 数据库（都是旧的）
                 if (latestBuidUser.username === buidUsername) {
-                  this.logger.warn('群昵称设置', `⚠️ API返回的B站名称"${latestBuidUser.username}"与数据库一致`)
-                  this.logger.warn('群昵称设置', `可能是API缓存未刷新，且无法获取当前群昵称，采用保守策略：跳过修改`)
+                  this.logger.warn(
+                    '群昵称设置',
+                    `⚠️ API返回的B站名称"${latestBuidUser.username}"与数据库一致`
+                  )
+                  this.logger.warn(
+                    '群昵称设置',
+                    '可能是API缓存未刷新，且无法获取当前群昵称，采用保守策略：跳过修改'
+                  )
                   return
                 }
 
                 // API返回新数据（!= 数据库）
-                this.logger.info('群昵称设置', `检测到B站用户名已更新: "${buidUsername}" → "${latestBuidUser.username}"`)
+                this.logger.info(
+                  '群昵称设置',
+                  `检测到B站用户名已更新: "${buidUsername}" → "${latestBuidUser.username}"`
+                )
                 currentBuidUsername = latestBuidUser.username
 
                 // 更新数据库
                 try {
                   await this.updateBuidInfoOnly(normalizedUserId, latestBuidUser)
-                  this.logger.info('群昵称设置', `已更新数据库中的B站用户名为: ${currentBuidUsername}`)
+                  this.logger.info(
+                    '群昵称设置',
+                    `已更新数据库中的B站用户名为: ${currentBuidUsername}`
+                  )
                 } catch (updateError) {
                   this.logger.warn('群昵称设置', `更新数据库失败: ${updateError.message}`)
                 }
               } else {
-                this.logger.warn('群昵称设置', `获取最新B站用户信息失败`)
+                this.logger.warn('群昵称设置', '获取最新B站用户信息失败')
               }
             } catch (validateError) {
               this.logger.warn('群昵称设置', `获取最新B站用户信息失败: ${validateError.message}`)
@@ -339,18 +448,35 @@ export class MessageUtils {
             // 使用（可能已更新的）用户名生成昵称
             const nicknameToSet = `${currentBuidUsername}（ID:${mcInfo}）`
             await session.bot.internal.setGroupCard(targetGroupId, normalizedUserId, nicknameToSet)
-            this.logger.info('群昵称设置', `成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称设置为: ${nicknameToSet}`, true)
+            this.logger.info(
+              '群昵称设置',
+              `成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称设置为: ${nicknameToSet}`,
+              true
+            )
 
             // 验证设置是否生效
             try {
               await new Promise(resolve => setTimeout(resolve, 1000)) // 等待1秒
-              const verifyGroupInfo = await session.bot.internal.getGroupMemberInfo(targetGroupId, normalizedUserId)
+              const verifyGroupInfo = await session.bot.internal.getGroupMemberInfo(
+                targetGroupId,
+                normalizedUserId
+              )
               const verifyNickname = verifyGroupInfo.card || verifyGroupInfo.nickname || ''
               if (verifyNickname === nicknameToSet) {
-                this.logger.info('群昵称设置', `✅ 验证成功，群昵称已生效: "${verifyNickname}"`, true)
+                this.logger.info(
+                  '群昵称设置',
+                  `✅ 验证成功，群昵称已生效: "${verifyNickname}"`,
+                  true
+                )
               } else {
-                this.logger.warn('群昵称设置', `⚠️ 验证失败，期望"${nicknameToSet}"，实际"${verifyNickname}"，可能是权限不足`)
-                this.logger.warn('群昵称设置', `建议检查: 1.机器人是否为群管理员 2.群设置是否允许管理员修改昵称 3.OneBot实现是否支持该功能`)
+                this.logger.warn(
+                  '群昵称设置',
+                  `⚠️ 验证失败，期望"${nicknameToSet}"，实际"${verifyNickname}"，可能是权限不足`
+                )
+                this.logger.warn(
+                  '群昵称设置',
+                  '建议检查: 1.机器人是否为群管理员 2.群设置是否允许管理员修改昵称 3.OneBot实现是否支持该功能'
+                )
               }
             } catch (verifyError) {
               this.logger.warn('群昵称设置', `无法验证群昵称设置结果: ${verifyError.message}`)
@@ -362,9 +488,15 @@ export class MessageUtils {
           }
         }
       } else if (!session.bot.internal) {
-        this.logger.debug('群昵称设置', `QQ(${normalizedUserId})bot不支持OneBot内部API，跳过自动群昵称设置`)
+        this.logger.debug(
+          '群昵称设置',
+          `QQ(${normalizedUserId})bot不支持OneBot内部API，跳过自动群昵称设置`
+        )
       } else if (!targetGroupId) {
-        this.logger.debug('群昵称设置', `QQ(${normalizedUserId})未配置自动群昵称设置目标群，跳过群昵称设置`)
+        this.logger.debug(
+          '群昵称设置',
+          `QQ(${normalizedUserId})未配置自动群昵称设置目标群，跳过群昵称设置`
+        )
       }
     } catch (error) {
       const actualUserId = targetUserId || session.userId

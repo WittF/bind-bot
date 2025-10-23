@@ -53,7 +53,7 @@ export class ScheduleMuteRepository {
    */
   async findAll(): Promise<SCHEDULE_MUTE_TASKS[]> {
     try {
-      this.logger.debug('数据库', `获取所有定时禁言任务`)
+      this.logger.debug('数据库', '获取所有定时禁言任务')
       const tasks = await this.ctx.database.get('schedule_mute_tasks', {})
       return tasks
     } catch (error) {
@@ -68,7 +68,7 @@ export class ScheduleMuteRepository {
    */
   async findAllEnabled(): Promise<SCHEDULE_MUTE_TASKS[]> {
     try {
-      this.logger.debug('数据库', `获取所有已启用的定时禁言任务`)
+      this.logger.debug('数据库', '获取所有已启用的定时禁言任务')
       const tasks = await this.ctx.database.get('schedule_mute_tasks', { enabled: true })
       return tasks
     } catch (error) {
@@ -86,7 +86,11 @@ export class ScheduleMuteRepository {
     try {
       this.logger.debug('数据库', `创建群${data.groupId}的定时禁言任务`)
       const created = await this.ctx.database.create('schedule_mute_tasks', data as any)
-      this.logger.info('数据库', `成功创建群${data.groupId}的定时禁言任务（ID:${created.id}）`, true)
+      this.logger.info(
+        '数据库',
+        `成功创建群${data.groupId}的定时禁言任务（ID:${created.id}）`,
+        true
+      )
       return created
     } catch (error) {
       this.logger.error('数据库', `创建群${data.groupId}的定时禁言任务失败: ${error.message}`)
@@ -166,7 +170,11 @@ export class ScheduleMuteRepository {
     try {
       this.logger.debug('数据库', `删除群${groupId}的所有定时禁言任务`)
       const result = await this.ctx.database.remove('schedule_mute_tasks', { groupId })
-      this.logger.info('数据库', `成功删除群${groupId}的所有定时禁言任务（删除${result.removed}条）`, true)
+      this.logger.info(
+        '数据库',
+        `成功删除群${groupId}的所有定时禁言任务（删除${result.removed}条）`,
+        true
+      )
       return result.removed
     } catch (error) {
       this.logger.error('数据库', `删除群${groupId}的所有定时禁言任务失败: ${error.message}`)

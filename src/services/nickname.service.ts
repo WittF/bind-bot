@@ -22,7 +22,9 @@ export class NicknameService {
     private config: { autoNicknameGroupId: string },
     private normalizeQQId: (userId: string) => string,
     private validateBUID: (buid: string) => Promise<ZminfoUser | null>,
-    private getBilibiliOfficialUserInfo: (uid: string) => Promise<{ name: string; mid: number } | null>,
+    private getBilibiliOfficialUserInfo: (
+      uid: string
+    ) => Promise<{ name: string; mid: number } | null>,
     private updateBuidInfoOnly: (userId: string, buidUser: ZminfoUser) => Promise<boolean>
   ) {}
 
@@ -33,7 +35,7 @@ export class NicknameService {
     if (!nickname || !buidUsername) return false
 
     // 期望格式：B站名称（ID:MC用户名）或 B站名称（ID:未绑定）
-    const mcInfo = mcUsername && !mcUsername.startsWith('_temp_') ? mcUsername : "未绑定"
+    const mcInfo = mcUsername && !mcUsername.startsWith('_temp_') ? mcUsername : '未绑定'
     const expectedFormat = `${buidUsername}（ID:${mcInfo}）`
 
     return nickname === expectedFormat
@@ -50,13 +52,13 @@ export class NicknameService {
     // 1. 尝试获取B站官方API的用户信息（最权威）
     let officialUsername: string | null = null
     try {
-      this.logger.debug('群昵称设置', `正在查询B站官方API...`)
+      this.logger.debug('群昵称设置', '正在查询B站官方API...')
       const officialInfo = await this.getBilibiliOfficialUserInfo(buidUid)
       if (officialInfo && officialInfo.name) {
         officialUsername = officialInfo.name
         this.logger.info('群昵称设置', `[层1-官方API] ✅ "${officialUsername}"`, true)
       } else {
-        this.logger.warn('群昵称设置', `[层1-官方API] ❌ 查询失败`)
+        this.logger.warn('群昵称设置', '[层1-官方API] ❌ 查询失败')
       }
     } catch (officialError) {
       this.logger.warn('群昵称设置', `[层1-官方API] ❌ 查询出错: ${officialError.message}`)
@@ -65,12 +67,12 @@ export class NicknameService {
     // 2. 尝试获取ZMINFO API的用户信息（可能有缓存）
     let zminfoUserData: ZminfoUser | null = null
     try {
-      this.logger.debug('群昵称设置', `正在查询ZMINFO API...`)
+      this.logger.debug('群昵称设置', '正在查询ZMINFO API...')
       zminfoUserData = await this.validateBUID(buidUid)
       if (zminfoUserData && zminfoUserData.username) {
         this.logger.debug('群昵称设置', `[层2-ZMINFO] "${zminfoUserData.username}"`)
       } else {
-        this.logger.warn('群昵称设置', `[层2-ZMINFO] 查询失败`)
+        this.logger.warn('群昵称设置', '[层2-ZMINFO] 查询失败')
       }
     } catch (zminfoError) {
       this.logger.warn('群昵称设置', `[层2-ZMINFO] 查询出错: ${zminfoError.message}`)
@@ -85,14 +87,21 @@ export class NicknameService {
         zminfoData: zminfoUserData || undefined
       }
     } else if (zminfoUserData && zminfoUserData.username) {
-      this.logger.info('群昵称设置', `⚠️ 官方API不可用，降级使用ZMINFO: "${zminfoUserData.username}"`, true)
+      this.logger.info(
+        '群昵称设置',
+        `⚠️ 官方API不可用，降级使用ZMINFO: "${zminfoUserData.username}"`,
+        true
+      )
       return {
         username: zminfoUserData.username,
         source: 'zminfo',
         zminfoData: zminfoUserData
       }
     } else {
-      this.logger.warn('群昵称设置', `⚠️ 官方API和ZMINFO都不可用，使用数据库名称: "${currentDbUsername}"`)
+      this.logger.warn(
+        '群昵称设置',
+        `⚠️ 官方API和ZMINFO都不可用，使用数据库名称: "${currentDbUsername}"`
+      )
       return {
         username: currentDbUsername,
         source: 'database'
@@ -114,14 +123,18 @@ export class NicknameService {
     }
 
     if (!zminfoData) {
-      this.logger.debug('群昵称设置', `无ZMINFO数据，跳过数据库同步`)
+      this.logger.debug('群昵称设置', '无ZMINFO数据，跳过数据库同步')
       return
     }
 
     try {
       const updatedData = { ...zminfoData, username: latestUsername }
       await this.updateBuidInfoOnly(normalizedUserId, updatedData)
-      this.logger.info('群昵称设置', `已同步数据库: "${currentDbUsername}" → "${latestUsername}"`, true)
+      this.logger.info(
+        '群昵称设置',
+        `已同步数据库: "${currentDbUsername}" → "${latestUsername}"`,
+        true
+      )
     } catch (updateError) {
       this.logger.warn('群昵称设置', `数据库同步失败: ${updateError.message}`)
     }
@@ -141,23 +154,40 @@ export class NicknameService {
       await session.bot.internal.setGroupCard(targetGroupId, normalizedUserId, nickname)
 
       if (currentNickname) {
-        this.logger.info('群昵称设置', `成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称从"${currentNickname}"修改为"${nickname}"`, true)
+        this.logger.info(
+          '群昵称设置',
+          `成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称从"${currentNickname}"修改为"${nickname}"`,
+          true
+        )
       } else {
-        this.logger.info('群昵称设置', `成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称设置为: ${nickname}`, true)
+        this.logger.info(
+          '群昵称设置',
+          `成功在群${targetGroupId}中将QQ(${normalizedUserId})群昵称设置为: ${nickname}`,
+          true
+        )
       }
 
       // 验证设置是否生效
       try {
         await new Promise(resolve => setTimeout(resolve, 1000)) // 等待1秒
-        const verifyGroupInfo = await session.bot.internal.getGroupMemberInfo(targetGroupId, normalizedUserId)
+        const verifyGroupInfo = await session.bot.internal.getGroupMemberInfo(
+          targetGroupId,
+          normalizedUserId
+        )
         const verifyNickname = verifyGroupInfo.card || verifyGroupInfo.nickname || ''
 
         if (verifyNickname === nickname) {
           this.logger.info('群昵称设置', `✅ 验证成功，群昵称已生效: "${verifyNickname}"`, true)
         } else {
-          this.logger.warn('群昵称设置', `⚠️ 验证失败，期望"${nickname}"，实际"${verifyNickname}"，可能是权限不足或API延迟`)
+          this.logger.warn(
+            '群昵称设置',
+            `⚠️ 验证失败，期望"${nickname}"，实际"${verifyNickname}"，可能是权限不足或API延迟`
+          )
           if (!currentNickname) {
-            this.logger.warn('群昵称设置', `建议检查: 1.机器人是否为群管理员 2.群设置是否允许管理员修改昵称 3.OneBot实现是否支持该功能`)
+            this.logger.warn(
+              '群昵称设置',
+              '建议检查: 1.机器人是否为群管理员 2.群设置是否允许管理员修改昵称 3.OneBot实现是否支持该功能'
+            )
           }
         }
       } catch (verifyError) {
@@ -186,24 +216,33 @@ export class NicknameService {
       const actualUserId = targetUserId || session.userId
       const normalizedUserId = this.normalizeQQId(actualUserId)
       const targetGroupId = specifiedGroupId || this.config.autoNicknameGroupId
-      const mcInfo = (mcUsername && !mcUsername.startsWith('_temp_')) ? mcUsername : "未绑定"
+      const mcInfo = mcUsername && !mcUsername.startsWith('_temp_') ? mcUsername : '未绑定'
 
-      this.logger.debug('群昵称设置', `开始处理QQ(${normalizedUserId})的群昵称设置，目标群: ${targetGroupId}`)
+      this.logger.debug(
+        '群昵称设置',
+        `开始处理QQ(${normalizedUserId})的群昵称设置，目标群: ${targetGroupId}`
+      )
 
       // 检查前置条件
       if (!session.bot.internal) {
-        this.logger.debug('群昵称设置', `QQ(${normalizedUserId})bot不支持OneBot内部API，跳过自动群昵称设置`)
+        this.logger.debug(
+          '群昵称设置',
+          `QQ(${normalizedUserId})bot不支持OneBot内部API，跳过自动群昵称设置`
+        )
         return
       }
       if (!targetGroupId) {
-        this.logger.debug('群昵称设置', `QQ(${normalizedUserId})未配置自动群昵称设置目标群，跳过群昵称设置`)
+        this.logger.debug(
+          '群昵称设置',
+          `QQ(${normalizedUserId})未配置自动群昵称设置目标群，跳过群昵称设置`
+        )
         return
       }
 
       // 获取最新的B站用户名
       let latestBuidUsername = buidUsername
       if (buidUid) {
-        this.logger.debug('群昵称设置', `开始四层判断获取最新B站用户名...`)
+        this.logger.debug('群昵称设置', '开始四层判断获取最新B站用户名...')
         this.logger.debug('群昵称设置', `[层3-数据库] "${buidUsername}"`)
 
         const result = await this.getLatestBuidUsername(buidUid, buidUsername)
@@ -224,40 +263,64 @@ export class NicknameService {
 
       // 尝试获取当前昵称并比对
       try {
-        this.logger.debug('群昵称设置', `正在获取QQ(${normalizedUserId})在群${targetGroupId}的当前昵称...`)
-        const currentGroupInfo = await session.bot.internal.getGroupMemberInfo(targetGroupId, normalizedUserId)
+        this.logger.debug(
+          '群昵称设置',
+          `正在获取QQ(${normalizedUserId})在群${targetGroupId}的当前昵称...`
+        )
+        const currentGroupInfo = await session.bot.internal.getGroupMemberInfo(
+          targetGroupId,
+          normalizedUserId
+        )
         const currentNickname = currentGroupInfo.card || currentGroupInfo.nickname || ''
         this.logger.debug('群昵称设置', `当前昵称: "${currentNickname}"`)
 
         // 智能判断：如果当前昵称已包含最新用户名，跳过修改
         if (buidUid && currentNickname) {
           const currentNicknameUsername = extractBuidUsernameFromNickname(currentNickname)
-          this.logger.debug('群昵称设置', `[层4-群昵称] "${currentNicknameUsername || '(无法提取)'}"`)
+          this.logger.debug(
+            '群昵称设置',
+            `[层4-群昵称] "${currentNicknameUsername || '(无法提取)'}"`
+          )
 
           if (currentNicknameUsername && currentNicknameUsername === latestBuidUsername) {
-            this.logger.info('群昵称设置', `✅ 群昵称已包含最新名称"${latestBuidUsername}"，跳过修改`, true)
+            this.logger.info(
+              '群昵称设置',
+              `✅ 群昵称已包含最新名称"${latestBuidUsername}"，跳过修改`,
+              true
+            )
             return
           }
         }
 
         // 如果昵称完全一致，也跳过
         if (currentNickname === targetNickname) {
-          this.logger.info('群昵称设置', `QQ(${normalizedUserId})群昵称已经是"${targetNickname}"，跳过修改`, true)
+          this.logger.info(
+            '群昵称设置',
+            `QQ(${normalizedUserId})群昵称已经是"${targetNickname}"，跳过修改`,
+            true
+          )
           return
         }
 
         // 昵称需要更新
         this.logger.debug('群昵称设置', `昵称不一致，正在修改群昵称为: "${targetNickname}"`)
-        await this.setAndVerifyNickname(session, targetGroupId, normalizedUserId, targetNickname, currentNickname)
-
+        await this.setAndVerifyNickname(
+          session,
+          targetGroupId,
+          normalizedUserId,
+          targetNickname,
+          currentNickname
+        )
       } catch (getInfoError) {
         // 无法获取当前昵称，直接设置新昵称
-        this.logger.warn('群昵称设置', `获取QQ(${normalizedUserId})当前群昵称失败: ${getInfoError.message}`)
-        this.logger.debug('群昵称设置', `将直接尝试设置新昵称...`)
+        this.logger.warn(
+          '群昵称设置',
+          `获取QQ(${normalizedUserId})当前群昵称失败: ${getInfoError.message}`
+        )
+        this.logger.debug('群昵称设置', '将直接尝试设置新昵称...')
 
         await this.setAndVerifyNickname(session, targetGroupId, normalizedUserId, targetNickname)
       }
-
     } catch (error) {
       const actualUserId = targetUserId || session.userId
       const normalizedUserId = this.normalizeQQId(actualUserId)

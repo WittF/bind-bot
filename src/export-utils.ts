@@ -80,10 +80,14 @@ export class GroupExporter {
    */
   private translateRole(role: string): string {
     switch (role) {
-      case 'owner': return '群主'
-      case 'admin': return '管理员'
-      case 'member': return '成员'
-      default: return role || '未知'
+      case 'owner':
+        return '群主'
+      case 'admin':
+        return '管理员'
+      case 'member':
+        return '成员'
+      default:
+        return role || '未知'
     }
   }
 
@@ -107,7 +111,7 @@ export class GroupExporter {
    */
   private formatTimestamp(timestamp: number | Date | null): string {
     if (!timestamp) return '未知'
-    
+
     let date: Date
     if (timestamp instanceof Date) {
       date = timestamp
@@ -117,10 +121,10 @@ export class GroupExporter {
     } else {
       return '未知'
     }
-    
+
     return date.toLocaleString('zh-CN', {
       year: 'numeric',
-      month: '2-digit', 
+      month: '2-digit',
       day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
@@ -133,7 +137,7 @@ export class GroupExporter {
    */
   private mergeData(members: GroupMemberInfo[], bindings: MCIDBIND[]): ExportDataRow[] {
     this.logger.debug('群数据导出', '开始合并群成员和绑定信息')
-    
+
     // 创建绑定信息映射
     const bindingMap = new Map<string, MCIDBIND>()
     bindings.forEach(binding => {
@@ -142,13 +146,13 @@ export class GroupExporter {
 
     return members.map(member => {
       const binding = bindingMap.get(member.qqId)
-      
+
       // 判断绑定状态
       let bindingStatus = '未绑定'
       if (binding) {
         const hasMc = binding.mcUsername && !binding.mcUsername.startsWith('_temp_')
         const hasBuid = binding.buidUid
-        
+
         if (hasMc && hasBuid) {
           bindingStatus = '完全绑定'
         } else if (hasMc) {
@@ -167,7 +171,8 @@ export class GroupExporter {
         角色: member.role,
         加群时间: this.formatTimestamp(member.join_time),
         最后发言: this.formatTimestamp(member.last_sent_time),
-        MC用户名: binding?.mcUsername && !binding.mcUsername.startsWith('_temp_') ? binding.mcUsername : '',
+        MC用户名:
+          binding?.mcUsername && !binding.mcUsername.startsWith('_temp_') ? binding.mcUsername : '',
         MC_UUID: binding?.mcUuid || '',
         B站UID: binding?.buidUid || '',
         B站用户名: binding?.buidUsername || '',
@@ -186,7 +191,7 @@ export class GroupExporter {
    */
   private generateExcelFile(allData: ExportDataRow[], groupId: string): Buffer {
     this.logger.debug('群数据导出', '开始生成Excel文件')
-    
+
     // 分类数据
     const boundData = allData.filter(row => row.绑定状态 !== '未绑定')
     const unboundData = allData.filter(row => row.绑定状态 === '未绑定')
@@ -211,7 +216,7 @@ export class GroupExporter {
       { wch: 12 }, // QQ号
       { wch: 20 }, // 群昵称
       { wch: 15 }, // 用户昵称
-      { wch: 8 },  // 角色
+      { wch: 8 }, // 角色
       { wch: 18 }, // 加群时间
       { wch: 18 }, // 最后发言
       { wch: 16 }, // MC用户名
@@ -221,9 +226,9 @@ export class GroupExporter {
       { wch: 10 }, // 舰长等级
       { wch: 12 }, // 粉丝牌名称
       { wch: 10 }, // 粉丝牌等级
-      { wch: 8 },  // 荣耀等级
+      { wch: 8 }, // 荣耀等级
       { wch: 12 }, // 绑定状态
-      { wch: 18 }  // 最后修改时间
+      { wch: 18 } // 最后修改时间
     ]
 
     // 应用列宽到所有sheet
@@ -232,10 +237,10 @@ export class GroupExporter {
     unboundSheet['!cols'] = colWidths
 
     // 生成Excel文件
-    const excelBuffer = XLSX.write(workbook, { 
-      type: 'buffer', 
+    const excelBuffer = XLSX.write(workbook, {
+      type: 'buffer',
       bookType: 'xlsx',
-      compression: true 
+      compression: true
     })
 
     this.logger.debug('群数据导出', 'Excel文件生成完成')
@@ -261,12 +266,14 @@ export class GroupExporter {
       // 生成Excel文件
       const excelBuffer = this.generateExcelFile(mergedData, groupId)
 
-      this.logger.info('群数据导出', `群 ${groupId} 数据导出完成，共 ${members.length} 个成员，其中 ${mergedData.filter(d => d.绑定状态 !== '未绑定').length} 个已绑定`)
+      this.logger.info(
+        '群数据导出',
+        `群 ${groupId} 数据导出完成，共 ${members.length} 个成员，其中 ${mergedData.filter(d => d.绑定状态 !== '未绑定').length} 个已绑定`
+      )
 
       return excelBuffer
-
     } catch (error) {
-      this.logger.error('群数据导出', `导出群数据失败`, error)
+      this.logger.error('群数据导出', '导出群数据失败', error)
       throw error
     }
   }
@@ -276,7 +283,10 @@ export class GroupExporter {
    */
   getExportFileName(groupId: string): string {
     const now = new Date()
-    const dateStr = now.toISOString().slice(0, 19).replace(/[:\-T]/g, '')
+    const dateStr = now
+      .toISOString()
+      .slice(0, 19)
+      .replace(/[:\-T]/g, '')
     return `群${groupId}_绑定数据_${dateStr}.xlsx`
   }
 
@@ -293,13 +303,12 @@ export class GroupExporter {
 
       // 生成文件路径
       const filePath = path.join(tempDir, fileName)
-      
+
       // 写入文件
       fs.writeFileSync(filePath, excelBuffer)
 
       this.logger.debug('群数据导出', `Excel文件已保存到: ${filePath}`)
       return filePath
-
     } catch (error) {
       this.logger.error('群数据导出', `保存Excel文件失败: ${error.message}`)
       throw new Error(`保存文件失败: ${error.message}`)
@@ -321,7 +330,7 @@ export class GroupExporter {
       for (const file of files) {
         const filePath = path.join(tempDir, file)
         const stats = fs.statSync(filePath)
-        
+
         if (now - stats.mtime.getTime() > maxAge) {
           fs.unlinkSync(filePath)
           this.logger.debug('群数据导出', `已清理过期文件: ${file}`)
@@ -331,4 +340,4 @@ export class GroupExporter {
       this.logger.warn('群数据导出', `清理临时文件失败: ${error.message}`)
     }
   }
-} 
+}

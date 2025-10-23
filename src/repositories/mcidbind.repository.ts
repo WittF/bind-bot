@@ -56,17 +56,23 @@ export class MCIDBINDRepository {
   async findByUsernameIgnoreCase(mcUsername: string): Promise<MCIDBIND | null> {
     try {
       const normalizedInput = normalizeUsername(mcUsername, this.logger.getRawLogger())
-      this.logger.debug('数据库', `查询MC用户名(${mcUsername} -> ${normalizedInput})的绑定信息（不区分大小写）`)
+      this.logger.debug(
+        '数据库',
+        `查询MC用户名(${mcUsername} -> ${normalizedInput})的绑定信息（不区分大小写）`
+      )
 
       // 获取所有绑定记录，然后在应用层过滤（因为 Koishi 数据库不支持不区分大小写查询）
       const allBinds = await this.ctx.database.get('mcidbind', {})
-      const match = allBinds.find(bind =>
-        bind.mcUsername && normalizeUsername(bind.mcUsername) === normalizedInput
+      const match = allBinds.find(
+        bind => bind.mcUsername && normalizeUsername(bind.mcUsername) === normalizedInput
       )
 
       return match || null
     } catch (error) {
-      this.logger.error('数据库', `查询MC用户名(${mcUsername})绑定信息失败（不区分大小写）: ${error.message}`)
+      this.logger.error(
+        '数据库',
+        `查询MC用户名(${mcUsername})绑定信息失败（不区分大小写）: ${error.message}`
+      )
       return null
     }
   }
@@ -93,8 +99,8 @@ export class MCIDBINDRepository {
 
       // 如果都没有，在应用层过滤（去除连字符后比较）
       const allBinds = await this.ctx.database.get('mcidbind', {})
-      const match = allBinds.find(bind =>
-        bind.mcUuid && bind.mcUuid.replace(/-/g, '') === cleanUuid
+      const match = allBinds.find(
+        bind => bind.mcUuid && bind.mcUuid.replace(/-/g, '') === cleanUuid
       )
 
       return match || null
@@ -127,7 +133,10 @@ export class MCIDBINDRepository {
    */
   async findAll(options?: { limit?: number }): Promise<MCIDBIND[]> {
     try {
-      this.logger.debug('数据库', `获取所有绑定记录${options?.limit ? ` (limit: ${options.limit})` : ''}`)
+      this.logger.debug(
+        '数据库',
+        `获取所有绑定记录${options?.limit ? ` (limit: ${options.limit})` : ''}`
+      )
       const records = await this.ctx.database.get('mcidbind', {}, options)
       return records
     } catch (error) {
@@ -208,7 +217,7 @@ export class MCIDBINDRepository {
    */
   async deleteAll(): Promise<number> {
     try {
-      this.logger.debug('数据库', `删除所有绑定记录`)
+      this.logger.debug('数据库', '删除所有绑定记录')
       const result = await this.ctx.database.remove('mcidbind', {})
       this.logger.info('数据库', `成功删除所有绑定记录（删除${result.removed}条）`, true)
       return result.removed
@@ -303,7 +312,10 @@ export class MCIDBINDRepository {
         this.logger.info('数据库', `成功为QQ(${qqId})添加白名单服务器"${serverId}"`, true)
       }
     } catch (error) {
-      this.logger.error('数据库', `为QQ(${qqId})添加白名单服务器"${serverId}"失败: ${error.message}`)
+      this.logger.error(
+        '数据库',
+        `为QQ(${qqId})添加白名单服务器"${serverId}"失败: ${error.message}`
+      )
       throw error
     }
   }
@@ -328,7 +340,10 @@ export class MCIDBINDRepository {
         this.logger.info('数据库', `成功为QQ(${qqId})移除白名单服务器"${serverId}"`, true)
       }
     } catch (error) {
-      this.logger.error('数据库', `为QQ(${qqId})移除白名单服务器"${serverId}"失败: ${error.message}`)
+      this.logger.error(
+        '数据库',
+        `为QQ(${qqId})移除白名单服务器"${serverId}"失败: ${error.message}`
+      )
       throw error
     }
   }
@@ -339,7 +354,7 @@ export class MCIDBINDRepository {
    */
   async findAllAdmins(): Promise<MCIDBIND[]> {
     try {
-      this.logger.debug('数据库', `获取所有管理员`)
+      this.logger.debug('数据库', '获取所有管理员')
       const allRecords = await this.ctx.database.get('mcidbind', {})
       return allRecords.filter(record => record.isAdmin)
     } catch (error) {

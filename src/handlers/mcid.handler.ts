@@ -1,13 +1,8 @@
 import { Context, Session, h } from 'koishi'
 import { BaseHandler } from './base.handler'
-import type {
-  Config,
-  MCIDBIND,
-  MojangProfile
-} from '../types'
+import type { Config, MCIDBIND, MojangProfile } from '../types'
 
 export class McidCommandHandler extends BaseHandler {
-
   /**
    * 注册所有MCID命令
    */
@@ -15,51 +10,66 @@ export class McidCommandHandler extends BaseHandler {
     const cmd = this.ctx.command('mcid', 'MC账号绑定管理')
 
     // mcid.query - 查询MC账号
-    cmd.subcommand('.query [target:string]', '查询用户绑定的MC账号')
+    cmd
+      .subcommand('.query [target:string]', '查询用户绑定的MC账号')
       .action(async ({ session }, target) => this.handleQuery(session, target))
 
     // mcid.finduser - 通过MC用户名查询QQ号
-    cmd.subcommand('.finduser <username:string>', '[管理员]通过MC用户名查询绑定的QQ账号')
+    cmd
+      .subcommand('.finduser <username:string>', '[管理员]通过MC用户名查询绑定的QQ账号')
       .action(async ({ session }, username) => this.handleFindUser(session, username))
 
     // mcid.bind - 绑定MC账号
-    cmd.subcommand('.bind <username:string> [target:string]', '绑定MC账号')
+    cmd
+      .subcommand('.bind <username:string> [target:string]', '绑定MC账号')
       .action(async ({ session }, username, target) => this.handleBind(session, username, target))
 
     // mcid.change - 修改MC账号
-    cmd.subcommand('.change <username:string> [target:string]', '修改绑定的MC账号')
+    cmd
+      .subcommand('.change <username:string> [target:string]', '修改绑定的MC账号')
       .action(async ({ session }, username, target) => this.handleChange(session, username, target))
 
     // mcid.unbind - 解绑MC账号
-    cmd.subcommand('.unbind [target:string]', '[管理员]解绑MC账号')
+    cmd
+      .subcommand('.unbind [target:string]', '[管理员]解绑MC账号')
       .action(async ({ session }, target) => this.handleUnbind(session, target))
 
     // mcid.admin - 设置管理员
-    cmd.subcommand('.admin <target:string>', '[主人]将用户设为管理员')
+    cmd
+      .subcommand('.admin <target:string>', '[主人]将用户设为管理员')
       .action(async ({ session }, target) => this.handleAdmin(session, target))
 
     // mcid.unadmin - 撤销管理员
-    cmd.subcommand('.unadmin <target:string>', '[主人]撤销用户的管理员权限')
+    cmd
+      .subcommand('.unadmin <target:string>', '[主人]撤销用户的管理员权限')
       .action(async ({ session }, target) => this.handleUnadmin(session, target))
 
     // mcid.adminlist - 列出所有管理员
-    cmd.subcommand('.adminlist', '[主人]列出所有管理员')
+    cmd
+      .subcommand('.adminlist', '[主人]列出所有管理员')
       .action(async ({ session }) => this.handleAdminlist(session))
 
     // mcid.stats - 查看统计
-    cmd.subcommand('.stats', '[管理员]查看数据库统计信息')
+    cmd
+      .subcommand('.stats', '[管理员]查看数据库统计信息')
       .action(async ({ session }) => this.handleStats(session))
 
     // mcid.fixnicknames - 修复群昵称
-    cmd.subcommand('.fixnicknames [groupId:string]', '[管理员]检查并修复指定群或当前群的用户群昵称格式')
+    cmd
+      .subcommand(
+        '.fixnicknames [groupId:string]',
+        '[管理员]检查并修复指定群或当前群的用户群昵称格式'
+      )
       .action(async ({ session }, groupId) => this.handleFixNicknames(session, groupId))
 
     // mcid.clearreminder - 清除提醒
-    cmd.subcommand('.clearreminder [target:string]', '[管理员]清除用户的随机提醒冷却时间和提醒次数')
+    cmd
+      .subcommand('.clearreminder [target:string]', '[管理员]清除用户的随机提醒冷却时间和提醒次数')
       .action(async ({ session }, target) => this.handleClearReminder(session, target))
 
     // mcid.export - 导出数据
-    cmd.subcommand('.export <groupId:string>', '[管理员]导出指定群的成员和绑定信息为Excel文件')
+    cmd
+      .subcommand('.export <groupId:string>', '[管理员]导出指定群的成员和绑定信息为Excel文件')
       .action(async ({ session }, groupId) => this.handleExport(session, groupId))
   }
 
@@ -77,9 +87,15 @@ export class McidCommandHandler extends BaseHandler {
         if (!normalizedTargetId) {
           this.logger.warn('查询', `QQ(${normalizedUserId})提供的目标用户ID"${target}"无效`)
           if (target.startsWith('@')) {
-            return this.deps.sendMessage(session, [h.text('❌ 请使用真正的@功能，而不是手动输入@符号\n正确做法：点击或长按用户头像选择@功能')])
+            return this.deps.sendMessage(session, [
+              h.text(
+                '❌ 请使用真正的@功能，而不是手动输入@符号\n正确做法：点击或长按用户头像选择@功能'
+              )
+            ])
           }
-          return this.deps.sendMessage(session, [h.text('❌ 目标用户ID无效\n请提供有效的QQ号或使用@功能选择用户')])
+          return this.deps.sendMessage(session, [
+            h.text('❌ 目标用户ID无效\n请提供有效的QQ号或使用@功能选择用户')
+          ])
         }
 
         this.logger.info('查询', `QQ(${normalizedUserId})查询QQ(${normalizedTargetId})的MC账号信息`)
@@ -93,12 +109,16 @@ export class McidCommandHandler extends BaseHandler {
             const buidUser = await this.deps.apiService.validateBUID(targetBind.buidUid)
             if (buidUser) {
               await this.deps.databaseService.updateBuidInfoOnly(targetBind.qqId, buidUser)
-              const refreshedBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
+              const refreshedBind =
+                await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
               if (refreshedBind) {
                 let buidInfo = `该用户尚未绑定MC账号\n\nB站账号信息：\nB站UID: ${refreshedBind.buidUid}\n用户名: ${refreshedBind.buidUsername}`
                 if (refreshedBind.guardLevel > 0) {
                   buidInfo += `\n舰长等级: ${refreshedBind.guardLevelText} (${refreshedBind.guardLevel})`
-                  if (refreshedBind.maxGuardLevel > 0 && refreshedBind.maxGuardLevel < refreshedBind.guardLevel) {
+                  if (
+                    refreshedBind.maxGuardLevel > 0 &&
+                    refreshedBind.maxGuardLevel < refreshedBind.guardLevel
+                  ) {
                     buidInfo += `\n历史最高: ${refreshedBind.maxGuardLevelText} (${refreshedBind.maxGuardLevel})`
                   }
                 } else if (refreshedBind.maxGuardLevel > 0) {
@@ -110,7 +130,11 @@ export class McidCommandHandler extends BaseHandler {
 
                 const messageElements = [h.text(buidInfo)]
                 if (this.config.showAvatar) {
-                  messageElements.push(h.image(`https://workers.vrp.moe/bilibili/avatar/${refreshedBind.buidUid}?size=160`))
+                  messageElements.push(
+                    h.image(
+                      `https://workers.vrp.moe/bilibili/avatar/${refreshedBind.buidUid}?size=160`
+                    )
+                  )
                 }
                 return this.deps.sendMessage(session, messageElements)
               }
@@ -121,7 +145,8 @@ export class McidCommandHandler extends BaseHandler {
         }
 
         // 显示MC绑定信息（使用智能缓存检测，避免频繁API调用）
-        const updatedBind = await this.deps.databaseService.checkAndUpdateUsernameWithCache(targetBind)
+        const updatedBind =
+          await this.deps.databaseService.checkAndUpdateUsernameWithCache(targetBind)
         return this.buildQueryResponse(session, updatedBind, normalizedTargetId)
       }
 
@@ -142,7 +167,10 @@ export class McidCommandHandler extends BaseHandler {
               let buidInfo = `您尚未绑定MC账号\n\nB站账号信息：\nB站UID: ${refreshedBind.buidUid}\n用户名: ${refreshedBind.buidUsername}`
               if (refreshedBind.guardLevel > 0) {
                 buidInfo += `\n舰长等级: ${refreshedBind.guardLevelText} (${refreshedBind.guardLevel})`
-                if (refreshedBind.maxGuardLevel > 0 && refreshedBind.maxGuardLevel < refreshedBind.guardLevel) {
+                if (
+                  refreshedBind.maxGuardLevel > 0 &&
+                  refreshedBind.maxGuardLevel < refreshedBind.guardLevel
+                ) {
                   buidInfo += `\n历史最高: ${refreshedBind.maxGuardLevelText} (${refreshedBind.maxGuardLevel})`
                 }
               } else if (refreshedBind.maxGuardLevel > 0) {
@@ -156,14 +184,24 @@ export class McidCommandHandler extends BaseHandler {
 
               const messageElements = [h.text(buidInfo)]
               if (this.config.showAvatar) {
-                messageElements.push(h.image(`https://workers.vrp.moe/bilibili/avatar/${refreshedBind.buidUid}?size=160`))
+                messageElements.push(
+                  h.image(
+                    `https://workers.vrp.moe/bilibili/avatar/${refreshedBind.buidUid}?size=160`
+                  )
+                )
               }
               return this.deps.sendMessage(session, messageElements)
             }
           }
         }
 
-        return this.deps.sendMessage(session, [h.text('您尚未绑定MC账号，请使用 ' + this.deps.formatCommand('mcid bind <用户名>') + ' 进行绑定')])
+        return this.deps.sendMessage(session, [
+          h.text(
+            '您尚未绑定MC账号，请使用 ' +
+              this.deps.formatCommand('mcid bind <用户名>') +
+              ' 进行绑定'
+          )
+        ])
       }
 
       // 使用智能缓存检测，避免频繁API调用
@@ -179,7 +217,11 @@ export class McidCommandHandler extends BaseHandler {
   /**
    * 构建查询响应消息
    */
-  private async buildQueryResponse(session: Session, bind: MCIDBIND, targetId: string | null): Promise<void> {
+  private async buildQueryResponse(
+    session: Session,
+    bind: MCIDBIND,
+    targetId: string | null
+  ): Promise<void> {
     const formattedUuid = this.deps.apiService.formatUuid(bind.mcUuid)
 
     // MC头像
@@ -196,22 +238,25 @@ export class McidCommandHandler extends BaseHandler {
     let whitelistInfo = ''
     if (bind.whitelist && bind.whitelist.length > 0) {
       const circledNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩']
-      const serverList = bind.whitelist.map((serverId, index) => {
-        const server = this.deps.getServerConfigById(serverId)
-        if (!server) {
-          const disabledServer = this.config.servers?.find(s => s.id === serverId)
-          if (disabledServer && disabledServer.enabled === false) {
-            return `${index < circledNumbers.length ? circledNumbers[index] : (index+1)} ${disabledServer.name} [已停用]`
+      const serverList = bind.whitelist
+        .map((serverId, index) => {
+          const server = this.deps.getServerConfigById(serverId)
+          if (!server) {
+            const disabledServer = this.config.servers?.find(s => s.id === serverId)
+            if (disabledServer && disabledServer.enabled === false) {
+              return `${index < circledNumbers.length ? circledNumbers[index] : index + 1} ${disabledServer.name} [已停用]`
+            }
+            return `${index < circledNumbers.length ? circledNumbers[index] : index + 1} 未知服务器(ID: ${serverId})`
           }
-          return `${index < circledNumbers.length ? circledNumbers[index] : (index+1)} 未知服务器(ID: ${serverId})`
-        }
-        const circledNumber = index < circledNumbers.length ? circledNumbers[index] : `${index+1}`
-        let info = `${circledNumber} ${server.name}`
-        if (server.displayAddress && server.displayAddress.trim()) {
-          info += `\n   地址: ${server.displayAddress}`
-        }
-        return info
-      }).join('\n')
+          const circledNumber =
+            index < circledNumbers.length ? circledNumbers[index] : `${index + 1}`
+          let info = `${circledNumber} ${server.name}`
+          if (server.displayAddress && server.displayAddress.trim()) {
+            info += `\n   地址: ${server.displayAddress}`
+          }
+          return info
+        })
+        .join('\n')
       whitelistInfo = `\n已加入以下服务器的白名单:\n${serverList}`
     } else {
       whitelistInfo = '\n未加入任何服务器的白名单'
@@ -237,15 +282,23 @@ export class McidCommandHandler extends BaseHandler {
         buidAvatar = h.image(`https://workers.vrp.moe/bilibili/avatar/${bind.buidUid}?size=160`)
       }
     } else {
-      buidInfo = targetId ? '该用户尚未绑定B站账号' : `您尚未绑定B站账号，使用 ${this.deps.formatCommand('buid bind <B站UID>')} 进行绑定`
+      buidInfo = targetId
+        ? '该用户尚未绑定B站账号'
+        : `您尚未绑定B站账号，使用 ${this.deps.formatCommand('buid bind <B站UID>')} 进行绑定`
     }
 
-    this.logger.info('查询', `QQ(${bind.qqId})的MC账号信息：用户名=${bind.mcUsername}, UUID=${bind.mcUuid}`)
+    this.logger.info(
+      '查询',
+      `QQ(${bind.qqId})的MC账号信息：用户名=${bind.mcUsername}, UUID=${bind.mcUuid}`
+    )
 
-    const displayUsername = bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? bind.mcUsername : '未绑定'
+    const displayUsername =
+      bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? bind.mcUsername : '未绑定'
     const prefix = targetId ? `用户 ${targetId} 的` : '您的'
     const messageElements = [
-      h.text(`${prefix}MC账号信息：\n用户名: ${displayUsername}\nUUID: ${formattedUuid}${whitelistInfo}`),
+      h.text(
+        `${prefix}MC账号信息：\n用户名: ${displayUsername}\nUUID: ${formattedUuid}${whitelistInfo}`
+      ),
       ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : []),
       h.text(`\n${buidInfo}`),
       ...(buidAvatar ? [buidAvatar] : [])
@@ -256,8 +309,16 @@ export class McidCommandHandler extends BaseHandler {
 
     // 异步设置群昵称
     if (bind.buidUid && bind.buidUsername) {
-      const mcName = bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? bind.mcUsername : null
-      this.deps.nicknameService.autoSetGroupNickname(session, mcName, bind.buidUsername, bind.buidUid, targetId || undefined)
+      const mcName =
+        bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? bind.mcUsername : null
+      this.deps.nicknameService
+        .autoSetGroupNickname(
+          session,
+          mcName,
+          bind.buidUsername,
+          bind.buidUid,
+          targetId || undefined
+        )
         .catch(err => this.logger.warn('查询', `群昵称设置失败: ${err.message}`))
     } else {
       this.logger.info('查询', `QQ(${bind.qqId})未绑定B站账号，跳过群昵称设置`)
@@ -274,7 +335,7 @@ export class McidCommandHandler extends BaseHandler {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
 
       // 检查权限
-      if (!await this.deps.isAdmin(session.userId)) {
+      if (!(await this.deps.isAdmin(session.userId))) {
         this.logger.warn('反向查询', `权限不足: QQ(${normalizedUserId})不是管理员`)
         return this.deps.sendMessage(session, [h.text('只有管理员才能使用此命令')])
       }
@@ -284,7 +345,10 @@ export class McidCommandHandler extends BaseHandler {
         return this.deps.sendMessage(session, [h.text('请提供要查询的MC用户名')])
       }
 
-      this.logger.info('反向查询', `QQ(${normalizedUserId})尝试通过MC用户名"${username}"查询绑定的QQ账号`)
+      this.logger.info(
+        '反向查询',
+        `QQ(${normalizedUserId})尝试通过MC用户名"${username}"查询绑定的QQ账号`
+      )
 
       const bind = await this.deps.databaseService.getMcBindByUsername(username)
 
@@ -309,10 +373,12 @@ export class McidCommandHandler extends BaseHandler {
       let adminInfo = ''
       if (await this.deps.isAdmin(session.userId)) {
         if (bind.whitelist && bind.whitelist.length > 0) {
-          const serverList = bind.whitelist.map(serverId => {
-            const server = this.deps.getServerConfigById(serverId)
-            return server ? server.name : `未知服务器(${serverId})`
-          }).join('\n- ')
+          const serverList = bind.whitelist
+            .map(serverId => {
+              const server = this.deps.getServerConfigById(serverId)
+              return server ? server.name : `未知服务器(${serverId})`
+            })
+            .join('\n- ')
           adminInfo = `\n\n白名单服务器:\n- ${serverList}`
         } else {
           adminInfo = '\n\n未加入任何服务器白名单'
@@ -322,14 +388,20 @@ export class McidCommandHandler extends BaseHandler {
       }
 
       this.logger.info('反向查询', `成功: MC用户名"${username}"被QQ(${bind.qqId})绑定`)
-      const displayUsername = bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? bind.mcUsername : '未绑定'
+      const displayUsername =
+        bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? bind.mcUsername : '未绑定'
       return this.deps.sendMessage(session, [
-        h.text(`MC用户名"${displayUsername}"绑定信息:\nQQ号: ${bind.qqId}\nUUID: ${formattedUuid}${adminInfo}`),
+        h.text(
+          `MC用户名"${displayUsername}"绑定信息:\nQQ号: ${bind.qqId}\nUUID: ${formattedUuid}${adminInfo}`
+        ),
         ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : [])
       ])
     } catch (error) {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
-      this.logger.error('反向查询', `QQ(${normalizedUserId})通过MC用户名"${username}"查询失败: ${error.message}`)
+      this.logger.error(
+        '反向查询',
+        `QQ(${normalizedUserId})通过MC用户名"${username}"查询失败: ${error.message}`
+      )
       return this.deps.sendMessage(session, [h.text(this.deps.getFriendlyErrorMessage(error))])
     }
   }
@@ -344,14 +416,18 @@ export class McidCommandHandler extends BaseHandler {
       // 检查用户名格式
       if (!username || !/^[a-zA-Z0-9_]{3,16}$/.test(username)) {
         this.logger.warn('绑定', `QQ(${normalizedUserId})提供的用户名"${username}"格式无效`)
-        return this.deps.sendMessage(session, [h.text('请提供有效的Minecraft用户名（3-16位字母、数字、下划线）')])
+        return this.deps.sendMessage(session, [
+          h.text('请提供有效的Minecraft用户名（3-16位字母、数字、下划线）')
+        ])
       }
 
       // 验证用户名是否存在
       const profile = await this.deps.apiService.validateUsername(username)
       if (!profile) {
         this.logger.warn('绑定', `QQ(${normalizedUserId})提供的用户名"${username}"不存在`)
-        return this.deps.sendMessage(session, [h.text(`无法验证用户名: ${username}，该用户可能不存在`)])
+        return this.deps.sendMessage(session, [
+          h.text(`无法验证用户名: ${username}，该用户可能不存在`)
+        ])
       }
 
       username = profile.name
@@ -366,26 +442,42 @@ export class McidCommandHandler extends BaseHandler {
       return this.handleBindForSelf(session, username, uuid, normalizedUserId)
     } catch (error) {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
-      this.logger.error('绑定', `QQ(${normalizedUserId})绑定MC账号"${username}"失败: ${error.message}`)
+      this.logger.error(
+        '绑定',
+        `QQ(${normalizedUserId})绑定MC账号"${username}"失败: ${error.message}`
+      )
       return this.deps.sendMessage(session, [h.text(this.deps.getFriendlyErrorMessage(error))])
     }
   }
 
-  private async handleBindForOther(session: Session, username: string, uuid: string, target: string, operatorId: string): Promise<void> {
+  private async handleBindForOther(
+    session: Session,
+    username: string,
+    uuid: string,
+    target: string,
+    operatorId: string
+  ): Promise<void> {
     const normalizedTargetId = this.deps.normalizeQQId(target)
 
     if (!normalizedTargetId) {
       this.logger.warn('绑定', `QQ(${operatorId})提供的目标用户ID"${target}"无效`)
       if (target.startsWith('@')) {
-        return this.deps.sendMessage(session, [h.text('❌ 请使用真正的@功能，而不是手动输入@符号\n正确做法：点击或长按用户头像选择@功能')])
+        return this.deps.sendMessage(session, [
+          h.text('❌ 请使用真正的@功能，而不是手动输入@符号\n正确做法：点击或长按用户头像选择@功能')
+        ])
       }
-      return this.deps.sendMessage(session, [h.text('❌ 目标用户ID无效\n请提供有效的QQ号或使用@功能选择用户')])
+      return this.deps.sendMessage(session, [
+        h.text('❌ 目标用户ID无效\n请提供有效的QQ号或使用@功能选择用户')
+      ])
     }
 
-    this.logger.debug('绑定', `QQ(${operatorId})尝试为QQ(${normalizedTargetId})绑定MC账号: ${username}(${uuid})`)
+    this.logger.debug(
+      '绑定',
+      `QQ(${operatorId})尝试为QQ(${normalizedTargetId})绑定MC账号: ${username}(${uuid})`
+    )
 
     // 检查权限
-    if (!await this.deps.isAdmin(session.userId)) {
+    if (!(await this.deps.isAdmin(session.userId))) {
       this.logger.warn('绑定', `权限不足: QQ(${operatorId})不是管理员`)
       return this.deps.sendMessage(session, [h.text('只有管理员才能为其他用户绑定MC账号')])
     }
@@ -399,30 +491,56 @@ export class McidCommandHandler extends BaseHandler {
     // 绑定
     const bindResult = await this.deps.databaseService.createOrUpdateMcBind(target, username, uuid)
     if (!bindResult) {
-      this.logger.error('绑定', `管理员QQ(${operatorId})为QQ(${normalizedTargetId})绑定MC账号"${username}"失败`)
-      return this.deps.sendMessage(session, [h.text(`为用户 ${normalizedTargetId} 绑定MC账号失败: 数据库操作出错，请联系管理员`)])
+      this.logger.error(
+        '绑定',
+        `管理员QQ(${operatorId})为QQ(${normalizedTargetId})绑定MC账号"${username}"失败`
+      )
+      return this.deps.sendMessage(session, [
+        h.text(`为用户 ${normalizedTargetId} 绑定MC账号失败: 数据库操作出错，请联系管理员`)
+      ])
     }
 
-    this.logger.info('绑定', `成功: 管理员QQ(${operatorId})为QQ(${normalizedTargetId})绑定MC账号: ${username}(${uuid})`)
+    this.logger.info(
+      '绑定',
+      `成功: 管理员QQ(${operatorId})为QQ(${normalizedTargetId})绑定MC账号: ${username}(${uuid})`
+    )
 
     // 清理绑定会话
     this.deps.removeBindingSession(target, session.channelId)
-    this.logger.info('绑定', `管理员为QQ(${normalizedTargetId})绑定MC账号后，已清理该用户的交互式绑定会话`)
+    this.logger.info(
+      '绑定',
+      `管理员为QQ(${normalizedTargetId})绑定MC账号后，已清理该用户的交互式绑定会话`
+    )
 
     // 尝试设置群昵称
     let targetBuidStatus = ''
     try {
       const latestTargetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
       if (latestTargetBind && latestTargetBind.buidUid && latestTargetBind.buidUsername) {
-        await this.deps.nicknameService.autoSetGroupNickname(session, username, latestTargetBind.buidUsername, latestTargetBind.buidUid, normalizedTargetId)
-        this.logger.info('绑定', `管理员QQ(${operatorId})为QQ(${normalizedTargetId})MC绑定完成，已尝试设置群昵称`)
+        await this.deps.nicknameService.autoSetGroupNickname(
+          session,
+          username,
+          latestTargetBind.buidUsername,
+          latestTargetBind.buidUid,
+          normalizedTargetId
+        )
+        this.logger.info(
+          '绑定',
+          `管理员QQ(${operatorId})为QQ(${normalizedTargetId})MC绑定完成，已尝试设置群昵称`
+        )
         targetBuidStatus = '\n✅ 该用户已绑定B站账号，群昵称已更新'
       } else {
-        this.logger.info('绑定', `管理员QQ(${operatorId})为QQ(${normalizedTargetId})MC绑定完成，但目标用户未绑定B站账号`)
+        this.logger.info(
+          '绑定',
+          `管理员QQ(${operatorId})为QQ(${normalizedTargetId})MC绑定完成，但目标用户未绑定B站账号`
+        )
         targetBuidStatus = '\n⚠️ 该用户尚未绑定B站账号，建议提醒其使用 buid bind 命令完成B站绑定'
       }
     } catch (renameError) {
-      this.logger.warn('绑定', `管理员QQ(${operatorId})为QQ(${normalizedTargetId})MC绑定后群昵称设置失败: ${renameError.message}`)
+      this.logger.warn(
+        '绑定',
+        `管理员QQ(${operatorId})为QQ(${normalizedTargetId})MC绑定后群昵称设置失败: ${renameError.message}`
+      )
     }
 
     // MC头像
@@ -437,12 +555,19 @@ export class McidCommandHandler extends BaseHandler {
 
     const formattedUuid = this.deps.apiService.formatUuid(uuid)
     return this.deps.sendMessage(session, [
-      h.text(`已成功为用户 ${normalizedTargetId} 绑定MC账号\n用户名: ${username}\nUUID: ${formattedUuid}${targetBuidStatus}`),
+      h.text(
+        `已成功为用户 ${normalizedTargetId} 绑定MC账号\n用户名: ${username}\nUUID: ${formattedUuid}${targetBuidStatus}`
+      ),
       ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : [])
     ])
   }
 
-  private async handleBindForSelf(session: Session, username: string, uuid: string, operatorId: string): Promise<void> {
+  private async handleBindForSelf(
+    session: Session,
+    username: string,
+    uuid: string,
+    operatorId: string
+  ): Promise<void> {
     this.logger.debug('绑定', `QQ(${operatorId})尝试绑定MC账号: ${username}(${uuid})`)
 
     // 检查是否已绑定
@@ -452,22 +577,52 @@ export class McidCommandHandler extends BaseHandler {
 
       if (!isTempUsername) {
         // 检查冷却时间
-        if (!await this.deps.isAdmin(session.userId) && !this.deps.checkCooldown(selfBind.lastModified)) {
+        if (
+          !(await this.deps.isAdmin(session.userId)) &&
+          !this.deps.checkCooldown(selfBind.lastModified)
+        ) {
           const days = this.config.cooldownDays
           const now = new Date()
           const diffTime = now.getTime() - selfBind.lastModified.getTime()
           const passedDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
           const remainingDays = days - passedDays
 
-          this.logger.warn('绑定', `QQ(${operatorId})已绑定MC账号"${selfBind.mcUsername}"，且在冷却期内`)
-          const displayUsername = selfBind.mcUsername && !selfBind.mcUsername.startsWith('_temp_') ? selfBind.mcUsername : '未绑定'
-          return this.deps.sendMessage(session, [h.text(`您已绑定MC账号: ${displayUsername}，如需修改，请在冷却期结束后(还需${remainingDays}天)使用 ` + this.deps.formatCommand('mcid change') + ` 命令或联系管理员。`)])
+          this.logger.warn(
+            '绑定',
+            `QQ(${operatorId})已绑定MC账号"${selfBind.mcUsername}"，且在冷却期内`
+          )
+          const displayUsername =
+            selfBind.mcUsername && !selfBind.mcUsername.startsWith('_temp_')
+              ? selfBind.mcUsername
+              : '未绑定'
+          return this.deps.sendMessage(session, [
+            h.text(
+              `您已绑定MC账号: ${displayUsername}，如需修改，请在冷却期结束后(还需${remainingDays}天)使用 ` +
+                this.deps.formatCommand('mcid change') +
+                ' 命令或联系管理员。'
+            )
+          ])
         }
-        this.logger.debug('绑定', `QQ(${operatorId})已绑定MC账号"${selfBind.mcUsername}"，建议使用change命令`)
-        const displayUsername = selfBind.mcUsername && !selfBind.mcUsername.startsWith('_temp_') ? selfBind.mcUsername : '未绑定'
-        return this.deps.sendMessage(session, [h.text(`您已绑定MC账号: ${displayUsername}，如需修改请使用 ` + this.deps.formatCommand('mcid change') + ` 命令。`)])
+        this.logger.debug(
+          '绑定',
+          `QQ(${operatorId})已绑定MC账号"${selfBind.mcUsername}"，建议使用change命令`
+        )
+        const displayUsername =
+          selfBind.mcUsername && !selfBind.mcUsername.startsWith('_temp_')
+            ? selfBind.mcUsername
+            : '未绑定'
+        return this.deps.sendMessage(session, [
+          h.text(
+            `您已绑定MC账号: ${displayUsername}，如需修改请使用 ` +
+              this.deps.formatCommand('mcid change') +
+              ' 命令。'
+          )
+        ])
       } else {
-        this.logger.debug('绑定', `QQ(${operatorId})之前绑定的是临时用户名"${selfBind.mcUsername}"，允许直接使用bind命令`)
+        this.logger.debug(
+          '绑定',
+          `QQ(${operatorId})之前绑定的是临时用户名"${selfBind.mcUsername}"，允许直接使用bind命令`
+        )
       }
     }
 
@@ -478,7 +633,11 @@ export class McidCommandHandler extends BaseHandler {
     }
 
     // 绑定
-    const bindResult = await this.deps.databaseService.createOrUpdateMcBind(session.userId, username, uuid)
+    const bindResult = await this.deps.databaseService.createOrUpdateMcBind(
+      session.userId,
+      username,
+      uuid
+    )
     if (!bindResult) {
       this.logger.error('绑定', `QQ(${operatorId})绑定MC账号"${username}"失败`)
       return this.deps.sendMessage(session, [h.text('绑定失败，数据库操作出错，请联系管理员')])
@@ -491,7 +650,12 @@ export class McidCommandHandler extends BaseHandler {
     try {
       const latestBind = await this.deps.databaseService.getMcBindByQQId(operatorId)
       if (latestBind && latestBind.buidUid && latestBind.buidUsername) {
-        await this.deps.nicknameService.autoSetGroupNickname(session, username, latestBind.buidUsername, latestBind.buidUid)
+        await this.deps.nicknameService.autoSetGroupNickname(
+          session,
+          username,
+          latestBind.buidUsername,
+          latestBind.buidUid
+        )
         this.logger.info('绑定', `QQ(${operatorId})MC绑定完成，已尝试设置群昵称`)
       } else {
         buidReminder = `\n\n💡 提醒：您还未绑定B站账号，建议使用 ${this.deps.formatCommand('buid bind <B站UID>')} 完成B站绑定以享受完整功能`
@@ -528,14 +692,18 @@ export class McidCommandHandler extends BaseHandler {
       // 检查用户名格式
       if (!username || !/^[a-zA-Z0-9_]{3,16}$/.test(username)) {
         this.logger.warn('修改', `QQ(${normalizedUserId})提供的用户名"${username}"格式无效`)
-        return this.deps.sendMessage(session, [h.text('请提供有效的Minecraft用户名（3-16位字母、数字、下划线）')])
+        return this.deps.sendMessage(session, [
+          h.text('请提供有效的Minecraft用户名（3-16位字母、数字、下划线）')
+        ])
       }
 
       // 验证用户名是否存在
       const profile = await this.deps.apiService.validateUsername(username)
       if (!profile) {
         this.logger.warn('修改', `QQ(${normalizedUserId})提供的用户名"${username}"不存在`)
-        return this.deps.sendMessage(session, [h.text(`无法验证用户名: ${username}，该用户可能不存在`)])
+        return this.deps.sendMessage(session, [
+          h.text(`无法验证用户名: ${username}，该用户可能不存在`)
+        ])
       }
 
       username = profile.name
@@ -550,26 +718,42 @@ export class McidCommandHandler extends BaseHandler {
       return this.handleChangeForSelf(session, username, uuid, normalizedUserId)
     } catch (error) {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
-      this.logger.error('修改', `QQ(${normalizedUserId})修改MC账号为"${username}"失败: ${error.message}`)
+      this.logger.error(
+        '修改',
+        `QQ(${normalizedUserId})修改MC账号为"${username}"失败: ${error.message}`
+      )
       return this.deps.sendMessage(session, [h.text(this.deps.getFriendlyErrorMessage(error))])
     }
   }
 
-  private async handleChangeForOther(session: Session, username: string, uuid: string, target: string, operatorId: string): Promise<void> {
+  private async handleChangeForOther(
+    session: Session,
+    username: string,
+    uuid: string,
+    target: string,
+    operatorId: string
+  ): Promise<void> {
     const normalizedTargetId = this.deps.normalizeQQId(target)
 
     if (!normalizedTargetId) {
       this.logger.warn('修改', `QQ(${operatorId})提供的目标用户ID"${target}"无效`)
       if (target.startsWith('@')) {
-        return this.deps.sendMessage(session, [h.text('❌ 请使用真正的@功能，而不是手动输入@符号\n正确做法：点击或长按用户头像选择@功能')])
+        return this.deps.sendMessage(session, [
+          h.text('❌ 请使用真正的@功能，而不是手动输入@符号\n正确做法：点击或长按用户头像选择@功能')
+        ])
       }
-      return this.deps.sendMessage(session, [h.text('❌ 目标用户ID无效\n请提供有效的QQ号或使用@功能选择用户')])
+      return this.deps.sendMessage(session, [
+        h.text('❌ 目标用户ID无效\n请提供有效的QQ号或使用@功能选择用户')
+      ])
     }
 
-    this.logger.info('修改', `QQ(${operatorId})尝试修改QQ(${normalizedTargetId})的MC账号为: ${username}(${uuid})`)
+    this.logger.info(
+      '修改',
+      `QQ(${operatorId})尝试修改QQ(${normalizedTargetId})的MC账号为: ${username}(${uuid})`
+    )
 
     // 检查权限
-    if (!await this.deps.isAdmin(session.userId)) {
+    if (!(await this.deps.isAdmin(session.userId))) {
       this.logger.warn('修改', `权限不足: QQ(${operatorId})不是管理员`)
       return this.deps.sendMessage(session, [h.text('只有管理员才能修改其他用户的MC账号')])
     }
@@ -579,13 +763,21 @@ export class McidCommandHandler extends BaseHandler {
 
     if (!targetBind || !targetBind.mcUsername) {
       this.logger.warn('修改', `QQ(${normalizedTargetId})尚未绑定MC账号`)
-      return this.deps.sendMessage(session, [h.text(`用户 ${normalizedTargetId} 尚未绑定MC账号，请先使用 ` + this.deps.formatCommand('mcid bind') + ` 命令进行绑定`)])
+      return this.deps.sendMessage(session, [
+        h.text(
+          `用户 ${normalizedTargetId} 尚未绑定MC账号，请先使用 ` +
+            this.deps.formatCommand('mcid bind') +
+            ' 命令进行绑定'
+        )
+      ])
     }
 
     // 检查是否与当前用户名相同
     if (targetBind.mcUsername === username) {
       this.logger.warn('修改', `QQ(${normalizedTargetId})已绑定相同的MC账号"${username}"`)
-      return this.deps.sendMessage(session, [h.text(`用户 ${normalizedTargetId} 当前已绑定此用户名: ${username}`)])
+      return this.deps.sendMessage(session, [
+        h.text(`用户 ${normalizedTargetId} 当前已绑定此用户名: ${username}`)
+      ])
     }
 
     // 检查用户名是否已被占用（支持改名检测）
@@ -600,10 +792,15 @@ export class McidCommandHandler extends BaseHandler {
     const bindResult = await this.deps.databaseService.createOrUpdateMcBind(target, username, uuid)
     if (!bindResult) {
       this.logger.error('修改', `管理员QQ(${operatorId})修改QQ(${normalizedTargetId})的MC账号失败`)
-      return this.deps.sendMessage(session, [h.text(`修改用户 ${normalizedTargetId} 的MC账号失败: 数据库操作出错，请联系管理员`)])
+      return this.deps.sendMessage(session, [
+        h.text(`修改用户 ${normalizedTargetId} 的MC账号失败: 数据库操作出错，请联系管理员`)
+      ])
     }
 
-    this.logger.info('修改', `成功: 管理员QQ(${operatorId})修改QQ(${normalizedTargetId})的MC账号: ${oldUsername} -> ${username}(${uuid})`)
+    this.logger.info(
+      '修改',
+      `成功: 管理员QQ(${operatorId})修改QQ(${normalizedTargetId})的MC账号: ${oldUsername} -> ${username}(${uuid})`
+    )
 
     // MC头像
     let mcAvatarUrl = null
@@ -617,18 +814,27 @@ export class McidCommandHandler extends BaseHandler {
 
     const formattedUuid = this.deps.apiService.formatUuid(uuid)
     return this.deps.sendMessage(session, [
-      h.text(`已成功将用户 ${normalizedTargetId} 的MC账号从 ${oldUsername} 修改为 ${username}\nUUID: ${formattedUuid}`),
+      h.text(
+        `已成功将用户 ${normalizedTargetId} 的MC账号从 ${oldUsername} 修改为 ${username}\nUUID: ${formattedUuid}`
+      ),
       ...(mcAvatarUrl ? [h.image(mcAvatarUrl)] : [])
     ])
   }
 
-  private async handleChangeForSelf(session: Session, username: string, uuid: string, operatorId: string): Promise<void> {
+  private async handleChangeForSelf(
+    session: Session,
+    username: string,
+    uuid: string,
+    operatorId: string
+  ): Promise<void> {
     const selfBind = await this.deps.databaseService.getMcBindByQQId(operatorId)
 
     // 检查是否已绑定
     if (!selfBind || !selfBind.mcUsername) {
       this.logger.warn('修改', `QQ(${operatorId})尚未绑定MC账号`)
-      return this.deps.sendMessage(session, [h.text('您尚未绑定MC账号，请使用 ' + this.deps.formatCommand('mcid bind') + ' 命令进行绑定')])
+      return this.deps.sendMessage(session, [
+        h.text('您尚未绑定MC账号，请使用 ' + this.deps.formatCommand('mcid bind') + ' 命令进行绑定')
+      ])
     }
 
     // 检查是否与当前用户名相同
@@ -638,7 +844,10 @@ export class McidCommandHandler extends BaseHandler {
     }
 
     // 检查冷却时间
-    if (!await this.deps.isAdmin(session.userId) && !this.deps.checkCooldown(selfBind.lastModified)) {
+    if (
+      !(await this.deps.isAdmin(session.userId)) &&
+      !this.deps.checkCooldown(selfBind.lastModified)
+    ) {
       const days = this.config.cooldownDays
       const now = new Date()
       const diffTime = now.getTime() - selfBind.lastModified.getTime()
@@ -646,7 +855,11 @@ export class McidCommandHandler extends BaseHandler {
       const remainingDays = days - passedDays
 
       this.logger.warn('修改', `QQ(${operatorId})在冷却期内，无法修改MC账号`)
-      return this.deps.sendMessage(session, [h.text(`您的MC账号绑定在冷却期内，还需${remainingDays}天才能修改。如需立即修改，请联系管理员。`)])
+      return this.deps.sendMessage(session, [
+        h.text(
+          `您的MC账号绑定在冷却期内，还需${remainingDays}天才能修改。如需立即修改，请联系管理员。`
+        )
+      ])
     }
 
     // 检查用户名是否已被占用（支持改名检测）
@@ -658,13 +871,20 @@ export class McidCommandHandler extends BaseHandler {
     const oldUsername = selfBind.mcUsername
 
     // 更新绑定信息
-    const bindResult = await this.deps.databaseService.createOrUpdateMcBind(session.userId, username, uuid)
+    const bindResult = await this.deps.databaseService.createOrUpdateMcBind(
+      session.userId,
+      username,
+      uuid
+    )
     if (!bindResult) {
       this.logger.error('修改', `QQ(${operatorId})修改MC账号失败`)
       return this.deps.sendMessage(session, [h.text('修改失败，数据库操作出错，请联系管理员')])
     }
 
-    this.logger.info('修改', `成功: QQ(${operatorId})修改MC账号: ${oldUsername} -> ${username}(${uuid})`)
+    this.logger.info(
+      '修改',
+      `成功: QQ(${operatorId})修改MC账号: ${oldUsername} -> ${username}(${uuid})`
+    )
 
     // MC头像
     let mcAvatarUrl = null
@@ -700,26 +920,37 @@ export class McidCommandHandler extends BaseHandler {
     } catch (error) {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
       const targetInfo = target ? `为QQ(${this.deps.normalizeQQId(target)})` : ''
-      this.logger.error('解绑', `QQ(${normalizedUserId})${targetInfo}解绑MC账号失败: ${error.message}`)
+      this.logger.error(
+        '解绑',
+        `QQ(${normalizedUserId})${targetInfo}解绑MC账号失败: ${error.message}`
+      )
       return this.deps.sendMessage(session, [h.text(this.deps.getFriendlyErrorMessage(error))])
     }
   }
 
-  private async handleUnbindForOther(session: Session, target: string, operatorId: string): Promise<void> {
+  private async handleUnbindForOther(
+    session: Session,
+    target: string,
+    operatorId: string
+  ): Promise<void> {
     const normalizedTargetId = this.deps.normalizeQQId(target)
 
     if (!normalizedTargetId) {
       this.logger.warn('解绑', `QQ(${operatorId})提供的目标用户ID"${target}"无效`)
       if (target.startsWith('@')) {
-        return this.deps.sendMessage(session, [h.text('❌ 请使用真正的@功能，而不是手动输入@符号\n正确做法：点击或长按用户头像选择@功能')])
+        return this.deps.sendMessage(session, [
+          h.text('❌ 请使用真正的@功能，而不是手动输入@符号\n正确做法：点击或长按用户头像选择@功能')
+        ])
       }
-      return this.deps.sendMessage(session, [h.text('❌ 目标用户ID无效\n请提供有效的QQ号或使用@功能选择用户')])
+      return this.deps.sendMessage(session, [
+        h.text('❌ 目标用户ID无效\n请提供有效的QQ号或使用@功能选择用户')
+      ])
     }
 
     this.logger.info('解绑', `QQ(${operatorId})尝试为QQ(${normalizedTargetId})解绑MC账号`)
 
     // 检查权限
-    if (!await this.deps.isAdmin(session.userId)) {
+    if (!(await this.deps.isAdmin(session.userId))) {
       this.logger.warn('解绑', `权限不足: QQ(${operatorId})不是管理员`)
       return this.deps.sendMessage(session, [h.text('只有管理员才能为其他用户解绑MC账号')])
     }
@@ -732,14 +963,24 @@ export class McidCommandHandler extends BaseHandler {
       return this.deps.sendMessage(session, [h.text(`用户 ${normalizedTargetId} 尚未绑定MC账号`)])
     }
 
-    const oldUsername = targetBind.mcUsername && !targetBind.mcUsername.startsWith('_temp_') ? targetBind.mcUsername : '未绑定'
-    const oldBuidInfo = targetBind.buidUid ? ` 和 B站账号: ${targetBind.buidUsername}(${targetBind.buidUid})` : ''
+    const oldUsername =
+      targetBind.mcUsername && !targetBind.mcUsername.startsWith('_temp_')
+        ? targetBind.mcUsername
+        : '未绑定'
+    const oldBuidInfo = targetBind.buidUid
+      ? ` 和 B站账号: ${targetBind.buidUsername}(${targetBind.buidUid})`
+      : ''
 
     // 删除绑定记录
     await this.deps.databaseService.deleteMcBind(target)
 
-    this.logger.info('解绑', `成功: 管理员QQ(${operatorId})为QQ(${normalizedTargetId})解绑MC账号: ${oldUsername}${oldBuidInfo}`)
-    return this.deps.sendMessage(session, [h.text(`已成功为用户 ${normalizedTargetId} 解绑MC账号: ${oldUsername}${oldBuidInfo}`)])
+    this.logger.info(
+      '解绑',
+      `成功: 管理员QQ(${operatorId})为QQ(${normalizedTargetId})解绑MC账号: ${oldUsername}${oldBuidInfo}`
+    )
+    return this.deps.sendMessage(session, [
+      h.text(`已成功为用户 ${normalizedTargetId} 解绑MC账号: ${oldUsername}${oldBuidInfo}`)
+    ])
   }
 
   private async handleUnbindForSelf(session: Session, operatorId: string): Promise<void> {
@@ -752,14 +993,21 @@ export class McidCommandHandler extends BaseHandler {
       return this.deps.sendMessage(session, [h.text('您尚未绑定MC账号')])
     }
 
-    const oldUsername = selfBind.mcUsername && !selfBind.mcUsername.startsWith('_temp_') ? selfBind.mcUsername : '未绑定'
-    const oldBuidInfo = selfBind.buidUid ? ` 和 B站账号: ${selfBind.buidUsername}(${selfBind.buidUid})` : ''
+    const oldUsername =
+      selfBind.mcUsername && !selfBind.mcUsername.startsWith('_temp_')
+        ? selfBind.mcUsername
+        : '未绑定'
+    const oldBuidInfo = selfBind.buidUid
+      ? ` 和 B站账号: ${selfBind.buidUsername}(${selfBind.buidUid})`
+      : ''
 
     // 删除绑定记录
     await this.deps.databaseService.deleteMcBind(operatorId)
 
     this.logger.info('解绑', `成功: QQ(${operatorId})解绑MC账号: ${oldUsername}${oldBuidInfo}`)
-    return this.deps.sendMessage(session, [h.text(`已成功解绑MC账号: ${oldUsername}${oldBuidInfo}`)])
+    return this.deps.sendMessage(session, [
+      h.text(`已成功解绑MC账号: ${oldUsername}${oldBuidInfo}`)
+    ])
   }
 
   /**
@@ -789,10 +1037,15 @@ export class McidCommandHandler extends BaseHandler {
       // 如果用户存在绑定记录，更新为管理员
       if (targetBind) {
         await this.repos.mcidbind.update(normalizedTargetId, {
-          isAdmin: true,
+          isAdmin: true
         })
-        this.logger.info('管理员', `成功: 主人QQ(${normalizedUserId})将QQ(${normalizedTargetId})设为管理员`)
-        return this.deps.sendMessage(session, [h.text(`已成功将用户 ${normalizedTargetId} 设为管理员`)])
+        this.logger.info(
+          '管理员',
+          `成功: 主人QQ(${normalizedUserId})将QQ(${normalizedTargetId})设为管理员`
+        )
+        return this.deps.sendMessage(session, [
+          h.text(`已成功将用户 ${normalizedTargetId} 设为管理员`)
+        ])
       } else {
         // 用户不存在绑定记录，创建一个新记录并设为管理员
         const tempUsername = `_temp_${normalizedTargetId}`
@@ -804,17 +1057,27 @@ export class McidCommandHandler extends BaseHandler {
             lastModified: new Date(),
             isAdmin: true
           })
-          this.logger.info('管理员', `成功: 主人QQ(${normalizedUserId})将QQ(${normalizedTargetId})设为管理员 (创建新记录)`)
-          return this.deps.sendMessage(session, [h.text(`已成功将用户 ${normalizedTargetId} 设为管理员 (未绑定MC账号)`)])
+          this.logger.info(
+            '管理员',
+            `成功: 主人QQ(${normalizedUserId})将QQ(${normalizedTargetId})设为管理员 (创建新记录)`
+          )
+          return this.deps.sendMessage(session, [
+            h.text(`已成功将用户 ${normalizedTargetId} 设为管理员 (未绑定MC账号)`)
+          ])
         } catch (createError) {
           this.logger.error('管理员', `创建管理员记录失败: ${createError.message}`)
-          return this.deps.sendMessage(session, [h.text(this.deps.getFriendlyErrorMessage(createError))])
+          return this.deps.sendMessage(session, [
+            h.text(this.deps.getFriendlyErrorMessage(createError))
+          ])
         }
       }
     } catch (error) {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
       const normalizedTargetId = this.deps.normalizeQQId(target)
-      this.logger.error('管理员', `QQ(${normalizedUserId})将QQ(${normalizedTargetId})设为管理员失败: ${error.message}`)
+      this.logger.error(
+        '管理员',
+        `QQ(${normalizedUserId})将QQ(${normalizedTargetId})设为管理员失败: ${error.message}`
+      )
       return this.deps.sendMessage(session, [h.text(this.deps.getFriendlyErrorMessage(error))])
     }
   }
@@ -826,7 +1089,10 @@ export class McidCommandHandler extends BaseHandler {
     try {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
       const normalizedTargetId = this.deps.normalizeQQId(target)
-      this.logger.info('管理员', `QQ(${normalizedUserId})尝试撤销QQ(${normalizedTargetId})的管理员权限`)
+      this.logger.info(
+        '管理员',
+        `QQ(${normalizedUserId})尝试撤销QQ(${normalizedTargetId})的管理员权限`
+      )
 
       // 检查是否为主人
       if (!this.deps.isMaster(session.userId)) {
@@ -845,15 +1111,23 @@ export class McidCommandHandler extends BaseHandler {
 
       // 撤销管理员权限
       await this.repos.mcidbind.update(normalizedTargetId, {
-        isAdmin: false,
+        isAdmin: false
       })
 
-      this.logger.info('管理员', `成功: 主人QQ(${normalizedUserId})撤销了QQ(${normalizedTargetId})的管理员权限`)
-      return this.deps.sendMessage(session, [h.text(`已成功撤销用户 ${normalizedTargetId} 的管理员权限`)])
+      this.logger.info(
+        '管理员',
+        `成功: 主人QQ(${normalizedUserId})撤销了QQ(${normalizedTargetId})的管理员权限`
+      )
+      return this.deps.sendMessage(session, [
+        h.text(`已成功撤销用户 ${normalizedTargetId} 的管理员权限`)
+      ])
     } catch (error) {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
       const normalizedTargetId = this.deps.normalizeQQId(target)
-      this.logger.error('管理员', `QQ(${normalizedUserId})撤销QQ(${normalizedTargetId})的管理员权限失败: ${error.message}`)
+      this.logger.error(
+        '管理员',
+        `QQ(${normalizedUserId})撤销QQ(${normalizedTargetId})的管理员权限失败: ${error.message}`
+      )
       return this.deps.sendMessage(session, [h.text(this.deps.getFriendlyErrorMessage(error))])
     }
   }
@@ -876,18 +1150,23 @@ export class McidCommandHandler extends BaseHandler {
       const admins = await this.repos.mcidbind.findAllAdmins()
 
       if (admins.length === 0) {
-        this.logger.info('管理员', `管理员列表为空`)
+        this.logger.info('管理员', '管理员列表为空')
         return this.deps.sendMessage(session, [h.text('当前没有管理员')])
       }
 
       // 格式化管理员列表
-      const adminList = admins.map(admin => {
-        const displayUsername = admin.mcUsername && !admin.mcUsername.startsWith('_temp_') ? admin.mcUsername : null
-        return `- ${admin.qqId}${displayUsername ? ` (MC: ${displayUsername})` : ''}`
-      }).join('\n')
+      const adminList = admins
+        .map(admin => {
+          const displayUsername =
+            admin.mcUsername && !admin.mcUsername.startsWith('_temp_') ? admin.mcUsername : null
+          return `- ${admin.qqId}${displayUsername ? ` (MC: ${displayUsername})` : ''}`
+        })
+        .join('\n')
 
       this.logger.info('管理员', `成功: 主人QQ(${normalizedUserId})查看了管理员列表`)
-      return this.deps.sendMessage(session, [h.text(`管理员列表:\n${adminList}\n\n共 ${admins.length} 名管理员`)])
+      return this.deps.sendMessage(session, [
+        h.text(`管理员列表:\n${adminList}\n\n共 ${admins.length} 名管理员`)
+      ])
     } catch (error) {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
       this.logger.error('管理员', `QQ(${normalizedUserId})查看管理员列表失败: ${error.message}`)
@@ -904,7 +1183,7 @@ export class McidCommandHandler extends BaseHandler {
       this.logger.info('统计', `QQ(${normalizedUserId})尝试查看数据库统计`)
 
       // 检查权限
-      if (!await this.deps.isAdmin(session.userId)) {
+      if (!(await this.deps.isAdmin(session.userId))) {
         this.logger.warn('统计', `权限不足: QQ(${normalizedUserId})不是管理员`)
         return this.deps.sendMessage(session, [h.text('只有管理员才能查看统计信息')])
       }
@@ -928,7 +1207,7 @@ export class McidCommandHandler extends BaseHandler {
         }
       }
 
-      let statsInfo = `📊 绑定统计\n`
+      let statsInfo = '📊 绑定统计\n'
       statsInfo += `\n已绑定MCID: ${mcidBoundUsers}人\n`
       statsInfo += `已绑定BUID: ${buidBoundUsers}人`
 
@@ -949,7 +1228,7 @@ export class McidCommandHandler extends BaseHandler {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
 
       // 检查权限
-      if (!await this.deps.isAdmin(session.userId)) {
+      if (!(await this.deps.isAdmin(session.userId))) {
         this.logger.warn('群昵称修复', `权限不足: QQ(${normalizedUserId})不是管理员`)
         return this.deps.sendMessage(session, [h.text('只有管理员才能执行群昵称修复操作')])
       }
@@ -969,12 +1248,19 @@ export class McidCommandHandler extends BaseHandler {
         }
       } catch (error) {
         this.logger.warn('群昵称修复', `Bot不在群${targetGroupId}中或无法获取群信息`)
-        return this.deps.sendMessage(session, [h.text(`❌ Bot不在群 ${targetGroupId} 中或无权限操作该群`)])
+        return this.deps.sendMessage(session, [
+          h.text(`❌ Bot不在群 ${targetGroupId} 中或无权限操作该群`)
+        ])
       }
 
       const groupDisplayText = groupId ? `群 ${targetGroupId}` : '当前群'
-      this.logger.info('群昵称修复', `管理员QQ(${normalizedUserId})开始批量修复${groupDisplayText}的群昵称`)
-      await this.deps.sendMessage(session, [h.text(`🔧 开始检查并修复${groupDisplayText}的所有用户群昵称格式，请稍候...`)])
+      this.logger.info(
+        '群昵称修复',
+        `管理员QQ(${normalizedUserId})开始批量修复${groupDisplayText}的群昵称`
+      )
+      await this.deps.sendMessage(session, [
+        h.text(`🔧 开始检查并修复${groupDisplayText}的所有用户群昵称格式，请稍候...`)
+      ])
 
       // 获取所有已绑定B站的用户
       const allBinds = await this.repos.mcidbind.findAll()
@@ -993,7 +1279,10 @@ export class McidCommandHandler extends BaseHandler {
           let currentNickname = ''
           try {
             if (session.bot.internal) {
-              const groupInfo = await session.bot.internal.getGroupMemberInfo(targetGroupId, bind.qqId)
+              const groupInfo = await session.bot.internal.getGroupMemberInfo(
+                targetGroupId,
+                bind.qqId
+              )
               currentNickname = groupInfo.card || groupInfo.nickname || ''
             }
           } catch (error) {
@@ -1003,12 +1292,24 @@ export class McidCommandHandler extends BaseHandler {
           }
 
           // 检查昵称格式
-          const mcInfo = bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? bind.mcUsername : null
-          const isCorrect = this.deps.nicknameService.checkNicknameFormat(currentNickname, bind.buidUsername, mcInfo)
+          const mcInfo =
+            bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? bind.mcUsername : null
+          const isCorrect = this.deps.nicknameService.checkNicknameFormat(
+            currentNickname,
+            bind.buidUsername,
+            mcInfo
+          )
 
           if (!isCorrect) {
             // 修复群昵称
-            await this.deps.nicknameService.autoSetGroupNickname(session, mcInfo, bind.buidUsername, bind.buidUid, bind.qqId, targetGroupId)
+            await this.deps.nicknameService.autoSetGroupNickname(
+              session,
+              mcInfo,
+              bind.buidUsername,
+              bind.buidUid,
+              bind.qqId,
+              targetGroupId
+            )
             fixedCount++
 
             const expectedFormat = `${bind.buidUsername}（ID:${mcInfo || '未绑定'}）`
@@ -1022,9 +1323,12 @@ export class McidCommandHandler extends BaseHandler {
 
           // 每处理10个用户发送一次进度
           if (checkedCount % 10 === 0) {
-            await this.deps.sendMessage(session, [h.text(`进度: ${checkedCount}/${usersWithBuid.length} | 修复: ${fixedCount} | 错误: ${errorCount}`)])
+            await this.deps.sendMessage(session, [
+              h.text(
+                `进度: ${checkedCount}/${usersWithBuid.length} | 修复: ${fixedCount} | 错误: ${errorCount}`
+              )
+            ])
           }
-
         } catch (error) {
           errorCount++
           results.push(`❌ ${bind.qqId}: 处理出错 - ${error.message}`)
@@ -1047,7 +1351,10 @@ export class McidCommandHandler extends BaseHandler {
         }
       }
 
-      this.logger.info('群昵称修复', `修复完成: 管理员QQ(${normalizedUserId})在${groupDisplayText}检查${checkedCount}个用户，修复${fixedCount}个，错误${errorCount}个`)
+      this.logger.info(
+        '群昵称修复',
+        `修复完成: 管理员QQ(${normalizedUserId})在${groupDisplayText}检查${checkedCount}个用户，修复${fixedCount}个，错误${errorCount}个`
+      )
       return this.deps.sendMessage(session, [h.text(resultMessage)])
     } catch (error) {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
@@ -1064,7 +1371,7 @@ export class McidCommandHandler extends BaseHandler {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
 
       // 检查权限
-      if (!await this.deps.isAdmin(session.userId)) {
+      if (!(await this.deps.isAdmin(session.userId))) {
         this.logger.warn('清除冷却', `权限不足: QQ(${normalizedUserId})不是管理员`)
         return this.deps.sendMessage(session, [h.text('只有管理员才能清除提醒冷却和次数')])
       }
@@ -1078,15 +1385,20 @@ export class McidCommandHandler extends BaseHandler {
         if (bind) {
           await this.repos.mcidbind.update(normalizedTargetId, { reminderCount: 0 })
         }
-        this.logger.info('清除冷却', `管理员QQ(${normalizedUserId})清除了QQ(${normalizedTargetId})的提醒次数`)
-        return this.deps.sendMessage(session, [h.text(`已清除用户 ${normalizedTargetId} 的随机提醒次数`)])
+        this.logger.info(
+          '清除冷却',
+          `管理员QQ(${normalizedUserId})清除了QQ(${normalizedTargetId})的提醒次数`
+        )
+        return this.deps.sendMessage(session, [
+          h.text(`已清除用户 ${normalizedTargetId} 的随机提醒次数`)
+        ])
       } else {
         const allBinds = await this.repos.mcidbind.findAll()
         for (const bind of allBinds) {
           await this.repos.mcidbind.update(bind.qqId, { reminderCount: 0 })
         }
         this.logger.info('清除冷却', `管理员QQ(${normalizedUserId})清除了所有用户的提醒次数`)
-        return this.deps.sendMessage(session, [h.text(`已清除所有用户的随机提醒次数`)])
+        return this.deps.sendMessage(session, [h.text('已清除所有用户的随机提醒次数')])
       }
     } catch (error) {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
@@ -1103,7 +1415,7 @@ export class McidCommandHandler extends BaseHandler {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
 
       // 检查权限
-      if (!await this.deps.isAdmin(session.userId)) {
+      if (!(await this.deps.isAdmin(session.userId))) {
         this.logger.warn('数据导出', `权限不足: QQ(${normalizedUserId})不是管理员`)
         return this.deps.sendMessage(session, [h.text('只有管理员才能导出群数据')])
       }
@@ -1126,7 +1438,9 @@ export class McidCommandHandler extends BaseHandler {
         }
       } catch (error) {
         this.logger.warn('数据导出', `Bot不在群${groupId}中或无法获取群信息`)
-        return this.deps.sendMessage(session, [h.text(`❌ Bot不在群 ${groupId} 中或无权限操作该群`)])
+        return this.deps.sendMessage(session, [
+          h.text(`❌ Bot不在群 ${groupId} 中或无权限操作该群`)
+        ])
       }
 
       this.logger.info('数据导出', `管理员QQ(${normalizedUserId})开始导出群${groupId}的数据`)
@@ -1138,18 +1452,20 @@ export class McidCommandHandler extends BaseHandler {
         const fileName = this.deps.groupExporter.getExportFileName(groupId)
 
         // 先发送成功消息
-        await this.deps.sendMessage(session, [h.text(`✅ 群 ${groupId} 数据导出完成！正在发送文件...`)])
+        await this.deps.sendMessage(session, [
+          h.text(`✅ 群 ${groupId} 数据导出完成！正在发送文件...`)
+        ])
 
         // 发送文件
         try {
           const base64Data = excelBuffer.toString('base64')
 
           if (session.bot.internal) {
-            await session.bot.internal.uploadPrivateFile({
-              user_id: parseInt(normalizedUserId),
-              file: `base64://${base64Data}`,
-              name: fileName
-            })
+            await session.bot.internal.uploadPrivateFile(
+              parseInt(normalizedUserId),
+              `base64://${base64Data}`,
+              fileName
+            )
 
             await this.deps.sendMessage(session, [h.text(`📁 文件已发送: ${fileName}`)])
             this.logger.info('数据导出', `成功发送文件到私聊: ${fileName}`)
@@ -1163,21 +1479,28 @@ export class McidCommandHandler extends BaseHandler {
           try {
             const filePath = await this.deps.groupExporter.saveExcelFile(excelBuffer, fileName)
             await this.deps.sendMessage(session, [
-              h.text(`⚠️ 直接发送失败，文件已保存\n文件路径: ${filePath}\n文件名: ${fileName}\n请联系管理员获取文件`)
+              h.text(
+                `⚠️ 直接发送失败，文件已保存\n文件路径: ${filePath}\n文件名: ${fileName}\n请联系管理员获取文件`
+              )
             ])
 
             // 清理过期文件
-            this.deps.groupExporter.cleanupOldFiles().catch(err =>
-              this.logger.warn('数据导出', `清理临时文件时出错: ${err.message}`)
-            )
+            this.deps.groupExporter
+              .cleanupOldFiles()
+              .catch(err => this.logger.warn('数据导出', `清理临时文件时出错: ${err.message}`))
           } catch (saveError) {
             await this.deps.sendMessage(session, [
-              h.text(`❌ 文件发送和保存都失败了\n导出数据成功但无法发送文件\n请联系管理员检查Bot配置`)
+              h.text(
+                '❌ 文件发送和保存都失败了\n导出数据成功但无法发送文件\n请联系管理员检查Bot配置'
+              )
             ])
           }
         }
 
-        this.logger.info('数据导出', `管理员QQ(${normalizedUserId})成功导出群${groupId}的数据，文件名: ${fileName}`)
+        this.logger.info(
+          '数据导出',
+          `管理员QQ(${normalizedUserId})成功导出群${groupId}的数据，文件名: ${fileName}`
+        )
       } catch (exportError) {
         this.logger.error('数据导出', `导出群${groupId}数据失败: ${exportError.message}`)
         return this.deps.sendMessage(session, [h.text(`❌ 导出失败: ${exportError.message}`)])

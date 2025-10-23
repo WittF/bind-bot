@@ -56,7 +56,8 @@ export class ForceBinder {
       const response = await axios.get('https://api.bilibili.com/x/web-interface/nav', {
         headers: {
           Cookie: this.cookieString,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         },
         timeout: 5000
       })
@@ -93,7 +94,8 @@ export class ForceBinder {
         },
         headers: {
           Cookie: this.cookieString,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         },
         timeout: 10000
       })
@@ -116,7 +118,7 @@ export class ForceBinder {
 
       return response.data
     } catch (error) {
-      this.logger.error('强制绑定', `获取B站粉丝勋章失败`, error)
+      this.logger.error('强制绑定', '获取B站粉丝勋章失败', error)
       throw error
     }
   }
@@ -136,14 +138,17 @@ export class ForceBinder {
       })
 
       if (response.data.success && response.data.data && response.data.data.user) {
-        this.logger.debug('强制绑定', `ZMINFO API 用户信息获取成功: ${response.data.data.user.username}`)
+        this.logger.debug(
+          '强制绑定',
+          `ZMINFO API 用户信息获取成功: ${response.data.data.user.username}`
+        )
         return response.data.data.user
       } else {
         this.logger.warn('强制绑定', `ZMINFO API 返回失败: ${response.data.message}`)
         return null
       }
     } catch (error) {
-      this.logger.error('强制绑定', `获取ZMINFO用户信息失败`, error)
+      this.logger.error('强制绑定', '获取ZMINFO用户信息失败', error)
       throw new Error(`无法获取用户信息: ${error.message}`)
     }
   }
@@ -151,15 +156,25 @@ export class ForceBinder {
   /**
    * 检查是否拥有目标粉丝牌
    */
-  private checkTargetMedal(medalList: MedalListItem[]): { found: boolean, name?: string, level?: number, guard_level?: number, wearing_status?: number } {
+  private checkTargetMedal(medalList: MedalListItem[]): {
+    found: boolean
+    name?: string
+    level?: number
+    guard_level?: number
+    wearing_status?: number
+  } {
     // 查找目标UP主的粉丝牌
-    const targetMedal = medalList.find(item =>
-      item.medal_info.target_id === this.config.targetUpUid &&
-      item.medal_info.medal_name === this.config.targetMedalName
+    const targetMedal = medalList.find(
+      item =>
+        item.medal_info.target_id === this.config.targetUpUid &&
+        item.medal_info.medal_name === this.config.targetMedalName
     )
 
     if (targetMedal) {
-      this.logger.info('强制绑定', `找到目标粉丝牌: ${targetMedal.medal_info.medal_name} LV.${targetMedal.medal_info.level}`)
+      this.logger.info(
+        '强制绑定',
+        `找到目标粉丝牌: ${targetMedal.medal_info.medal_name} LV.${targetMedal.medal_info.level}`
+      )
       return {
         found: true,
         name: targetMedal.medal_info.medal_name,
@@ -169,7 +184,10 @@ export class ForceBinder {
       }
     }
 
-    this.logger.debug('强制绑定', `未找到目标粉丝牌 ${this.config.targetMedalName}（UP主UID: ${this.config.targetUpUid}）`)
+    this.logger.debug(
+      '强制绑定',
+      `未找到目标粉丝牌 ${this.config.targetMedalName}（UP主UID: ${this.config.targetUpUid}）`
+    )
     return { found: false }
   }
 
@@ -229,14 +247,17 @@ export class ForceBinder {
         enhancedUserInfo.targetMedal = targetMedalInfo
         this.logger.debug('强制绑定', `已检查目标粉丝牌，找到: ${targetMedalInfo.found}`)
       } else {
-        this.logger.warn('强制绑定', `B站API未返回粉丝勋章列表数据`)
+        this.logger.warn('强制绑定', 'B站API未返回粉丝勋章列表数据')
       }
 
-      this.logger.info('强制绑定', `强制绑定完成: 用户=${enhancedUserInfo.username}(${uid}), 目标粉丝牌=${targetMedalInfo.found ? '已找到' : '未找到'}`)
+      this.logger.info(
+        '强制绑定',
+        `强制绑定完成: 用户=${enhancedUserInfo.username}(${uid}), 目标粉丝牌=${targetMedalInfo.found ? '已找到' : '未找到'}`
+      )
 
       return enhancedUserInfo
     } catch (error) {
-      this.logger.error('强制绑定', `强制绑定过程出错`, error)
+      this.logger.error('强制绑定', '强制绑定过程出错', error)
       throw error // 直接重抛原始错误，不添加前缀
     }
   }
@@ -255,28 +276,32 @@ export class ForceBinder {
   getTargetMedalDetails(enhancedUser: EnhancedZminfoUser): string {
     // 检查是否有目标粉丝牌信息（即是否尝试了B站API调用）
     if (!enhancedUser.targetMedal) {
-      return `ℹ️ 未检查粉丝牌信息（B站登录状态异常，请检查SESSDATA配置）`
+      return 'ℹ️ 未检查粉丝牌信息（B站登录状态异常，请检查SESSDATA配置）'
     }
-    
+
     if (!enhancedUser.targetMedal.found) {
       return `未找到目标粉丝牌"${this.config.targetMedalName}"（UP主UID: ${this.config.targetUpUid}）`
     }
 
     const medal = enhancedUser.targetMedal
     let details = `🎯 目标粉丝牌: ${medal.name} LV.${medal.level}`
-    
+
     if (medal.guard_level && medal.guard_level > 0) {
-      const guardText = medal.guard_level === 1 ? '总督' : 
-                       medal.guard_level === 2 ? '提督' : 
-                       medal.guard_level === 3 ? '舰长' : '未知'
+      const guardText =
+        medal.guard_level === 1
+          ? '总督'
+          : medal.guard_level === 2
+            ? '提督'
+            : medal.guard_level === 3
+              ? '舰长'
+              : '未知'
       details += ` (${guardText})`
     }
-    
+
     if (medal.wearing_status === 1) {
       details += ' 【已佩戴】'
     }
-    
+
     return details
   }
-
-} 
+}
