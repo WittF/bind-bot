@@ -124,40 +124,19 @@ export class GroupRequestReviewHandler extends BaseHandler {
    */
   private async handleNotice(session: Session): Promise<void> {
     try {
-      // 调试日志：记录所有notice事件
-      this.logger.info(
-        '入群审批',
-        `[DEBUG] 收到notice事件 - type: ${session.type}, subtype: ${session.subtype}, guildId: ${session.guildId}`,
-        true
-      )
-
       // 只处理群表情回应事件
       if (session.subtype !== 'group-msg-emoji-like') {
-        this.logger.info('入群审批', `[DEBUG] 跳过: subtype不匹配 (${session.subtype})`, true)
-        return
-      }
-
-      // 只处理管理群的表情
-      if (session.guildId !== this.reviewConfig.reviewGroupId) {
-        this.logger.info(
-          '入群审批',
-          `[DEBUG] 跳过: guildId不匹配 (收到: ${session.guildId}, 需要: ${this.reviewConfig.reviewGroupId})`,
-          true
-        )
         return
       }
 
       // 获取原始事件数据（直接访问 session.onebot，参考luckydraw实现）
       const data = (session as any).onebot
 
-      this.logger.info('入群审批', `[DEBUG] onebot数据: ${JSON.stringify(data)}`, true)
-
       const messageId = data?.message_id
       const userId = data?.user_id?.toString()
       const likes = data?.likes || []
 
       if (!messageId || !userId || likes.length === 0) {
-        this.logger.info('入群审批', '[DEBUG] 跳过: 缺少必要数据或likes为空', true)
         return
       }
 
@@ -165,17 +144,14 @@ export class GroupRequestReviewHandler extends BaseHandler {
       const emojiData = likes
       const operatorId = this.deps.normalizeQQId(userId)
 
-      this.logger.info(
+      this.logger.debug(
         '入群审批',
-        `收到表情回应 - 消息: ${msgId}, 操作者: ${operatorId}, 表情数: ${emojiData.length}`,
-        true
+        `收到表情回应 - 消息: ${msgId}, 操作者: ${operatorId}, 表情数: ${emojiData.length}`
       )
 
       // 检查是否是待审批的消息
       const pendingReq = this.pendingRequests.get(msgId)
       if (!pendingReq) {
-        this.logger.info('入群审批', `[DEBUG] 跳过: 消息${msgId}不在待审批列表中`, true)
-        this.logger.info('入群审批', `[DEBUG] 当前待审批列表: ${Array.from(this.pendingRequests.keys()).join(', ')}`, true)
         return
       }
 
@@ -754,24 +730,37 @@ export class GroupRequestReviewHandler extends BaseHandler {
    * 执行自动绑定
    */
   private async performAutoBind(qq: string, uid: string, bot: any): Promise<void> {
-    const axios = require('axios')
-
     try {
-      // 1. 验证 UID
-      this.logger.debug('入群审批', `验证 B站 UID: ${uid}`)
+      // 1. 使用双API数据源获取最新用户信息（优先B站官方API）
+      this.logger.debug('入群审批', `开始获取 B站 UID ${uid} 的信息`)
 
-      const response = await axios.get(`${this.config.zminfoApiUrl}/api/user/${uid}`, {
-        timeout: 10000,
-        headers: {
-          'User-Agent': 'Koishi-MCID-Bot/1.0'
+      // 尝试获取B站官方API的用户信息（最权威）
+      let officialUsername: string | null = null
+      try {
+        this.logger.debug('入群审批', '正在查询B站官方API...')
+        const officialInfo = await this.deps.apiService.getBilibiliOfficialUserInfo(uid)
+        if (officialInfo && officialInfo.name) {
+          officialUsername = officialInfo.name
+          this.logger.info('入群审批', `[官方API] ✅ 获取到用户名: "${officialUsername}"`, true)
+        } else {
+          this.logger.warn('入群审批', '[官方API] ❌ 查询失败')
         }
-      })
+      } catch (officialError) {
+        this.logger.warn('入群审批', `[官方API] ❌ 查询出错: ${officialError.message}`)
+      }
 
-      if (response.status !== 200 || !response.data || !response.data.uid) {
+      // 获取ZMINFO API的完整用户信息（包含粉丝牌、大航海等数据）
+      this.logger.debug('入群审批', '正在查询ZMINFO API...')
+      const zminfoUser = await this.deps.apiService.validateBUID(uid)
+      if (!zminfoUser) {
         throw new Error(`无法验证B站UID: ${uid}`)
       }
 
-      const buidUser = response.data
+      this.logger.debug('入群审批', `[ZMINFO] 获取到用户名: "${zminfoUser.username}"`)
+
+      // 使用官方API的用户名（如果可用），否则使用ZMINFO的
+      const finalUsername = officialUsername || zminfoUser.username
+      this.logger.info('入群审批', `🎯 最终采用用户名: "${finalUsername}"`, true)
 
       // 2. 检查是否已被其他人绑定
       const existingBind = await this.repos.mcidbind.findByBuidUid(uid)
@@ -790,15 +779,15 @@ export class GroupRequestReviewHandler extends BaseHandler {
           qqId: qq,
           mcUsername: tempMcUsername,
           mcUuid: '',
-          buidUid: buidUser.uid,
-          buidUsername: buidUser.username,
-          guardLevel: buidUser.guard_level || 0,
-          guardLevelText: buidUser.guard_level_text || '',
-          maxGuardLevel: buidUser.guard_level || 0,
-          maxGuardLevelText: buidUser.guard_level_text || '',
-          medalName: buidUser.medal?.name || '',
-          medalLevel: buidUser.medal?.level || 0,
-          wealthMedalLevel: buidUser.wealth_medal_level || 0,
+          buidUid: zminfoUser.uid,
+          buidUsername: finalUsername,
+          guardLevel: zminfoUser.guard_level || 0,
+          guardLevelText: zminfoUser.guard_level_text || '',
+          maxGuardLevel: zminfoUser.guard_level || 0,
+          maxGuardLevelText: zminfoUser.guard_level_text || '',
+          medalName: zminfoUser.medal?.name || '',
+          medalLevel: zminfoUser.medal?.level || 0,
+          wealthMedalLevel: zminfoUser.wealthMedalLevel || 0,
           lastActiveTime: new Date(),
           lastModified: new Date()
         })
@@ -807,18 +796,18 @@ export class GroupRequestReviewHandler extends BaseHandler {
       } else {
         // 更新现有绑定
         await this.repos.mcidbind.update(qq, {
-          buidUid: buidUser.uid,
-          buidUsername: buidUser.username,
-          guardLevel: buidUser.guard_level || 0,
-          guardLevelText: buidUser.guard_level_text || '',
-          maxGuardLevel: Math.max(bind.maxGuardLevel || 0, buidUser.guard_level || 0),
+          buidUid: zminfoUser.uid,
+          buidUsername: finalUsername,
+          guardLevel: zminfoUser.guard_level || 0,
+          guardLevelText: zminfoUser.guard_level_text || '',
+          maxGuardLevel: Math.max(bind.maxGuardLevel || 0, zminfoUser.guard_level || 0),
           maxGuardLevelText:
-            buidUser.guard_level > (bind.maxGuardLevel || 0)
-              ? buidUser.guard_level_text
+            zminfoUser.guard_level > (bind.maxGuardLevel || 0)
+              ? zminfoUser.guard_level_text
               : bind.maxGuardLevelText,
-          medalName: buidUser.medal?.name || '',
-          medalLevel: buidUser.medal?.level || 0,
-          wealthMedalLevel: buidUser.wealth_medal_level || 0,
+          medalName: zminfoUser.medal?.name || '',
+          medalLevel: zminfoUser.medal?.level || 0,
+          wealthMedalLevel: zminfoUser.wealthMedalLevel || 0,
           lastActiveTime: new Date(),
           lastModified: new Date()
         })
@@ -826,10 +815,13 @@ export class GroupRequestReviewHandler extends BaseHandler {
         this.logger.info('入群审批', `已更新绑定 - QQ: ${qq}, UID: ${uid}`, true)
       }
 
-      // 4. 更新群昵称
+      // 4. 更新群昵称（使用标准格式）
       try {
         const groupId = this.reviewConfig.targetGroupId
-        const nickname = `${buidUser.username}_${bind.mcUsername || 'MCID'}`
+        const mcInfo = bind.mcUsername && !bind.mcUsername.startsWith('_temp_')
+          ? bind.mcUsername
+          : '未绑定'
+        const nickname = `${finalUsername}（ID:${mcInfo}）`
 
         await bot.internal.setGroupCard(groupId, qq, nickname)
         this.logger.info('入群审批', `已更新群昵称 - QQ: ${qq}, 昵称: ${nickname}`)
@@ -838,7 +830,7 @@ export class GroupRequestReviewHandler extends BaseHandler {
         // 昵称更新失败不影响绑定
       }
 
-      this.logger.info('入群审批', `自动绑定完成 - QQ: ${qq}, UID: ${uid}, 用户名: ${buidUser.username}`, true)
+      this.logger.info('入群审批', `自动绑定完成 - QQ: ${qq}, UID: ${uid}, 用户名: ${finalUsername}`, true)
     } catch (error) {
       this.logger.error('入群审批', `自动绑定失败: ${error.message}`, error)
       throw error

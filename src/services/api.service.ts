@@ -7,10 +7,38 @@ import type { MojangProfile, ZminfoUser } from '../types'
  * 统一管理外部 API 调用（Mojang API、ZMINFO API 等）
  */
 export class ApiService {
+  private cookieString: string
+
   constructor(
     private logger: LoggerService,
-    private config: { zminfoApiUrl: string }
-  ) {}
+    private config: { zminfoApiUrl: string; SESSDATA?: string }
+  ) {
+    this.cookieString = this.processCookie(config.SESSDATA || '')
+  }
+
+  /**
+   * 处理cookie字符串，支持完整cookie或单独SESSDATA
+   */
+  private processCookie(input: string): string {
+    if (!input || input.trim() === '') {
+      return ''
+    }
+
+    const trimmedInput = input.trim()
+
+    // 如果输入包含多个cookie字段（包含分号），则认为是完整cookie
+    if (trimmedInput.includes(';')) {
+      return trimmedInput
+    }
+
+    // 如果输入只是SESSDATA值（不包含"SESSDATA="前缀）
+    if (!trimmedInput.startsWith('SESSDATA=')) {
+      return `SESSDATA=${trimmedInput}`
+    }
+
+    // 如果输入已经是"SESSDATA=xxx"格式
+    return trimmedInput
+  }
 
   // =========== Mojang API ===========
 
@@ -238,15 +266,23 @@ export class ApiService {
 
       this.logger.debug('B站官方API', `开始查询UID ${uid} 的官方信息`)
 
+      const headers: Record<string, string> = {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        Referer: 'https://space.bilibili.com/',
+        Origin: 'https://space.bilibili.com'
+      }
+
+      // 如果配置了Cookie，则添加到请求头（避免被风控）
+      if (this.cookieString) {
+        headers.Cookie = this.cookieString
+        this.logger.debug('B站官方API', '使用Cookie进行请求')
+      }
+
       const response = await axios.get('https://api.bilibili.com/x/space/acc/info', {
         params: { mid: uid },
         timeout: 10000,
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          Referer: 'https://space.bilibili.com/',
-          Origin: 'https://space.bilibili.com'
-        }
+        headers
       })
 
       if (response.data.code === 0 && response.data.data) {

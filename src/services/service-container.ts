@@ -23,7 +23,10 @@ export class ServiceContainer {
     normalizeQQId: (userId: string) => string
   ) {
     // 1. 实例化 API 服务（无依赖）
-    this.api = new ApiService(logger.createChild('API服务'), { zminfoApiUrl: config.zminfoApiUrl })
+    this.api = new ApiService(logger.createChild('API服务'), {
+      zminfoApiUrl: config.zminfoApiUrl,
+      SESSDATA: config.forceBindSessdata
+    })
 
     // 2. 实例化数据库服务（依赖 API 服务）
     this.database = new DatabaseService(
