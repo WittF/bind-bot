@@ -2,6 +2,7 @@ import { h } from 'koishi'
 import { BaseHandler } from './base.handler'
 import axios from 'axios'
 import type { ZminfoUser } from '../types'
+import { BindStatus } from '../utils/bind-status'
 
 /**
  * BUID 命令处理器
@@ -626,10 +627,9 @@ export class BuidHandler extends BaseHandler {
           try {
             const latestTargetBind = await this.repos.mcidbind.findByQQId(normalizedTargetId)
             if (latestTargetBind) {
-              const mcName =
-                latestTargetBind.mcUsername && !latestTargetBind.mcUsername.startsWith('_temp_')
-                  ? latestTargetBind.mcUsername
-                  : null
+              const mcName = BindStatus.hasValidMcBind(latestTargetBind)
+                ? latestTargetBind.mcUsername
+                : null
               await this.deps.nicknameService.autoSetGroupNickname(
                 session,
                 mcName,
@@ -681,10 +681,9 @@ export class BuidHandler extends BaseHandler {
           try {
             const latestBind = await this.repos.mcidbind.findByQQId(operatorQQId)
             if (latestBind) {
-              const mcName =
-                latestBind.mcUsername && !latestBind.mcUsername.startsWith('_temp_')
-                  ? latestBind.mcUsername
-                  : null
+              const mcName = BindStatus.hasValidMcBind(latestBind)
+                ? latestBind.mcUsername
+                : null
               await this.deps.nicknameService.autoSetGroupNickname(
                 session,
                 mcName,
@@ -805,10 +804,9 @@ export class BuidHandler extends BaseHandler {
     try {
       const latestTargetBind = await this.repos.mcidbind.findByQQId(normalizedTargetId)
       if (latestTargetBind) {
-        const mcName =
-          latestTargetBind.mcUsername && !latestTargetBind.mcUsername.startsWith('_temp_')
-            ? latestTargetBind.mcUsername
-            : null
+        const mcName = BindStatus.hasValidMcBind(latestTargetBind)
+          ? latestTargetBind.mcUsername
+          : null
         await this.deps.nicknameService.autoSetGroupNickname(
           session,
           mcName,
@@ -908,10 +906,9 @@ export class BuidHandler extends BaseHandler {
     try {
       const latestBind = await this.repos.mcidbind.findByQQId(operatorQQId)
       if (latestBind) {
-        const mcName =
-          latestBind.mcUsername && !latestBind.mcUsername.startsWith('_temp_')
-            ? latestBind.mcUsername
-            : null
+        const mcName = BindStatus.hasValidMcBind(latestBind)
+          ? latestBind.mcUsername
+          : null
         await this.deps.nicknameService.autoSetGroupNickname(
           session,
           mcName,

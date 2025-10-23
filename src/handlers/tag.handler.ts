@@ -1,5 +1,6 @@
 import { Session, h } from 'koishi'
 import { BaseHandler } from './base.handler'
+import { BindStatus } from '../utils/bind-status'
 
 export class TagHandler extends BaseHandler {
   register(): void {
@@ -371,10 +372,9 @@ export class TagHandler extends BaseHandler {
       }
       const userList = usersWithTag
         .map(bind => {
-          const mcInfo =
-            bind.mcUsername && !bind.mcUsername.startsWith('_temp_')
-              ? ` (MC: ${bind.mcUsername})`
-              : ''
+          const mcInfo = BindStatus.hasValidMcBind(bind)
+            ? ` (MC: ${bind.mcUsername})`
+            : ''
           return `• ${bind.qqId}${mcInfo}`
         })
         .join('\n')

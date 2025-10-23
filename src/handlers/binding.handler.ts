@@ -2,6 +2,7 @@ import { Context, Session, h } from 'koishi'
 import { BaseHandler, Repositories, HandlerDependencies } from './base.handler'
 import { LoggerService } from '../utils/logger'
 import type { BindingSession, MCIDBIND } from '../types'
+import { BindStatus } from '../utils/bind-status'
 
 /**
  * 交互式绑定命令处理器
@@ -87,10 +88,7 @@ export class BindingHandler extends BaseHandler {
               this.logger.info('交互绑定', `QQ(${normalizedTargetId})已完成全部绑定`, true)
 
               // 显示当前绑定信息
-              const displayUsername =
-                targetBind.mcUsername && !targetBind.mcUsername.startsWith('_temp_')
-                  ? targetBind.mcUsername
-                  : '未绑定'
+              const displayUsername = BindStatus.getDisplayMcUsername(targetBind, '未绑定')
               let bindInfo = `用户 ${normalizedTargetId} 已完成全部账号绑定：\n✅ MC账号: ${displayUsername}\n✅ B站账号: ${targetBind.buidUsername} (UID: ${targetBind.buidUid})`
 
               if (targetBind.guardLevel > 0) {
@@ -117,18 +115,14 @@ export class BindingHandler extends BaseHandler {
               // 更新会话状态
               this.deps.updateBindingSession(target, channelId, {
                 state: 'waiting_buid',
-                mcUsername:
-                  targetBind.mcUsername && !targetBind.mcUsername.startsWith('_temp_')
-                    ? targetBind.mcUsername
-                    : null,
+                mcUsername: BindStatus.hasValidMcBind(targetBind)
+                  ? targetBind.mcUsername
+                  : null,
                 mcUuid: targetBind.mcUuid
               })
 
               // 向目标用户发送提示（@他们）
-              const displayUsername =
-                targetBind.mcUsername && !targetBind.mcUsername.startsWith('_temp_')
-                  ? targetBind.mcUsername
-                  : '未绑定'
+              const displayUsername = BindStatus.getDisplayMcUsername(targetBind, '未绑定')
               await this.deps.sendMessage(session, [
                 h.at(normalizedTargetId),
                 h.text(
@@ -166,12 +160,7 @@ export class BindingHandler extends BaseHandler {
           const existingBind = await this.deps.databaseService.getMcBindByQQId(normalizedUserId)
 
           // 如果两个账号都已绑定（且MC不是temp用户名），不需要进入绑定流程
-          if (
-            existingBind &&
-            existingBind.mcUsername &&
-            !existingBind.mcUsername.startsWith('_temp_') &&
-            existingBind.buidUid
-          ) {
+          if (existingBind && BindStatus.hasValidMcBind(existingBind) && existingBind.buidUid) {
             this.logger.info('交互绑定', `QQ(${normalizedUserId})已完成全部绑定`, true)
 
             // 显示当前绑定信息
@@ -191,12 +180,7 @@ export class BindingHandler extends BaseHandler {
           }
 
           // 如果已绑定MC（且不是temp用户名）但未绑定B站，直接进入B站绑定流程
-          if (
-            existingBind &&
-            existingBind.mcUsername &&
-            !existingBind.mcUsername.startsWith('_temp_') &&
-            !existingBind.buidUid
-          ) {
+          if (existingBind && BindStatus.hasValidMcBind(existingBind) && !existingBind.buidUid) {
             this.logger.info('交互绑定', `QQ(${normalizedUserId})已绑定MC，进入B站绑定流程`, true)
 
             // 创建绑定会话，状态直接设为等待B站UID
@@ -237,8 +221,7 @@ export class BindingHandler extends BaseHandler {
             existingBind &&
             existingBind.buidUid &&
             existingBind.buidUsername &&
-            existingBind.mcUsername &&
-            existingBind.mcUsername.startsWith('_temp_')
+            !BindStatus.hasValidMcBind(existingBind)
           ) {
             this.logger.info('交互绑定', `QQ(${normalizedUserId})只绑定了B站，进入MC绑定流程`, true)
 

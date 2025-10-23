@@ -1,5 +1,6 @@
 import { h, Session, Next } from 'koishi'
 import { BaseHandler } from './base.handler'
+import { BindStatus } from '../utils/bind-status'
 import type { PendingRequest, RejectFlow, AdminCache, GroupRequestReviewConfig } from '../types'
 
 /**
@@ -817,9 +818,7 @@ export class GroupRequestReviewHandler extends BaseHandler {
       // 4. 更新群昵称（使用标准格式）
       try {
         const groupId = this.reviewConfig.targetGroupId
-        const mcInfo = bind.mcUsername && !bind.mcUsername.startsWith('_temp_')
-          ? bind.mcUsername
-          : '未绑定'
+        const mcInfo = BindStatus.getDisplayMcUsername(bind, '未绑定')
         const nickname = `${finalUsername}（ID:${mcInfo}）`
 
         await bot.internal.setGroupCard(groupId, qq, nickname)

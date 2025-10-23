@@ -2,6 +2,7 @@ import { Session, h } from 'koishi'
 import { BaseHandler } from './base.handler'
 import type { ServerConfig, MCIDBIND } from '../types'
 import { calculateSimilarity } from '../utils/helpers'
+import { BindStatus } from '../utils/bind-status'
 
 /**
  * 白名单命令处理器
@@ -127,10 +128,9 @@ export class WhitelistHandler extends BaseHandler {
             '白名单',
             `成功: QQ(${normalizedUserId})获取了服务器列表，共${enabledServers.length}个服务器`
           )
-          const displayUsername =
-            userBind.mcUsername && !userBind.mcUsername.startsWith('_temp_')
-              ? userBind.mcUsername
-              : '未绑定MC账号'
+          const displayUsername = BindStatus.hasValidMcBind(userBind)
+            ? userBind.mcUsername
+            : '未绑定MC账号'
           return this.deps.sendMessage(session, [
             h.text(
               `${displayUsername} 的可用服务器列表:\n\n${serverList}\n\n使用 ${this.deps.formatCommand('mcid whitelist add <服务器名称或ID>')} 申请白名单`
@@ -197,11 +197,7 @@ export class WhitelistHandler extends BaseHandler {
                 // 首先检查是否存在该标签名
                 const allBinds = await this.repos.mcidbind.findAll()
                 const usersWithTag = allBinds.filter(
-                  bind =>
-                    bind.tags &&
-                    bind.tags.includes(targetValue) &&
-                    bind.mcUsername &&
-                    !bind.mcUsername.startsWith('_temp_')
+                  bind => bind.tags && bind.tags.includes(targetValue) && BindStatus.hasValidMcBind(bind)
                 )
 
                 if (usersWithTag.length > 0) {
@@ -505,11 +501,7 @@ export class WhitelistHandler extends BaseHandler {
                 // 首先检查是否存在该标签名
                 const allBinds = await this.repos.mcidbind.findAll()
                 const usersWithTag = allBinds.filter(
-                  bind =>
-                    bind.tags &&
-                    bind.tags.includes(targetValue) &&
-                    bind.mcUsername &&
-                    !bind.mcUsername.startsWith('_temp_')
+                  bind => bind.tags && bind.tags.includes(targetValue) && BindStatus.hasValidMcBind(bind)
                 )
 
                 if (usersWithTag.length > 0) {
@@ -977,11 +969,7 @@ export class WhitelistHandler extends BaseHandler {
 
           // 过滤掉无效的绑定：没有用户名或UUID的记录
           const validBinds = allBinds.filter(
-            bind =>
-              (bind.mcUsername &&
-                bind.mcUsername.trim() !== '' &&
-                !bind.mcUsername.startsWith('_temp_')) ||
-              (bind.mcUuid && bind.mcUuid.trim() !== '')
+            bind => BindStatus.hasValidMcBind(bind) || (bind.mcUuid && bind.mcUuid.trim() !== '')
           )
 
           // 按绑定时间排序，早绑定的用户优先处理
