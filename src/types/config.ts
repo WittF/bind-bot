@@ -76,6 +76,10 @@ export interface Config {
 
   /** 强制绑定目标粉丝牌名称 */
   forceBindTargetMedalName: string
+
+  // 入群申请审批配置
+  /** 入群申请审批功能配置 */
+  groupRequestReview?: GroupRequestReviewConfig
 }
 
 /**
@@ -151,4 +155,36 @@ export interface ForceBindConfig {
   targetRoomId: number // 目标房间号
   targetMedalName: string // 目标粉丝牌名称
   debugMode: boolean
+}
+
+/**
+ * 入群申请审批功能配置接口
+ *
+ * @remarks
+ * 该功能允许通过表情回应来审批入群申请
+ * - 支持自动绑定 B站 UID
+ * - 支持交互式绑定流程
+ * - 支持拒绝申请并回传理由
+ */
+export interface GroupRequestReviewConfig {
+  /** 是否启用入群申请审批功能 */
+  enabled: boolean
+
+  /** 需要审批的目标群ID */
+  targetGroupId: string
+
+  /** 管理员审批操作所在的群ID（播报群） */
+  reviewGroupId: string
+
+  /** 批准并自动绑定的表情ID（默认：389 /太赞了） */
+  approveAutoBindEmoji: string
+
+  /** 批准并交互式绑定的表情ID（默认：427 /偷感） */
+  approveInteractiveBindEmoji: string
+
+  /** 拒绝申请的表情ID（默认：123 /NO） */
+  rejectEmoji: string
+
+  /** 待审批记录自动清理时间（小时） */
+  autoCleanupHours: number
 }

@@ -39,6 +39,7 @@ import {
   BuidHandler,
   McidCommandHandler,
   LotteryHandler,
+  GroupRequestReviewHandler,
   Repositories,
   HandlerDependencies
 } from './handlers'
@@ -106,6 +107,25 @@ export const Config: Schema<IConfig> = Schema.object({
   forceBindTargetUpUid: Schema.number().description('强制绑定目标UP主UID').default(686127),
   forceBindTargetRoomId: Schema.number().description('强制绑定目标房间号').default(544853),
   forceBindTargetMedalName: Schema.string().description('强制绑定目标粉丝牌名称').default('生态'),
+  groupRequestReview: Schema.object({
+    enabled: Schema.boolean().description('是否启用入群申请审批功能').default(false),
+    targetGroupId: Schema.string()
+      .description('需要审批的目标群ID（入群申请来源群）')
+      .default('931805503'),
+    reviewGroupId: Schema.string()
+      .description('管理员审批操作所在的群ID（播报群）')
+      .default('290238092'),
+    approveAutoBindEmoji: Schema.string()
+      .description('批准并自动绑定的表情ID（/太赞了）')
+      .default('389'),
+    approveInteractiveBindEmoji: Schema.string()
+      .description('批准并交互式绑定的表情ID（/偷感）')
+      .default('427'),
+    rejectEmoji: Schema.string().description('拒绝申请的表情ID（/NO）').default('123'),
+    autoCleanupHours: Schema.number()
+      .description('待审批记录自动清理时间（小时）')
+      .default(24)
+  }).description('入群申请审批功能配置'),
   servers: Schema.array(
     Schema.object({
       id: Schema.string().description('服务器唯一ID（不允许重复）').required(),
@@ -1401,6 +1421,16 @@ export function apply(ctx: Context, config: IConfig) {
     handlerDependencies
   )
   mcidHandler.register()
+
+  // 实例化并注册入群申请审批Handler
+  const groupRequestReviewHandler = new GroupRequestReviewHandler(
+    ctx,
+    config,
+    loggerService,
+    repositories,
+    handlerDependencies
+  )
+  groupRequestReviewHandler.register()
 
   // 自定义文本前缀匹配
   if (config.allowTextPrefix && config.botNickname) {

@@ -274,25 +274,16 @@ export class NicknameService {
         const currentNickname = currentGroupInfo.card || currentGroupInfo.nickname || ''
         this.logger.debug('群昵称设置', `当前昵称: "${currentNickname}"`)
 
-        // 智能判断：如果当前昵称已包含最新用户名，跳过修改
+        // 【调试信息】提取当前昵称中的BUID用户名（仅用于日志）
         if (buidUid && currentNickname) {
           const currentNicknameUsername = extractBuidUsernameFromNickname(currentNickname)
           this.logger.debug(
             '群昵称设置',
             `[层4-群昵称] "${currentNicknameUsername || '(无法提取)'}"`
           )
-
-          if (currentNicknameUsername && currentNicknameUsername === latestBuidUsername) {
-            this.logger.info(
-              '群昵称设置',
-              `✅ 群昵称已包含最新名称"${latestBuidUsername}"，跳过修改`,
-              true
-            )
-            return
-          }
         }
 
-        // 如果昵称完全一致，也跳过
+        // 如果昵称完全一致，跳过修改
         if (currentNickname === targetNickname) {
           this.logger.info(
             '群昵称设置',

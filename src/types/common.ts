@@ -42,3 +42,63 @@ export interface LotteryResult {
   host_uid: number
   host_username: string
 }
+
+/**
+ * 待审批的入群申请信息
+ */
+export interface PendingRequest {
+  /** 播报消息的ID（用于监听表情回应） */
+  broadcastMessageId: string
+
+  /** OneBot的请求标识（用于批准/拒绝） */
+  requestFlag: string
+
+  /** 申请人QQ号 */
+  applicantQQ: string
+
+  /** 申请人昵称 */
+  applicantNickname: string
+
+  /** 申请人头像URL */
+  applicantAvatar: string
+
+  /** 目标群号 */
+  targetGroupId: string
+
+  /** 申请人回答的内容（UID） */
+  answer: string
+
+  /** 申请时间戳 */
+  timestamp: number
+
+  /** 审批状态 */
+  status: 'pending' | 'approved' | 'rejected' | 'processing'
+}
+
+/**
+ * 拒绝流程状态
+ */
+export interface RejectFlow {
+  /** 对应的待审批申请 */
+  pendingRequest: PendingRequest
+
+  /** 发起拒绝的管理员QQ号 */
+  operatorId: string
+
+  /** 询问消息ID */
+  askMessageId: string
+
+  /** 超时时间戳 */
+  timeout: number
+}
+
+/**
+ * 管理员权限缓存
+ */
+export interface AdminCache {
+  /** 管理员QQ号列表 */
+  admins: string[]
+
+  /** 最后更新时间戳 */
+  lastUpdate: number
+}
