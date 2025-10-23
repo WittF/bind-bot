@@ -108,7 +108,7 @@ export class GroupRequestReviewHandler extends BaseHandler {
       this.pendingRequests.set(broadcastMsgId, pendingReq)
       this.logger.info(
         '入群审批',
-        `已保存待审批记录 - 申请人: ${normalizedUserId}, 播报消息ID: ${broadcastMsgId}`,
+        `[DEBUG] 已保存待审批记录 - 申请人: ${normalizedUserId}, 播报消息ID: ${broadcastMsgId}, 目标群: ${this.reviewConfig.reviewGroupId}`,
         true
       )
 
@@ -124,6 +124,13 @@ export class GroupRequestReviewHandler extends BaseHandler {
    */
   private async handleNotice(session: Session): Promise<void> {
     try {
+      // 【调试】最早期日志 - 记录所有收到的notice事件
+      this.logger.info(
+        '入群审批',
+        `[DEBUG] 收到notice事件 - type: ${session.type}, subtype: ${session.subtype}, guildId: ${session.guildId}`,
+        true
+      )
+
       // 只处理群表情回应事件
       if (session.subtype !== 'group-msg-emoji-like') {
         return
@@ -131,6 +138,20 @@ export class GroupRequestReviewHandler extends BaseHandler {
 
       // 获取原始事件数据（直接访问 session.onebot，参考luckydraw实现）
       const data = (session as any).onebot
+
+      // 【调试】输出完整的原始事件数据
+      this.logger.info(
+        '入群审批',
+        `[DEBUG] 表情回应原始数据: ${JSON.stringify({
+          session_guildId: session.guildId,
+          session_channelId: session.channelId,
+          onebot_group_id: data?.group_id,
+          onebot_message_id: data?.message_id,
+          onebot_user_id: data?.user_id,
+          onebot_likes: data?.likes
+        })}`,
+        true
+      )
 
       const messageId = data?.message_id
       const userId = data?.user_id?.toString()
@@ -152,6 +173,12 @@ export class GroupRequestReviewHandler extends BaseHandler {
       // 检查是否是待审批的消息
       const pendingReq = this.pendingRequests.get(msgId)
       if (!pendingReq) {
+        this.logger.info('入群审批', `[DEBUG] 消息${msgId}不在待审批列表中`, true)
+        this.logger.info(
+          '入群审批',
+          `[DEBUG] 当前待审批消息ID列表: [${Array.from(this.pendingRequests.keys()).join(', ')}]`,
+          true
+        )
         return
       }
 
