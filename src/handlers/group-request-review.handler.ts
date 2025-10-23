@@ -136,13 +136,26 @@ export class GroupRequestReviewHandler extends BaseHandler {
    */
   private async handleNotice(session: Session): Promise<void> {
     try {
+      // 调试日志：记录所有notice事件
+      this.logger.info(
+        '入群审批',
+        `[DEBUG] 收到notice事件 - type: ${session.type}, subtype: ${session.subtype}, guildId: ${session.guildId}`,
+        true
+      )
+
       // 只处理群表情回应事件
       if (session.subtype !== 'group-msg-emoji-like') {
+        this.logger.info('入群审批', `[DEBUG] 跳过: subtype不匹配 (${session.subtype})`, true)
         return
       }
 
       // 只处理管理群的表情
       if (session.guildId !== this.reviewConfig.reviewGroupId) {
+        this.logger.info(
+          '入群审批',
+          `[DEBUG] 跳过: guildId不匹配 (收到: ${session.guildId}, 需要: ${this.reviewConfig.reviewGroupId})`,
+          true
+        )
         return
       }
 
@@ -150,7 +163,10 @@ export class GroupRequestReviewHandler extends BaseHandler {
       const onebotSession = session as OneBotSession
       const onebotData = onebotSession.onebot
 
+      this.logger.info('入群审批', `[DEBUG] onebot数据: ${JSON.stringify(onebotData)}`, true)
+
       if (!onebotData?.likes || onebotData.likes.length === 0) {
+        this.logger.info('入群审批', '[DEBUG] 跳过: 没有likes数据', true)
         return
       }
 
@@ -166,14 +182,17 @@ export class GroupRequestReviewHandler extends BaseHandler {
 
       const operatorId = this.deps.normalizeQQId(userId)
 
-      this.logger.debug(
+      this.logger.info(
         '入群审批',
-        `收到表情回应 - 消息: ${msgId}, 操作者: ${operatorId}, 表情数: ${emojiData.length}`
+        `收到表情回应 - 消息: ${msgId}, 操作者: ${operatorId}, 表情数: ${emojiData.length}`,
+        true
       )
 
       // 检查是否是待审批的消息
       const pendingReq = this.pendingRequests.get(msgId)
       if (!pendingReq) {
+        this.logger.info('入群审批', `[DEBUG] 跳过: 消息${msgId}不在待审批列表中`, true)
+        this.logger.info('入群审批', `[DEBUG] 当前待审批列表: ${Array.from(this.pendingRequests.keys()).join(', ')}`, true)
         return
       }
 
@@ -209,6 +228,10 @@ export class GroupRequestReviewHandler extends BaseHandler {
     nickname: string
     avatar: string
     answer: string
+    buidUid: string | null
+    buidUsername: string | null
+    medalInfo: string | null
+    bindStatus: string
   }> {
     const qq = this.deps.normalizeQQId(session.userId)
     const answer = session.content || '（未填写）'
@@ -232,30 +255,115 @@ export class GroupRequestReviewHandler extends BaseHandler {
       this.logger.warn('入群审批', `获取用户信息失败，使用默认值: ${error.message}`)
     }
 
-    return { qq, nickname, avatar, answer }
+    // 解析并查询 B 站信息
+    let buidUid: string | null = null
+    let buidUsername: string | null = null
+    let medalInfo: string | null = null
+    let bindStatus = '❌ UID 未提供'
+
+    const parsedUid = this.parseUID(answer)
+    if (parsedUid) {
+      buidUid = parsedUid
+
+      // 并行查询官方API和ZMINFO API
+      const [officialInfo, zminfoData] = await Promise.all([
+        this.deps.apiService.getBilibiliOfficialUserInfo(parsedUid).catch(() => null),
+        this.deps.apiService.validateBUID(parsedUid).catch(() => null)
+      ])
+
+      // 用户名：优先使用官方API（最准确），降级到ZMINFO
+      if (officialInfo?.name) {
+        buidUsername = officialInfo.name
+        this.logger.debug('入群审批', `✅ 使用官方API用户名: ${buidUsername}`)
+      } else if (zminfoData?.username) {
+        buidUsername = zminfoData.username
+        this.logger.debug('入群审批', `⚠️ 官方API失败，使用ZMINFO用户名: ${buidUsername}`)
+      }
+
+      // 粉丝牌信息：只能从ZMINFO获取（官方API不提供）
+      if (zminfoData) {
+        const medalLevel = zminfoData.medal?.level || 0
+        const medalName = zminfoData.medal?.name || ''
+
+        if (medalName === this.config.forceBindTargetMedalName) {
+          medalInfo = `🎖️ ${medalName} Lv.${medalLevel}`
+        } else if (medalLevel > 0) {
+          medalInfo = `⚠️ 佩戴其他粉丝牌: ${medalName} Lv.${medalLevel}`
+        } else {
+          medalInfo = `⚠️ 未获取到 "${this.config.forceBindTargetMedalName}" 粉丝牌`
+        }
+      } else {
+        this.logger.warn('入群审批', 'ZMINFO API查询失败，无法获取粉丝牌信息')
+      }
+
+      // 绑定状态：查询数据库
+      if (buidUsername) {
+        const existingBind = await this.repos.mcidbind.findByBuidUid(parsedUid)
+        if (existingBind) {
+          if (existingBind.qqId === qq) {
+            bindStatus = '✅ 该 UID 已绑定到此 QQ'
+          } else {
+            bindStatus = `⚠️ 该 UID 已被 ${existingBind.qqId} 绑定`
+          }
+        } else {
+          bindStatus = '✅ UID 未被绑定'
+        }
+      } else {
+        bindStatus = '❌ UID 查询失败（官方API和ZMINFO均失败）'
+      }
+    }
+
+    return { qq, nickname, avatar, answer, buidUid, buidUsername, medalInfo, bindStatus }
   }
+
 
   /**
    * 发送播报消息到管理群
    */
   private async sendBroadcastMessage(
-    applicantInfo: { qq: string; nickname: string; avatar: string; answer: string },
+    applicantInfo: {
+      qq: string
+      nickname: string
+      avatar: string
+      answer: string
+      buidUid: string | null
+      buidUsername: string | null
+      medalInfo: string | null
+      bindStatus: string
+    },
     session: Session
   ): Promise<string | null> {
-    const { qq, nickname, avatar, answer } = applicantInfo
+    const { qq, nickname, avatar, answer, buidUid, buidUsername, medalInfo, bindStatus } = applicantInfo
 
     const elements = [
       h.text('📢 收到新的入群申请\n\n'),
       h.image(avatar),
-      h.text(`\n👤 昵称：${nickname}\n`),
-      h.text(`🆔 QQ号：${qq}\n`),
-      h.text(`💬 入群${answer}\n\n`),
+      h.text(`\n👤 QQ 昵称：${nickname}\n`),
+      h.text(`🆔 QQ 号：${qq}\n`),
+      h.text(`💬 入群问题：${answer}\n\n`)
+    ]
+
+    // B 站信息
+    if (buidUid) {
+      elements.push(h.text(`🎬 B 站 UID：${buidUid}\n`))
+      if (buidUsername) {
+        elements.push(h.text(`👑 B 站昵称：${buidUsername}\n`))
+      }
+      if (medalInfo) {
+        elements.push(h.text(`${medalInfo}\n`))
+      }
+      elements.push(h.text(`${bindStatus}\n\n`))
+    } else {
+      elements.push(h.text(`⚠️ 未提供有效的 B 站 UID\n\n`))
+    }
+
+    elements.push(
       h.text('━━━━━━━━━━━━━━━\n'),
       h.text('请管理员点击表情回应：\n'),
       h.text('👍 /太赞了 - 通过并自动绑定\n'),
       h.text('😊 /偷感 - 通过并交互式绑定\n'),
       h.text('❌ /NO - 拒绝申请')
-    ]
+    )
 
     try {
       const result = await session.bot.sendMessage(this.reviewConfig.reviewGroupId, elements)
