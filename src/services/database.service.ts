@@ -337,21 +337,22 @@ export class DatabaseService {
           true
         )
       } else {
-        // 为跳过MC绑定的用户生成唯一的临时用户名，避免UNIQUE constraint冲突
-        const tempMcUsername = `_temp_skip_${normalizedQQId}_${Date.now()}`
+        // 创建新绑定记录（不使用临时用户名）
         const newBind: CreateBindData = {
           qqId: normalizedQQId,
-          mcUsername: tempMcUsername,
+          mcUsername: '',
           mcUuid: '',
           isAdmin: false,
           whitelist: [],
           tags: [],
+          hasMcBind: false,
+          hasBuidBind: true,
           ...updateData
         }
         await this.mcidbindRepo.create(newBind)
         this.logger.info(
           'B站账号绑定',
-          `创建绑定(跳过MC): QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}, 临时MC用户名=${tempMcUsername}`,
+          `创建绑定(跳过MC): QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}`,
           true
         )
       }

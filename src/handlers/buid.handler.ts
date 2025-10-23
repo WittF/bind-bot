@@ -482,20 +482,21 @@ export class BuidHandler extends BaseHandler {
           `更新绑定: QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}`
         )
       } else {
-        const tempMcUsername = `_temp_skip_${normalizedQQId}_${Date.now()}`
         const newBind: any = {
           qqId: normalizedQQId,
-          mcUsername: tempMcUsername,
+          mcUsername: '',
           mcUuid: '',
           isAdmin: false,
           whitelist: [],
           tags: [],
+          hasMcBind: false,
+          hasBuidBind: true,
           ...updateData
         }
         await this.repos.mcidbind.create(newBind)
         this.logger.info(
           'B站账号绑定',
-          `创建绑定(跳过MC): QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}, 临时MC用户名=${tempMcUsername}`
+          `创建绑定(跳过MC): QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}`
         )
       }
 

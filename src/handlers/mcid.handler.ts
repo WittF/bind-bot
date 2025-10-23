@@ -1034,14 +1034,15 @@ export class McidCommandHandler extends BaseHandler {
         ])
       } else {
         // 用户不存在绑定记录，创建一个新记录并设为管理员
-        const tempUsername = `_temp_${normalizedTargetId}`
         try {
           await this.repos.mcidbind.create({
             qqId: normalizedTargetId,
-            mcUsername: tempUsername,
+            mcUsername: '',
             mcUuid: '',
             lastModified: new Date(),
-            isAdmin: true
+            isAdmin: true,
+            hasMcBind: false,
+            hasBuidBind: false
           })
           this.logger.info(
             '管理员',

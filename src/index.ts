@@ -1594,16 +1594,17 @@ export function apply(ctx: Context, config: IConfig) {
         let reminderCount = 0
         if (!bind) {
           // 创建新记录
-          const tempUsername = `_temp_${normalizedUserId}`
           await mcidbindRepo.create({
             qqId: normalizedUserId,
-            mcUsername: tempUsername,
+            mcUsername: '',
             mcUuid: '',
             lastModified: new Date(),
             isAdmin: false,
             whitelist: [],
             tags: [],
-            reminderCount: 1
+            reminderCount: 1,
+            hasMcBind: false,
+            hasBuidBind: false
           })
           reminderCount = 1
         } else {
@@ -1951,27 +1952,23 @@ export function apply(ctx: Context, config: IConfig) {
         // 用户未绑定B站账号，需要完成B站绑定
         logger.info(`[交互绑定] QQ(${normalizedUserId})跳过了MC账号绑定，需要完成B站绑定`)
 
-        // 为跳过MC绑定的用户创建临时绑定记录
-        const timestamp = Date.now()
-        const tempMcUsername = `_temp_skip_${timestamp}`
-
-        // 创建临时MC绑定
+        // 创建绑定记录（不使用临时MC用户名）
         const tempBindResult = await services.database.createOrUpdateMcBind(
           session.userId,
-          tempMcUsername,
+          '',
           '',
           false
         )
         if (!tempBindResult) {
-          logger.error(`[交互绑定] QQ(${normalizedUserId})创建临时MC绑定失败`)
-          await sendMessage(session, [h.text('❌ 创建临时绑定失败，请稍后重试')])
+          logger.error(`[交互绑定] QQ(${normalizedUserId})创建MC绑定记录失败`)
+          await sendMessage(session, [h.text('❌ 创建绑定记录失败，请稍后重试')])
           return
         }
 
         // 跳转到B站绑定流程
         updateBindingSession(session.userId, session.channelId, {
           state: 'waiting_buid',
-          mcUsername: tempMcUsername,
+          mcUsername: '',
           mcUuid: ''
         })
 

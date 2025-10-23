@@ -94,15 +94,16 @@ export class TagHandler extends BaseHandler {
         )
         let targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
         if (!targetBind) {
-          const tempUsername = `_temp_${normalizedTargetId}`
           await this.repos.mcidbind.create({
             qqId: normalizedTargetId,
-            mcUsername: tempUsername,
+            mcUsername: '',
             mcUuid: '',
             lastModified: new Date(),
             isAdmin: false,
             whitelist: [],
-            tags: []
+            tags: [],
+            hasMcBind: false,
+            hasBuidBind: false
           })
           targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
         }
@@ -141,15 +142,16 @@ export class TagHandler extends BaseHandler {
         try {
           let targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
           if (!targetBind) {
-            const tempUsername = `_temp_${normalizedTargetId}`
             await this.repos.mcidbind.create({
               qqId: normalizedTargetId,
-              mcUsername: tempUsername,
+              mcUsername: '',
               mcUuid: '',
               lastModified: new Date(),
               isAdmin: false,
               whitelist: [],
-              tags: []
+              tags: [],
+              hasMcBind: false,
+              hasBuidBind: false
             })
             targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
           }

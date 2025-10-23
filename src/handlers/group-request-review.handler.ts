@@ -772,12 +772,10 @@ export class GroupRequestReviewHandler extends BaseHandler {
       let bind = await this.repos.mcidbind.findByQQId(qq)
 
       if (!bind) {
-        // 创建新绑定（使用临时MC用户名）
-        const tempMcUsername = `_temp_${Date.now()}`
-
+        // 创建新绑定（不使用临时MC用户名）
         bind = await this.repos.mcidbind.create({
           qqId: qq,
-          mcUsername: tempMcUsername,
+          mcUsername: '',
           mcUuid: '',
           buidUid: zminfoUser.uid,
           buidUsername: finalUsername,
@@ -789,7 +787,9 @@ export class GroupRequestReviewHandler extends BaseHandler {
           medalLevel: zminfoUser.medal?.level || 0,
           wealthMedalLevel: zminfoUser.wealthMedalLevel || 0,
           lastActiveTime: new Date(),
-          lastModified: new Date()
+          lastModified: new Date(),
+          hasMcBind: false,
+          hasBuidBind: true
         })
 
         this.logger.info('入群审批', `已创建新绑定 - QQ: ${qq}, UID: ${uid}`, true)
