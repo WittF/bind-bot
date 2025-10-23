@@ -2,6 +2,7 @@ import { Context } from 'koishi'
 import { LoggerService } from '../utils/logger'
 import { MCIDBINDRepository } from '../repositories/mcidbind.repository'
 import { normalizeUsername as normalizeUsernameHelper } from '../utils/helpers'
+import { BindStatus } from '../utils/bind-status'
 import type {
   MCIDBIND,
   ZminfoUser,
@@ -215,7 +216,7 @@ export class DatabaseService {
       if (!bind) return false
 
       // 如果绑定的用户名是临时用户名，视为未绑定
-      if (bind.mcUsername && bind.mcUsername.startsWith('_temp_')) {
+      if (!BindStatus.hasValidMcBind(bind)) {
         return false
       }
 
