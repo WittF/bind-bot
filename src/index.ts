@@ -807,6 +807,15 @@ export function apply(ctx: Context, config: IConfig) {
       usernameCheckFailCount: {
         type: 'integer',
         initial: 0
+      },
+      // 绑定状态标志字段
+      hasMcBind: {
+        type: 'boolean',
+        initial: false
+      },
+      hasBuidBind: {
+        type: 'boolean',
+        initial: false
       }
     },
     {
@@ -877,6 +886,24 @@ export function apply(ctx: Context, config: IConfig) {
         // 检查并添加reminderCount字段
         if (!('reminderCount' in record)) {
           updateData.reminderCount = 0
+          needUpdate = true
+        }
+
+        // 检查并添加hasMcBind字段（数据迁移：根据 mcUsername 判断）
+        if (!('hasMcBind' in record)) {
+          // 有有效的MC用户名（非空且不是_temp_开头）则认为已绑定
+          const mcUsername = (record as any).mcUsername
+          const hasValidMc = !!(mcUsername && !mcUsername.startsWith('_temp_'))
+          updateData.hasMcBind = hasValidMc
+          needUpdate = true
+        }
+
+        // 检查并添加hasBuidBind字段（数据迁移：根据 buidUid 判断）
+        if (!('hasBuidBind' in record)) {
+          // 有有效的B站UID（非空）则认为已绑定
+          const buidUid = (record as any).buidUid
+          const hasValidBuid = !!(buidUid && buidUid.length > 0)
+          updateData.hasBuidBind = hasValidBuid
           needUpdate = true
         }
 

@@ -99,6 +99,13 @@ export interface MCIDBIND {
 
   /** 随机提醒次数 (用于天选时刻等功能) */
   reminderCount: number
+
+  // ========== 绑定状态标志字段 ==========
+  /** 是否已绑定 Minecraft 账号 (true=已绑定有效MC账号, false=未绑定或临时状态) */
+  hasMcBind: boolean
+
+  /** 是否已绑定 B站账号 (true=已绑定有效B站账号, false=未绑定) */
+  hasBuidBind: boolean
 }
 
 /**

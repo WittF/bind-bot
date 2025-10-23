@@ -14,7 +14,13 @@
       "Bash(git -C \"F:\\Koishi\\koishi-dev\\external\\bind-mcid\" log --oneline --all --graph -10)",
       "Bash(powershell -Command \"cd ''F:\\Koishi\\koishi-dev\\external\\bind-mcid\\src''; $total = 0; Get-ChildItem -Recurse -Filter *.ts | ForEach-Object { $lines = (Get-Content $_FullName | Measure-Object -Line).Lines; $total += $lines }; Write-Output $total\")",
       "Bash(npm install:*)",
-      "mcp__fetch__fetch_markdown"
+      "mcp__fetch__fetch_markdown",
+      "Read(//f/Koishi/koishi-dev/external/luckydraw/src/**)",
+      "Bash(powershell -Command \"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Content ''F:\\Koishi\\koishi-dev\\external\\bind-mcid\\src\\handlers\\group-request-review.handler.ts'' -Encoding UTF8 | Select-String -Pattern ''ctx\\.on'' -Context 2,2 | Out-String\")",
+      "Bash(powershell -Command \"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Content ''F:\\Koishi\\koishi-dev\\Koishifile.ts'' -Encoding UTF8 | Select-String -Pattern ''bind-mcid|bind-bot|luckydraw|lucky-draw'' -Context 1,1 | Out-String\")",
+      "Bash(git commit:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(git checkout:*)"
     ],
     "deny": [],
     "ask": []
