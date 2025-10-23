@@ -3,6 +3,18 @@ import { BaseHandler } from './base.handler'
 import type { PendingRequest, RejectFlow, AdminCache, GroupRequestReviewConfig } from '../types'
 
 /**
+ * OneBot 扩展的 Session 类型（用于访问表情回应数据）
+ */
+interface OneBotSession extends Session {
+  onebot?: {
+    message_id?: string
+    user_id?: string | number
+    group_id?: string | number
+    likes?: Array<{ emoji_id: string; count: number }>
+  }
+}
+
+/**
  * 入群申请审批处理器
  *
  * @remarks
@@ -54,8 +66,8 @@ export class GroupRequestReviewHandler extends BaseHandler {
     this.ctx.on('guild-member-added', this.handleUserJoined.bind(this))
 
     // 监听表情回应（NapCat扩展事件）
-    // 使用通用 'message' 事件监听，在 handleNotice 中过滤
-    this.ctx.on('message' as any, this.handleNotice.bind(this))
+    // 使用 'notice' 事件监听群表情回应事件（session.subtype === 'group-msg-emoji-like'）
+    this.ctx.on('notice' as any, this.handleNotice.bind(this))
 
     // 中间件：处理拒绝理由
     this.ctx.middleware(this.handleRejectReason.bind(this))
@@ -135,14 +147,24 @@ export class GroupRequestReviewHandler extends BaseHandler {
       }
 
       // 获取原始事件数据（使用类型断言访问 onebot 扩展属性）
-      const sessionAny = session as any
-      if (!sessionAny.onebot || !sessionAny.onebot.likes) {
+      const onebotSession = session as OneBotSession
+      const onebotData = onebotSession.onebot
+
+      if (!onebotData?.likes || onebotData.likes.length === 0) {
         return
       }
 
-      const emojiData = sessionAny.onebot.likes
-      const msgId = session.messageId
-      const operatorId = this.deps.normalizeQQId(session.userId)
+      // 从原始 OneBot 数据中读取（更可靠）
+      const msgId = onebotData.message_id?.toString() || session.messageId
+      const userId = onebotData.user_id?.toString() || session.userId
+      const emojiData = onebotData.likes
+
+      if (!msgId || !userId) {
+        this.logger.warn('入群审批', '表情回应事件缺少必要数据: messageId 或 userId')
+        return
+      }
+
+      const operatorId = this.deps.normalizeQQId(userId)
 
       this.logger.debug(
         '入群审批',
@@ -227,7 +249,7 @@ export class GroupRequestReviewHandler extends BaseHandler {
       h.image(avatar),
       h.text(`\n👤 昵称：${nickname}\n`),
       h.text(`🆔 QQ号：${qq}\n`),
-      h.text(`💬 回答：${answer}\n\n`),
+      h.text(`💬 入群${answer}\n\n`),
       h.text('━━━━━━━━━━━━━━━\n'),
       h.text('请管理员点击表情回应：\n'),
       h.text('👍 /太赞了 - 通过并自动绑定\n'),
@@ -459,14 +481,16 @@ export class GroupRequestReviewHandler extends BaseHandler {
     // 检查是否是同一个管理员
     const operatorId = this.deps.normalizeQQId(session.userId)
     if (operatorId !== rejectFlow.operatorId) {
-      return '⚠️ 只有发起拒绝的管理员可以提供理由'
+      void session.send('⚠️ 只有发起拒绝的管理员可以提供理由')
+      return
     }
 
     // 检查是否超时
     if (Date.now() > rejectFlow.timeout) {
       this.rejectFlows.delete(session.quote.id)
       rejectFlow.pendingRequest.status = 'pending'
-      return '❌ 拒绝流程已超时，请重新操作'
+      void session.send('❌ 拒绝流程已超时，请重新操作')
+      return
     }
 
     // 执行拒绝
@@ -481,11 +505,11 @@ export class GroupRequestReviewHandler extends BaseHandler {
       pendingRequest.status = 'rejected'
       this.rejectFlows.delete(session.quote.id)
 
-      return `✅ 已拒绝 ${pendingRequest.applicantQQ} 的入群申请\n拒绝理由：${reason}`
+      await session.send(`✅ 已拒绝 ${pendingRequest.applicantQQ} 的入群申请\n拒绝理由：${reason}`)
     } catch (error) {
       this.logger.error('入群审批', `拒绝入群失败: ${error.message}`, error)
       pendingRequest.status = 'pending'
-      return `❌ 拒绝失败：${error.message}`
+      await session.send(`❌ 拒绝失败：${error.message}`)
     }
   }
 

@@ -110,11 +110,9 @@ export const Config: Schema<IConfig> = Schema.object({
   groupRequestReview: Schema.object({
     enabled: Schema.boolean().description('是否启用入群申请审批功能').default(false),
     targetGroupId: Schema.string()
-      .description('需要审批的目标群ID（入群申请来源群）')
-      .default('931805503'),
+      .description('需要审批的目标群ID（入群申请来源群）'),
     reviewGroupId: Schema.string()
-      .description('管理员审批操作所在的群ID（播报群）')
-      .default('290238092'),
+      .description('管理员审批操作所在的群ID（播报群）'),
     approveAutoBindEmoji: Schema.string()
       .description('批准并自动绑定的表情ID（/太赞了）')
       .default('389'),
