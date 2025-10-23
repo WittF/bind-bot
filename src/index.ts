@@ -2192,9 +2192,7 @@ export function apply(ctx: Context, config: IConfig) {
       removeBindingSession(session.userId, session.channelId)
 
       // 根据是否有MC绑定提供不同的提示
-      const displayMcName = bindingSession.mcUsername && !bindingSession.mcUsername.startsWith('_temp_')
-        ? bindingSession.mcUsername
-        : null
+      const displayMcName = bindingSession.mcUsername || null
       const mcStatus = displayMcName ? `您的MC账号${displayMcName}已成功绑定\n` : ''
       await sendMessage(session, [
         h.text(
@@ -2211,10 +2209,8 @@ export function apply(ctx: Context, config: IConfig) {
 
     // 自动群昵称设置功能 - 使用新的autoSetGroupNickname函数
     try {
-      // 检查是否有有效的MC用户名（不是临时用户名）
-      const mcName = bindingSession.mcUsername && !bindingSession.mcUsername.startsWith('_temp_')
-        ? bindingSession.mcUsername
-        : null
+      // 检查是否有有效的MC用户名
+      const mcName = bindingSession.mcUsername || null
       await services.nickname.autoSetGroupNickname(
         session,
         mcName,
@@ -2241,9 +2237,7 @@ export function apply(ctx: Context, config: IConfig) {
     }
 
     // 准备完成消息
-    const displayMcName = bindingSession.mcUsername && !bindingSession.mcUsername.startsWith('_temp_')
-      ? bindingSession.mcUsername
-      : null
+    const displayMcName = bindingSession.mcUsername || null
     const mcInfo = displayMcName ? `MC: ${displayMcName}` : 'MC: 未绑定'
     let extraTip = ''
 
