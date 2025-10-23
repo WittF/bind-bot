@@ -207,11 +207,6 @@ export class DatabaseService {
         return false
       }
 
-      // 跳过临时用户名的检查
-      if (username.startsWith('_temp_')) {
-        return false
-      }
-
       // 使用不区分大小写的查询
       const bind = await this.mcidbindRepo.findByUsernameIgnoreCase(username)
 

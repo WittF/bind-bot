@@ -416,11 +416,6 @@ export function normalizeUsername(username: string, logger?: Logger): string {
   // 移除首尾空格
   const trimmed = username.trim()
 
-  // 检查是否为临时用户名，临时用户名不做转换
-  if (trimmed.startsWith('_temp_')) {
-    return trimmed
-  }
-
   // 转小写
   const normalized = trimmed.toLowerCase()
 
