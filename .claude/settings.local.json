@@ -20,7 +20,8 @@
       "Bash(powershell -Command \"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Content ''F:\\Koishi\\koishi-dev\\Koishifile.ts'' -Encoding UTF8 | Select-String -Pattern ''bind-mcid|bind-bot|luckydraw|lucky-draw'' -Context 1,1 | Out-String\")",
       "Bash(git commit:*)",
       "Bash(powershell -Command:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(chcp 65001)"
     ],
     "deny": [],
     "ask": []

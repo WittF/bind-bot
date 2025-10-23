@@ -45,6 +45,7 @@ import {
 } from './handlers'
 import { ApiService, DatabaseService, NicknameService } from './services'
 import { ServiceContainer } from './services/service-container'
+import { BindStatus } from './utils/bind-status'
 // 导入所有类型定义
 import type {
   Config as IConfig,
@@ -597,7 +598,7 @@ export function apply(ctx: Context, config: IConfig) {
           const bindingSession = getBindingSession(session.userId, session.channelId)
           bindingSession.state = 'waiting_buid'
         }
-      } else if (existingBind.mcUsername && !existingBind.mcUsername.startsWith('_temp_') && !existingBind.buidUid) {
+      } else if (BindStatus.hasValidMcBind(existingBind) && !existingBind.buidUid) {
         // 只绑定了MC（非临时用户名），未绑定B站
         const displayUsername = existingBind.mcUsername
         welcomeMessage += `🎮 已绑定MC: ${displayUsername}\n`
@@ -627,8 +628,7 @@ export function apply(ctx: Context, config: IConfig) {
         await session.bot.sendMessage(session.channelId, welcomeMessage)
         logger.info(`[新人绑定] 新成员QQ(${normalizedUserId})已绑定B站但未绑定MC，已发送绑定提醒`)
       } else if (
-        existingBind.mcUsername &&
-        existingBind.mcUsername.startsWith('_temp_') &&
+        !BindStatus.hasValidMcBind(existingBind) &&
         existingBind.buidUid
       ) {
         // MC是临时用户名但已绑定B站 - 也按照"只绑定了B站"处理
@@ -1637,7 +1637,7 @@ export function apply(ctx: Context, config: IConfig) {
       if (
         bind.buidUid &&
         bind.buidUsername &&
-        (!bind.mcUsername || bind.mcUsername.startsWith('_temp_'))
+        !BindStatus.hasValidMcBind(bind)
       ) {
         const mcInfo = null
         const isNicknameCorrect = services.nickname.checkNicknameFormat(
@@ -1684,8 +1684,7 @@ export function apply(ctx: Context, config: IConfig) {
       if (
         bind.buidUid &&
         bind.buidUsername &&
-        bind.mcUsername &&
-        !bind.mcUsername.startsWith('_temp_')
+        BindStatus.hasValidMcBind(bind)
       ) {
         const isNicknameCorrect = services.nickname.checkNicknameFormat(
           currentNickname,
@@ -2003,7 +2002,7 @@ export function apply(ctx: Context, config: IConfig) {
 
     // 检查用户是否已绑定MC账号
     const existingBind = await services.database.getMcBindByQQId(normalizedUserId)
-    if (existingBind && existingBind.mcUsername && !existingBind.mcUsername.startsWith('_temp_')) {
+    if (BindStatus.hasValidMcBind(existingBind)) {
       // 检查冷却时间
       if (!(await isAdmin(session.userId)) && !checkCooldown(existingBind.lastModified)) {
         const days = config.cooldownDays
@@ -2013,10 +2012,7 @@ export function apply(ctx: Context, config: IConfig) {
         const remainingDays = days - passedDays
 
         removeBindingSession(session.userId, session.channelId)
-        const displayUsername =
-          existingBind.mcUsername && !existingBind.mcUsername.startsWith('_temp_')
-            ? existingBind.mcUsername
-            : '未绑定'
+        const displayUsername = BindStatus.getDisplayMcUsername(existingBind, '未绑定')
         await sendMessage(session, [
           h.text(
             `❌ 您已绑定MC账号: ${displayUsername}\n\n如需修改，请在冷却期结束后(还需${remainingDays}天)使用 ${formatCommand('mcid change')} 命令或联系管理员`
@@ -2199,10 +2195,9 @@ export function apply(ctx: Context, config: IConfig) {
       removeBindingSession(session.userId, session.channelId)
 
       // 根据是否有MC绑定提供不同的提示
-      const displayMcName =
-        bindingSession.mcUsername && !bindingSession.mcUsername.startsWith('_temp_')
-          ? bindingSession.mcUsername
-          : null
+      const displayMcName = bindingSession.mcUsername && !bindingSession.mcUsername.startsWith('_temp_')
+        ? bindingSession.mcUsername
+        : null
       const mcStatus = displayMcName ? `您的MC账号${displayMcName}已成功绑定\n` : ''
       await sendMessage(session, [
         h.text(
@@ -2220,10 +2215,9 @@ export function apply(ctx: Context, config: IConfig) {
     // 自动群昵称设置功能 - 使用新的autoSetGroupNickname函数
     try {
       // 检查是否有有效的MC用户名（不是临时用户名）
-      const mcName =
-        bindingSession.mcUsername && !bindingSession.mcUsername.startsWith('_temp_')
-          ? bindingSession.mcUsername
-          : null
+      const mcName = bindingSession.mcUsername && !bindingSession.mcUsername.startsWith('_temp_')
+        ? bindingSession.mcUsername
+        : null
       await services.nickname.autoSetGroupNickname(
         session,
         mcName,
@@ -2250,10 +2244,9 @@ export function apply(ctx: Context, config: IConfig) {
     }
 
     // 准备完成消息
-    const displayMcName =
-      bindingSession.mcUsername && !bindingSession.mcUsername.startsWith('_temp_')
-        ? bindingSession.mcUsername
-        : null
+    const displayMcName = bindingSession.mcUsername && !bindingSession.mcUsername.startsWith('_temp_')
+      ? bindingSession.mcUsername
+      : null
     const mcInfo = displayMcName ? `MC: ${displayMcName}` : 'MC: 未绑定'
     let extraTip = ''
 
