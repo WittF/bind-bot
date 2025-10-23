@@ -809,7 +809,8 @@ export class GroupRequestReviewHandler extends BaseHandler {
           medalLevel: zminfoUser.medal?.level || 0,
           wealthMedalLevel: zminfoUser.wealthMedalLevel || 0,
           lastActiveTime: new Date(),
-          lastModified: new Date()
+          lastModified: new Date(),
+          hasBuidBind: true
         })
 
         this.logger.info('入群审批', `已更新绑定 - QQ: ${qq}, UID: ${uid}`, true)

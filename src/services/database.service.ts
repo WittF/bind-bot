@@ -96,7 +96,8 @@ export class DatabaseService {
         const updateData: UpdateMcBindData = {
           mcUsername,
           mcUuid,
-          lastModified: new Date()
+          lastModified: new Date(),
+          hasMcBind: true
         }
 
         // 仅当指定了isAdmin参数时更新管理员状态
@@ -119,7 +120,9 @@ export class DatabaseService {
             mcUsername,
             mcUuid,
             lastModified: new Date(),
-            isAdmin: isAdmin || false
+            isAdmin: isAdmin || false,
+            hasMcBind: true,
+            hasBuidBind: false
           })
           this.logger.info(
             'MCIDBIND',
@@ -330,6 +333,8 @@ export class DatabaseService {
         lastModified: new Date()
       }
       if (bind) {
+        // 添加 hasBuidBind 标志
+        updateData.hasBuidBind = true
         await this.mcidbindRepo.update(normalizedQQId, updateData)
         this.logger.info(
           'B站账号绑定',

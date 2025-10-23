@@ -327,7 +327,8 @@ export class BuidHandler extends BaseHandler {
         medalLevel: 0,
         wealthMedalLevel: 0,
         lastActiveTime: null,
-        lastModified: new Date()
+        lastModified: new Date(),
+        hasBuidBind: false
       }
 
       await this.repos.mcidbind.update(normalizedUserId, updateData)
@@ -476,6 +477,8 @@ export class BuidHandler extends BaseHandler {
       }
 
       if (bind) {
+        // 添加 hasBuidBind 标志
+        updateData.hasBuidBind = true
         await this.repos.mcidbind.update(normalizedQQId, updateData)
         this.logger.info(
           'B站账号绑定',
