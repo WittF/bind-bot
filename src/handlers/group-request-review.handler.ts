@@ -3,18 +3,6 @@ import { BaseHandler } from './base.handler'
 import type { PendingRequest, RejectFlow, AdminCache, GroupRequestReviewConfig } from '../types'
 
 /**
- * OneBot 扩展的 Session 类型（用于访问表情回应数据）
- */
-interface OneBotSession extends Session {
-  onebot?: {
-    message_id?: string
-    user_id?: string | number
-    group_id?: string | number
-    likes?: Array<{ emoji_id: string; count: number }>
-  }
-}
-
-/**
  * 入群申请审批处理器
  *
  * @remarks
@@ -159,27 +147,22 @@ export class GroupRequestReviewHandler extends BaseHandler {
         return
       }
 
-      // 获取原始事件数据（使用类型断言访问 onebot 扩展属性）
-      const onebotSession = session as OneBotSession
-      const onebotData = onebotSession.onebot
+      // 获取原始事件数据（直接访问 session.onebot，参考luckydraw实现）
+      const data = (session as any).onebot
 
-      this.logger.info('入群审批', `[DEBUG] onebot数据: ${JSON.stringify(onebotData)}`, true)
+      this.logger.info('入群审批', `[DEBUG] onebot数据: ${JSON.stringify(data)}`, true)
 
-      if (!onebotData?.likes || onebotData.likes.length === 0) {
-        this.logger.info('入群审批', '[DEBUG] 跳过: 没有likes数据', true)
+      const messageId = data?.message_id
+      const userId = data?.user_id?.toString()
+      const likes = data?.likes || []
+
+      if (!messageId || !userId || likes.length === 0) {
+        this.logger.info('入群审批', '[DEBUG] 跳过: 缺少必要数据或likes为空', true)
         return
       }
 
-      // 从原始 OneBot 数据中读取（更可靠）
-      const msgId = onebotData.message_id?.toString() || session.messageId
-      const userId = onebotData.user_id?.toString() || session.userId
-      const emojiData = onebotData.likes
-
-      if (!msgId || !userId) {
-        this.logger.warn('入群审批', '表情回应事件缺少必要数据: messageId 或 userId')
-        return
-      }
-
+      const msgId = messageId.toString()
+      const emojiData = likes
       const operatorId = this.deps.normalizeQQId(userId)
 
       this.logger.info(
@@ -261,7 +244,10 @@ export class GroupRequestReviewHandler extends BaseHandler {
     let medalInfo: string | null = null
     let bindStatus = '❌ UID 未提供'
 
+    this.logger.debug('入群审批', `[DEBUG] 准备解析UID - 原始answer: "${answer}"`)
     const parsedUid = this.parseUID(answer)
+    this.logger.debug('入群审批', `[DEBUG] parseUID结果: ${parsedUid ? parsedUid : 'null'}`)
+
     if (parsedUid) {
       buidUid = parsedUid
 
@@ -691,30 +677,64 @@ export class GroupRequestReviewHandler extends BaseHandler {
   }
 
   /**
-   * 解析UID（支持多种格式）
+   * 解析UID（支持多种格式，参考BuidHandler.parseUidInput实现）
    */
   private parseUID(input: string): string | null {
     if (!input) return null
 
     input = input.trim()
 
-    // 格式1: 纯数字
+    // 格式1: 纯数字（整行都是数字）
     if (/^\d+$/.test(input)) {
+      this.logger.debug('入群审批', `parseUID: 识别为纯数字 -> ${input}`)
       return input
     }
 
-    // 格式2: UID:123456789
-    const uidMatch = input.match(/^UID:(\d+)$/i)
-    if (uidMatch) {
-      return uidMatch[1]
+    // 格式2: 包含"答案："标记的多行文本（如：问题\n答案：123456789）
+    const answerMatch = input.match(/答案[：:]\s*(\d+)/i)
+    if (answerMatch) {
+      this.logger.debug('入群审批', `parseUID: 从"答案："提取 -> ${answerMatch[1]}`)
+      return answerMatch[1]
     }
 
-    // 格式3: https://space.bilibili.com/123456789
-    const urlMatch = input.match(/space\.bilibili\.com\/(\d+)/)
-    if (urlMatch) {
-      return urlMatch[1]
+    // 格式3: UID:123456789（参考BuidHandler）
+    if (input.toLowerCase().startsWith('uid:')) {
+      const uid = input.substring(4).trim()
+      if (/^\d+$/.test(uid)) {
+        this.logger.debug('入群审批', `parseUID: 从"UID:"前缀提取 -> ${uid}`)
+        return uid
+      }
     }
 
+    // 格式4: https://space.bilibili.com/123456789（参考BuidHandler的完善处理）
+    if (input.includes('space.bilibili.com/')) {
+      try {
+        let urlPart = input.replace(/^https?:\/\/space\.bilibili\.com\//, '')
+        // 移除查询参数
+        if (urlPart.includes('?')) {
+          urlPart = urlPart.split('?')[0]
+        }
+        // 移除路径
+        if (urlPart.includes('/')) {
+          urlPart = urlPart.split('/')[0]
+        }
+        if (/^\d+$/.test(urlPart)) {
+          this.logger.debug('入群审批', `parseUID: 从B站空间URL提取 -> ${urlPart}`)
+          return urlPart
+        }
+      } catch (error) {
+        this.logger.warn('入群审批', `parseUID: URL解析失败 - ${error.message}`)
+      }
+    }
+
+    // 格式5: 从文本中提取第一个长数字串（8-12位，B站UID的典型长度）
+    const numberMatch = input.match(/\b(\d{8,12})\b/)
+    if (numberMatch) {
+      this.logger.debug('入群审批', `parseUID: 从文本提取长数字串 -> ${numberMatch[1]}`)
+      return numberMatch[1]
+    }
+
+    this.logger.warn('入群审批', `parseUID: 无法解析 - "${input}"`)
     return null
   }
 
