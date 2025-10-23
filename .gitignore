@@ -17,4 +17,3 @@ tsconfig.tsbuildinfo
 *.njsproj
 *.sln
 .claude/settings.local.json
-.claude/settings.local.json
