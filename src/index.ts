@@ -597,41 +597,27 @@ export function apply(ctx: Context, config: IConfig) {
           const bindingSession = getBindingSession(session.userId, session.channelId)
           bindingSession.state = 'waiting_buid'
         }
-      } else if (existingBind.mcUsername && !existingBind.buidUid) {
-        // 只绑定了MC，未绑定B站
-        // 检查是否为有效的MC绑定（非临时用户名）
-        if (existingBind.mcUsername.startsWith('_temp_')) {
-          // 临时用户名，实际上应该是只绑定了B站但MC是临时的，不应该进入这个分支
-          // 这种情况应该按照"只绑定了B站"处理
-          welcomeMessage += '📋 检测到您已绑定B站账号，但尚未绑定MC账号\n'
-          welcomeMessage += `🎮 可使用 ${formatCommand('mcid bind <MC用户名>')} 绑定MC账号`
+      } else if (existingBind.mcUsername && !existingBind.mcUsername.startsWith('_temp_') && !existingBind.buidUid) {
+        // 只绑定了MC（非临时用户名），未绑定B站
+        const displayUsername = existingBind.mcUsername
+        welcomeMessage += `🎮 已绑定MC: ${displayUsername}\n`
 
+        if (inMuteTime) {
+          // 在禁言时间内，只发送状态信息
+          welcomeMessage += `📋 请在非禁言时间段使用 ${formatCommand('buid bind <B站UID>')} 绑定B站账号`
           await session.bot.sendMessage(session.channelId, welcomeMessage)
-          logger.info(
-            `[新人绑定] 新成员QQ(${normalizedUserId})实际只绑定了B站（MC为临时用户名），已发送绑定提醒`
-          )
+          logger.info(`[新人绑定] 新成员QQ(${normalizedUserId})在禁言时间内，仅发送绑定状态提醒`)
         } else {
-          // 真正绑定了MC账号
-          const displayUsername = existingBind.mcUsername
-          welcomeMessage += `🎮 已绑定MC: ${displayUsername}\n`
+          // 不在禁言时间，自动启动B站绑定
+          welcomeMessage += '📋 请发送您的B站UID进行绑定'
+          await session.bot.sendMessage(session.channelId, welcomeMessage)
+          logger.info(`[新人绑定] 为新成员QQ(${normalizedUserId})自动启动B站绑定流程`)
 
-          if (inMuteTime) {
-            // 在禁言时间内，只发送状态信息
-            welcomeMessage += `📋 请在非禁言时间段使用 ${formatCommand('buid bind <B站UID>')} 绑定B站账号`
-            await session.bot.sendMessage(session.channelId, welcomeMessage)
-            logger.info(`[新人绑定] 新成员QQ(${normalizedUserId})在禁言时间内，仅发送绑定状态提醒`)
-          } else {
-            // 不在禁言时间，自动启动B站绑定
-            welcomeMessage += '📋 请发送您的B站UID进行绑定'
-            await session.bot.sendMessage(session.channelId, welcomeMessage)
-            logger.info(`[新人绑定] 为新成员QQ(${normalizedUserId})自动启动B站绑定流程`)
-
-            // 创建绑定会话，直接进入B站绑定步骤
-            createBindingSession(session.userId, session.channelId)
-            const bindingSession = getBindingSession(session.userId, session.channelId)
-            bindingSession.state = 'waiting_buid'
-            bindingSession.mcUsername = existingBind.mcUsername
-          }
+          // 创建绑定会话，直接进入B站绑定步骤
+          createBindingSession(session.userId, session.channelId)
+          const bindingSession = getBindingSession(session.userId, session.channelId)
+          bindingSession.state = 'waiting_buid'
+          bindingSession.mcUsername = existingBind.mcUsername
         }
       } else if (!existingBind.mcUsername && existingBind.buidUid) {
         // 只绑定了B站，未绑定MC - 仅发送提醒
