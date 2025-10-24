@@ -733,11 +733,11 @@ export function apply(ctx: Context, config: IConfig) {
       },
       mcUsername: {
         type: 'string',
-        initial: ''
+        initial: null
       },
       mcUuid: {
         type: 'string',
-        initial: ''
+        initial: null
       },
       lastModified: {
         type: 'timestamp',
@@ -910,8 +910,8 @@ export function apply(ctx: Context, config: IConfig) {
 
         // 清理临时用户名（无论hasMcBind字段是否存在）
         if (!hasValidMc && mcUsername && mcUsername.startsWith('_temp_')) {
-          updateData.mcUsername = ''
-          updateData.mcUuid = ''
+          updateData.mcUsername = null
+          updateData.mcUuid = null
           updateData.whitelist = []
           needUpdate = true
           logger.info(`[数据清理] 清理QQ(${qqId})的临时用户名: ${mcUsername}`)

@@ -184,8 +184,8 @@ export class DatabaseService {
       if (BindStatus.hasValidBuidBind(bind)) {
         // 如果有B站绑定，只清空MC字段，保留记录
         await this.mcidbindRepo.update(normalizedQQId, {
-          mcUsername: '',
-          mcUuid: '',
+          mcUsername: null,
+          mcUuid: null,
           hasMcBind: false,
           whitelist: [],
           lastModified: new Date()
@@ -365,8 +365,8 @@ export class DatabaseService {
         // 创建新绑定记录（不使用临时用户名）
         const newBind: CreateBindData = {
           qqId: normalizedQQId,
-          mcUsername: '',
-          mcUuid: '',
+          mcUsername: null,
+          mcUuid: null,
           isAdmin: false,
           whitelist: [],
           tags: [],

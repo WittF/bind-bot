@@ -775,8 +775,8 @@ export class GroupRequestReviewHandler extends BaseHandler {
         // 创建新绑定（不使用临时MC用户名）
         bind = await this.repos.mcidbind.create({
           qqId: qq,
-          mcUsername: '',
-          mcUuid: '',
+          mcUsername: null,
+          mcUuid: null,
           buidUid: zminfoUser.uid,
           buidUsername: finalUsername,
           guardLevel: zminfoUser.guard_level || 0,

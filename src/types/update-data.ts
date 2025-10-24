@@ -25,11 +25,11 @@
  * ```
  */
 export interface UpdateMcBindData {
-  /** MC用户名 */
-  mcUsername?: string
+  /** MC用户名 (NULL表示未绑定) */
+  mcUsername?: string | null
 
-  /** MC UUID */
-  mcUuid?: string
+  /** MC UUID (NULL表示未绑定) */
+  mcUuid?: string | null
 
   /** 上次修改时间 */
   lastModified?: Date
@@ -163,8 +163,8 @@ export interface UpdateBuidInfoData {
  */
 export interface CreateBindData {
   qqId: string
-  mcUsername: string
-  mcUuid: string
+  mcUsername: string | null
+  mcUuid: string | null
   isAdmin: boolean
   whitelist: string[]
   tags: string[]

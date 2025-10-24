@@ -42,11 +42,11 @@ export interface MCIDBIND {
   qqId: string
 
   // ========== MC 绑定字段 ==========
-  /** MC用户名 (具有唯一性约束) */
-  mcUsername: string
+  /** MC用户名 (具有唯一性约束, NULL表示未绑定) */
+  mcUsername: string | null
 
-  /** MC UUID (格式: 带连字符的标准UUID) */
-  mcUuid: string
+  /** MC UUID (格式: 带连字符的标准UUID, NULL表示未绑定) */
+  mcUuid: string | null
 
   /** MC用户名上次检查时间 (用于改名检测缓存) */
   usernameLastChecked?: Date
