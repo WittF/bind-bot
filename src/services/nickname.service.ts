@@ -35,7 +35,7 @@ export class NicknameService {
     if (!nickname || !buidUsername) return false
 
     // 期望格式：B站名称（ID:MC用户名）或 B站名称（ID:未绑定）
-    const mcInfo = mcUsername && !mcUsername.startsWith('_temp_') ? mcUsername : '未绑定'
+    const mcInfo = mcUsername || '未绑定'
     const expectedFormat = `${buidUsername}（ID:${mcInfo}）`
 
     return nickname === expectedFormat
@@ -216,7 +216,7 @@ export class NicknameService {
       const actualUserId = targetUserId || session.userId
       const normalizedUserId = this.normalizeQQId(actualUserId)
       const targetGroupId = specifiedGroupId || this.config.autoNicknameGroupId
-      const mcInfo = mcUsername && !mcUsername.startsWith('_temp_') ? mcUsername : '未绑定'
+      const mcInfo = mcUsername || '未绑定'
 
       this.logger.debug(
         '群昵称设置',

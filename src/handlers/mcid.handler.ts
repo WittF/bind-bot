@@ -1,6 +1,7 @@
 import { Context, Session, h } from 'koishi'
 import { BaseHandler } from './base.handler'
 import type { Config, MCIDBIND, MojangProfile } from '../types'
+import { BindStatus } from '../utils/bind-status'
 
 export class McidCommandHandler extends BaseHandler {
   /**
@@ -101,7 +102,7 @@ export class McidCommandHandler extends BaseHandler {
         this.logger.info('查询', `QQ(${normalizedUserId})查询QQ(${normalizedTargetId})的MC账号信息`)
 
         const targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
-        if (!targetBind || !targetBind.mcUsername || targetBind.mcUsername.startsWith('_temp_')) {
+        if (!targetBind || !BindStatus.hasValidMcBind(targetBind)) {
           this.logger.info('查询', `QQ(${normalizedTargetId})未绑定MC账号`)
 
           // 检查是否绑定了B站
@@ -154,7 +155,7 @@ export class McidCommandHandler extends BaseHandler {
       this.logger.info('查询', `QQ(${normalizedUserId})查询自己的MC账号信息`)
       const selfBind = await this.deps.databaseService.getMcBindByQQId(normalizedUserId)
 
-      if (!selfBind || !selfBind.mcUsername || selfBind.mcUsername.startsWith('_temp_')) {
+      if (!selfBind || !BindStatus.hasValidMcBind(selfBind)) {
         this.logger.info('查询', `QQ(${normalizedUserId})未绑定MC账号`)
 
         // 检查是否绑定了B站
@@ -292,8 +293,7 @@ export class McidCommandHandler extends BaseHandler {
       `QQ(${bind.qqId})的MC账号信息：用户名=${bind.mcUsername}, UUID=${bind.mcUuid}`
     )
 
-    const displayUsername =
-      bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? bind.mcUsername : '未绑定'
+    const displayUsername = BindStatus.getDisplayMcUsername(bind, '未绑定')
     const prefix = targetId ? `用户 ${targetId} 的` : '您的'
     const messageElements = [
       h.text(
@@ -309,8 +309,7 @@ export class McidCommandHandler extends BaseHandler {
 
     // 异步设置群昵称
     if (bind.buidUid && bind.buidUsername) {
-      const mcName =
-        bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? bind.mcUsername : null
+      const mcName = BindStatus.hasValidMcBind(bind) ? bind.mcUsername : null
       this.deps.nicknameService
         .autoSetGroupNickname(
           session,
@@ -388,8 +387,7 @@ export class McidCommandHandler extends BaseHandler {
       }
 
       this.logger.info('反向查询', `成功: MC用户名"${username}"被QQ(${bind.qqId})绑定`)
-      const displayUsername =
-        bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? bind.mcUsername : '未绑定'
+      const displayUsername = BindStatus.getDisplayMcUsername(bind, '未绑定')
       return this.deps.sendMessage(session, [
         h.text(
           `MC用户名"${displayUsername}"绑定信息:\nQQ号: ${bind.qqId}\nUUID: ${formattedUuid}${adminInfo}`
@@ -573,7 +571,7 @@ export class McidCommandHandler extends BaseHandler {
     // 检查是否已绑定
     const selfBind = await this.deps.databaseService.getMcBindByQQId(operatorId)
     if (selfBind && selfBind.mcUsername) {
-      const isTempUsername = selfBind.mcUsername.startsWith('_temp_')
+      const isTempUsername = !BindStatus.hasValidMcBind(selfBind)
 
       if (!isTempUsername) {
         // 检查冷却时间
@@ -591,10 +589,7 @@ export class McidCommandHandler extends BaseHandler {
             '绑定',
             `QQ(${operatorId})已绑定MC账号"${selfBind.mcUsername}"，且在冷却期内`
           )
-          const displayUsername =
-            selfBind.mcUsername && !selfBind.mcUsername.startsWith('_temp_')
-              ? selfBind.mcUsername
-              : '未绑定'
+          const displayUsername = BindStatus.getDisplayMcUsername(selfBind, '未绑定')
           return this.deps.sendMessage(session, [
             h.text(
               `您已绑定MC账号: ${displayUsername}，如需修改，请在冷却期结束后(还需${remainingDays}天)使用 ` +
@@ -607,10 +602,7 @@ export class McidCommandHandler extends BaseHandler {
           '绑定',
           `QQ(${operatorId})已绑定MC账号"${selfBind.mcUsername}"，建议使用change命令`
         )
-        const displayUsername =
-          selfBind.mcUsername && !selfBind.mcUsername.startsWith('_temp_')
-            ? selfBind.mcUsername
-            : '未绑定'
+        const displayUsername = BindStatus.getDisplayMcUsername(selfBind, '未绑定')
         return this.deps.sendMessage(session, [
           h.text(
             `您已绑定MC账号: ${displayUsername}，如需修改请使用 ` +
@@ -963,23 +955,21 @@ export class McidCommandHandler extends BaseHandler {
       return this.deps.sendMessage(session, [h.text(`用户 ${normalizedTargetId} 尚未绑定MC账号`)])
     }
 
-    const oldUsername =
-      targetBind.mcUsername && !targetBind.mcUsername.startsWith('_temp_')
-        ? targetBind.mcUsername
-        : '未绑定'
-    const oldBuidInfo = targetBind.buidUid
-      ? ` 和 B站账号: ${targetBind.buidUsername}(${targetBind.buidUid})`
+    const oldUsername = BindStatus.getDisplayMcUsername(targetBind, '未绑定')
+    const hasBuidBind = targetBind.buidUid && targetBind.buidUid.trim() !== ''
+    const buidKeepInfo = hasBuidBind
+      ? `\n✅ 该用户的B站绑定已保留: ${targetBind.buidUsername}(${targetBind.buidUid})`
       : ''
 
-    // 删除绑定记录
+    // 解绑MC账号
     await this.deps.databaseService.deleteMcBind(target)
 
     this.logger.info(
       '解绑',
-      `成功: 管理员QQ(${operatorId})为QQ(${normalizedTargetId})解绑MC账号: ${oldUsername}${oldBuidInfo}`
+      `成功: 管理员QQ(${operatorId})为QQ(${normalizedTargetId})解绑MC账号: ${oldUsername}`
     )
     return this.deps.sendMessage(session, [
-      h.text(`已成功为用户 ${normalizedTargetId} 解绑MC账号: ${oldUsername}${oldBuidInfo}`)
+      h.text(`已成功为用户 ${normalizedTargetId} 解绑MC账号: ${oldUsername}${buidKeepInfo}`)
     ])
   }
 
@@ -993,20 +983,18 @@ export class McidCommandHandler extends BaseHandler {
       return this.deps.sendMessage(session, [h.text('您尚未绑定MC账号')])
     }
 
-    const oldUsername =
-      selfBind.mcUsername && !selfBind.mcUsername.startsWith('_temp_')
-        ? selfBind.mcUsername
-        : '未绑定'
-    const oldBuidInfo = selfBind.buidUid
-      ? ` 和 B站账号: ${selfBind.buidUsername}(${selfBind.buidUid})`
+    const oldUsername = BindStatus.getDisplayMcUsername(selfBind, '未绑定')
+    const hasBuidBind = selfBind.buidUid && selfBind.buidUid.trim() !== ''
+    const buidKeepInfo = hasBuidBind
+      ? `\n✅ 您的B站绑定已保留: ${selfBind.buidUsername}(${selfBind.buidUid})`
       : ''
 
-    // 删除绑定记录
+    // 解绑MC账号
     await this.deps.databaseService.deleteMcBind(operatorId)
 
-    this.logger.info('解绑', `成功: QQ(${operatorId})解绑MC账号: ${oldUsername}${oldBuidInfo}`)
+    this.logger.info('解绑', `成功: QQ(${operatorId})解绑MC账号: ${oldUsername}`)
     return this.deps.sendMessage(session, [
-      h.text(`已成功解绑MC账号: ${oldUsername}${oldBuidInfo}`)
+      h.text(`已成功解绑MC账号: ${oldUsername}${buidKeepInfo}`)
     ])
   }
 
@@ -1048,14 +1036,15 @@ export class McidCommandHandler extends BaseHandler {
         ])
       } else {
         // 用户不存在绑定记录，创建一个新记录并设为管理员
-        const tempUsername = `_temp_${normalizedTargetId}`
         try {
           await this.repos.mcidbind.create({
             qqId: normalizedTargetId,
-            mcUsername: tempUsername,
+            mcUsername: '',
             mcUuid: '',
             lastModified: new Date(),
-            isAdmin: true
+            isAdmin: true,
+            hasMcBind: false,
+            hasBuidBind: false
           })
           this.logger.info(
             '管理员',
@@ -1157,8 +1146,7 @@ export class McidCommandHandler extends BaseHandler {
       // 格式化管理员列表
       const adminList = admins
         .map(admin => {
-          const displayUsername =
-            admin.mcUsername && !admin.mcUsername.startsWith('_temp_') ? admin.mcUsername : null
+          const displayUsername = BindStatus.hasValidMcBind(admin) ? admin.mcUsername : null
           return `- ${admin.qqId}${displayUsername ? ` (MC: ${displayUsername})` : ''}`
         })
         .join('\n')
@@ -1196,13 +1184,11 @@ export class McidCommandHandler extends BaseHandler {
       let buidBoundUsers = 0
 
       for (const bind of allBinds) {
-        const hasMcid = bind.mcUsername && !bind.mcUsername.startsWith('_temp_')
-        if (hasMcid) {
+        if (BindStatus.hasValidMcBind(bind)) {
           mcidBoundUsers++
         }
 
-        const hasBuid = bind.buidUid && bind.buidUid.trim() !== ''
-        if (hasBuid) {
+        if (BindStatus.hasValidBuidBind(bind)) {
           buidBoundUsers++
         }
       }
@@ -1292,8 +1278,7 @@ export class McidCommandHandler extends BaseHandler {
           }
 
           // 检查昵称格式
-          const mcInfo =
-            bind.mcUsername && !bind.mcUsername.startsWith('_temp_') ? bind.mcUsername : null
+          const mcInfo = BindStatus.hasValidMcBind(bind) ? bind.mcUsername : null
           const isCorrect = this.deps.nicknameService.checkNicknameFormat(
             currentNickname,
             bind.buidUsername,

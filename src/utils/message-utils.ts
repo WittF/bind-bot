@@ -221,8 +221,8 @@ export class MessageUtils {
       const actualUserId = targetUserId || session.userId
       const normalizedUserId = normalizeQQId(actualUserId)
 
-      // 根据MC绑定状态设置不同的格式（临时用户名视为未绑定）
-      const mcInfo = mcUsername && !mcUsername.startsWith('_temp_') ? mcUsername : '未绑定'
+      // 根据MC绑定状态设置不同的格式
+      const mcInfo = mcUsername || '未绑定'
       let currentBuidUsername = buidUsername
       const newNickname = `${currentBuidUsername}（ID:${mcInfo}）`
       // 使用指定的群ID，如果没有指定则使用配置的默认群ID

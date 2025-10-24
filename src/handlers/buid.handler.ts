@@ -2,6 +2,7 @@ import { h } from 'koishi'
 import { BaseHandler } from './base.handler'
 import axios from 'axios'
 import type { ZminfoUser } from '../types'
+import { BindStatus } from '../utils/bind-status'
 
 /**
  * BUID 命令处理器
@@ -309,29 +310,16 @@ export class BuidHandler extends BaseHandler {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
       this.logger.info('解绑', `QQ(${normalizedUserId})尝试解绑B站账号`)
 
-      // 查询当前绑定
-      const bind = await this.repos.mcidbind.findByQQId(normalizedUserId)
-      if (!bind || !bind.buidUid) {
-        this.logger.warn('解绑', `QQ(${normalizedUserId})尝试解绑未绑定的B站账号`)
+      // 使用 DatabaseService 的解绑方法
+      const success = await this.deps.databaseService.deleteBuidBind(normalizedUserId)
+
+      if (success) {
+        this.logger.info('解绑', `QQ(${normalizedUserId})成功解绑B站账号`)
+        return this.deps.sendMessage(session, [h.text('已成功解绑B站账号')])
+      } else {
+        this.logger.warn('解绑', `QQ(${normalizedUserId})解绑B站账号失败`)
         return this.deps.sendMessage(session, [h.text('您尚未绑定B站账号')])
       }
-
-      // 更新绑定信息
-      const updateData = {
-        buidUid: '',
-        buidUsername: '',
-        guardLevel: 0,
-        guardLevelText: '',
-        medalName: '',
-        medalLevel: 0,
-        wealthMedalLevel: 0,
-        lastActiveTime: null,
-        lastModified: new Date()
-      }
-
-      await this.repos.mcidbind.update(normalizedUserId, updateData)
-      this.logger.info('解绑', `QQ(${normalizedUserId})成功解绑B站账号`)
-      return this.deps.sendMessage(session, [h.text('已成功解绑B站账号')])
     } catch (error) {
       this.logger.error('解绑', session.userId, error)
       return this.deps.sendMessage(session, [
@@ -475,26 +463,29 @@ export class BuidHandler extends BaseHandler {
       }
 
       if (bind) {
+        // 添加 hasBuidBind 标志
+        updateData.hasBuidBind = true
         await this.repos.mcidbind.update(normalizedQQId, updateData)
         this.logger.info(
           'B站账号绑定',
           `更新绑定: QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}`
         )
       } else {
-        const tempMcUsername = `_temp_skip_${normalizedQQId}_${Date.now()}`
         const newBind: any = {
           qqId: normalizedQQId,
-          mcUsername: tempMcUsername,
+          mcUsername: '',
           mcUuid: '',
           isAdmin: false,
           whitelist: [],
           tags: [],
+          hasMcBind: false,
+          hasBuidBind: true,
           ...updateData
         }
         await this.repos.mcidbind.create(newBind)
         this.logger.info(
           'B站账号绑定',
-          `创建绑定(跳过MC): QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}, 临时MC用户名=${tempMcUsername}`
+          `创建绑定(跳过MC): QQ=${normalizedQQId}, B站UID=${buidUser.uid}, 用户名=${buidUser.username}`
         )
       }
 
@@ -626,10 +617,9 @@ export class BuidHandler extends BaseHandler {
           try {
             const latestTargetBind = await this.repos.mcidbind.findByQQId(normalizedTargetId)
             if (latestTargetBind) {
-              const mcName =
-                latestTargetBind.mcUsername && !latestTargetBind.mcUsername.startsWith('_temp_')
-                  ? latestTargetBind.mcUsername
-                  : null
+              const mcName = BindStatus.hasValidMcBind(latestTargetBind)
+                ? latestTargetBind.mcUsername
+                : null
               await this.deps.nicknameService.autoSetGroupNickname(
                 session,
                 mcName,
@@ -681,10 +671,9 @@ export class BuidHandler extends BaseHandler {
           try {
             const latestBind = await this.repos.mcidbind.findByQQId(operatorQQId)
             if (latestBind) {
-              const mcName =
-                latestBind.mcUsername && !latestBind.mcUsername.startsWith('_temp_')
-                  ? latestBind.mcUsername
-                  : null
+              const mcName = BindStatus.hasValidMcBind(latestBind)
+                ? latestBind.mcUsername
+                : null
               await this.deps.nicknameService.autoSetGroupNickname(
                 session,
                 mcName,
@@ -805,10 +794,9 @@ export class BuidHandler extends BaseHandler {
     try {
       const latestTargetBind = await this.repos.mcidbind.findByQQId(normalizedTargetId)
       if (latestTargetBind) {
-        const mcName =
-          latestTargetBind.mcUsername && !latestTargetBind.mcUsername.startsWith('_temp_')
-            ? latestTargetBind.mcUsername
-            : null
+        const mcName = BindStatus.hasValidMcBind(latestTargetBind)
+          ? latestTargetBind.mcUsername
+          : null
         await this.deps.nicknameService.autoSetGroupNickname(
           session,
           mcName,
@@ -908,10 +896,9 @@ export class BuidHandler extends BaseHandler {
     try {
       const latestBind = await this.repos.mcidbind.findByQQId(operatorQQId)
       if (latestBind) {
-        const mcName =
-          latestBind.mcUsername && !latestBind.mcUsername.startsWith('_temp_')
-            ? latestBind.mcUsername
-            : null
+        const mcName = BindStatus.hasValidMcBind(latestBind)
+          ? latestBind.mcUsername
+          : null
         await this.deps.nicknameService.autoSetGroupNickname(
           session,
           mcName,

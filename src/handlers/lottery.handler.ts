@@ -1,6 +1,7 @@
 import { Context, h } from 'koishi'
 import { LoggerService } from '../utils/logger'
 import { BaseHandler, Repositories, HandlerDependencies } from './base.handler'
+import { BindStatus } from '../utils/bind-status'
 import type { LotteryResult, MCIDBIND } from '../types'
 
 /**
@@ -192,8 +193,8 @@ export class LotteryHandler extends BaseHandler {
         for (let i = 0; i < displayUsers.length; i++) {
           const user = displayUsers[i]
           const index = i + 1
-          const displayMcName =
-            user.mcUsername && !user.mcUsername.startsWith('_temp_') ? user.mcUsername : '未绑定'
+          // 注意：这里的user是简化对象，不是完整的MCIDBIND
+          const displayMcName = user.mcUsername || '未绑定'
           groupMessage += `${index}. ${user.buidUsername} (UID: ${user.uid})\n`
           groupMessage += `   QQ: ${user.qqId} | MC: ${displayMcName}\n`
         }
@@ -235,10 +236,8 @@ export class LotteryHandler extends BaseHandler {
           const matchedUser = stats.matchedUsers.find(user => user.uid === winner.uid)
 
           if (matchedUser) {
-            const displayMcName =
-              matchedUser.mcUsername && !matchedUser.mcUsername.startsWith('_temp_')
-                ? matchedUser.mcUsername
-                : '未绑定'
+            // 注意：matchedUser是简化对象，不是完整的MCIDBIND
+            const displayMcName = matchedUser.mcUsername || '未绑定'
             privateMessage += `${index}. ${winner.username} (UID: ${winner.uid})\n`
             privateMessage += `   QQ: ${matchedUser.qqId} | MC: ${displayMcName}\n`
           } else {

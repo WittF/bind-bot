@@ -1,5 +1,6 @@
 import { Session, h } from 'koishi'
 import { BaseHandler } from './base.handler'
+import { BindStatus } from '../utils/bind-status'
 
 export class TagHandler extends BaseHandler {
   register(): void {
@@ -93,15 +94,16 @@ export class TagHandler extends BaseHandler {
         )
         let targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
         if (!targetBind) {
-          const tempUsername = `_temp_${normalizedTargetId}`
           await this.repos.mcidbind.create({
             qqId: normalizedTargetId,
-            mcUsername: tempUsername,
+            mcUsername: '',
             mcUuid: '',
             lastModified: new Date(),
             isAdmin: false,
             whitelist: [],
-            tags: []
+            tags: [],
+            hasMcBind: false,
+            hasBuidBind: false
           })
           targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
         }
@@ -140,15 +142,16 @@ export class TagHandler extends BaseHandler {
         try {
           let targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
           if (!targetBind) {
-            const tempUsername = `_temp_${normalizedTargetId}`
             await this.repos.mcidbind.create({
               qqId: normalizedTargetId,
-              mcUsername: tempUsername,
+              mcUsername: '',
               mcUuid: '',
               lastModified: new Date(),
               isAdmin: false,
               whitelist: [],
-              tags: []
+              tags: [],
+              hasMcBind: false,
+              hasBuidBind: false
             })
             targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
           }
@@ -371,10 +374,9 @@ export class TagHandler extends BaseHandler {
       }
       const userList = usersWithTag
         .map(bind => {
-          const mcInfo =
-            bind.mcUsername && !bind.mcUsername.startsWith('_temp_')
-              ? ` (MC: ${bind.mcUsername})`
-              : ''
+          const mcInfo = BindStatus.hasValidMcBind(bind)
+            ? ` (MC: ${bind.mcUsername})`
+            : ''
           return `• ${bind.qqId}${mcInfo}`
         })
         .join('\n')

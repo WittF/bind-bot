@@ -471,7 +471,7 @@ async createOrUpdateMcBind(
 
 ##### deleteMcBind
 
-删除 MC 绑定 (同时解绑 MC 和 B 站账号)
+解绑 MC 账号 (只清空 MC 字段，保留 B 站绑定)
 
 ```typescript
 async deleteMcBind(userId: string): Promise<boolean>
@@ -482,7 +482,13 @@ async deleteMcBind(userId: string): Promise<boolean>
 
 **返回**: 操作是否成功
 
-**副作用**: 删除整个绑定记录，包括 B 站账号信息
+**行为**:
+- 如果用户有 B 站绑定：清空 MC 字段（`mcUsername`, `mcUuid`, `whitelist`），设置 `hasMcBind: false`，保留 B 站绑定信息和记录
+- 如果用户没有 B 站绑定：删除整条记录
+
+**副作用**:
+- 清空白名单列表
+- 更新 `lastModified` 时间戳
 
 ---
 
@@ -508,7 +514,7 @@ async checkUsernameExists(
 **特性**:
 - 不区分大小写
 - 支持改名检测 (通过 UUID 判断)
-- 跳过临时用户名 (`_temp_*`)
+- 使用 `hasMcBind` 标志判断是否有有效绑定
 
 ---
 
@@ -549,10 +555,8 @@ async createOrUpdateBuidBind(userId: string, buidUser: ZminfoUser): Promise<bool
 **返回**: 操作是否成功
 
 **行为**:
-- 已存在 MC 绑定: 在原记录上添加 B 站信息
-- 不存在 MC 绑定: 创建新记录 (使用临时 MC 用户名)
-
-**临时用户名格式**: `_temp_skip_{qqId}_{timestamp}`
+- 已存在绑定记录: 在原记录上添加 B 站信息，设置 `hasBuidBind: true`
+- 不存在绑定记录: 创建新记录，MC 字段为空字符串，设置 `hasMcBind: false`, `hasBuidBind: true`
 
 ---
 
@@ -683,6 +687,7 @@ interface MCIDBIND {
   // MC 绑定字段
   mcUsername: string              // MC 用户名
   mcUuid: string                  // MC UUID
+  hasMcBind: boolean              // 是否有有效的 MC 绑定（true=已绑定，false=未绑定）
   usernameLastChecked?: Date      // MC 用户名上次检查时间
   usernameCheckFailCount?: number // 用户名检查失败次数
   lastModified: Date              // 上次修改时间
@@ -693,6 +698,7 @@ interface MCIDBIND {
   // BUID 绑定字段
   buidUid: string                 // B 站 UID
   buidUsername: string            // B 站用户名
+  hasBuidBind: boolean            // 是否有有效的 B 站绑定（true=已绑定，false=未绑定）
   guardLevel: number              // 当前舰长等级
   guardLevelText: string          // 当前舰长等级文本
   maxGuardLevel: number           // 历史最高舰长等级
@@ -916,6 +922,49 @@ interface UpdateWhitelistData {
 - 自动检查并更新用户名 (如果玩家改名)
 - 刷新 B 站信息 (如果已绑定 BUID)
 - 自动设置群昵称
+
+---
+
+#### mcid.unbind
+
+解绑 MC 账号
+
+**语法**: `mcid.unbind [target]`
+
+**参数**:
+- `target`: 目标用户 (可选，仅管理员可用)
+
+**行为**:
+- 清空 MC 字段：`mcUsername`, `mcUuid`, `whitelist`
+- 设置 `hasMcBind: false`
+- 更新 `lastModified` 时间戳
+- **保留 B 站绑定信息**（如果有）
+
+**数据保留策略**:
+- 如果用户有 B 站绑定：保留整条记录和 B 站绑定信息
+- 如果用户没有 B 站绑定：删除整条记录
+
+**返回消息**:
+- 解绑成功消息
+- 如果保留了 B 站绑定，会提示用户
+
+---
+
+#### buid.unbind
+
+解绑 B 站账号
+
+**语法**: `buid.unbind`
+
+**行为**:
+- 清空 B 站字段：`buidUid`, `buidUsername`, `guardLevel`, `medalName` 等
+- 设置 `hasBuidBind: false`
+- 更新 `lastModified` 时间戳
+- **保留 MC 绑定信息**（如果有）
+
+**数据保留策略**:
+- 如果用户有 MC 绑定：保留整条记录和 MC 绑定信息
+- 如果用户没有 MC 绑定：保留整条记录（仅清空 B 站字段）
 
 ---
 

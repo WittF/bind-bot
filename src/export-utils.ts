@@ -4,6 +4,7 @@ import * as path from 'path'
 import { Session, Context } from 'koishi'
 import { LoggerService } from './utils/logger'
 import { MCIDBINDRepository } from './repositories/mcidbind.repository'
+import { BindStatus } from './utils/bind-status'
 import type { MCIDBIND } from './types'
 
 // 群成员信息接口
@@ -150,8 +151,8 @@ export class GroupExporter {
       // 判断绑定状态
       let bindingStatus = '未绑定'
       if (binding) {
-        const hasMc = binding.mcUsername && !binding.mcUsername.startsWith('_temp_')
-        const hasBuid = binding.buidUid
+        const hasMc = BindStatus.hasValidMcBind(binding)
+        const hasBuid = BindStatus.hasValidBuidBind(binding)
 
         if (hasMc && hasBuid) {
           bindingStatus = '完全绑定'
@@ -171,8 +172,7 @@ export class GroupExporter {
         角色: member.role,
         加群时间: this.formatTimestamp(member.join_time),
         最后发言: this.formatTimestamp(member.last_sent_time),
-        MC用户名:
-          binding?.mcUsername && !binding.mcUsername.startsWith('_temp_') ? binding.mcUsername : '',
+        MC用户名: BindStatus.getDisplayMcUsername(binding, ''),
         MC_UUID: binding?.mcUuid || '',
         B站UID: binding?.buidUid || '',
         B站用户名: binding?.buidUsername || '',

@@ -42,6 +42,9 @@ export interface UpdateMcBindData {
 
   /** 用户名检查失败次数 */
   usernameCheckFailCount?: number
+
+  /** 是否已绑定MC账号 */
+  hasMcBind?: boolean
 }
 
 /**
@@ -103,6 +106,9 @@ export interface UpdateBuidBindData {
 
   /** 上次修改时间 (绑定操作时间) */
   lastModified?: Date
+
+  /** 是否已绑定B站账号 */
+  hasBuidBind?: boolean
 }
 
 /**

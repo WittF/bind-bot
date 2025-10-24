@@ -45,6 +45,7 @@ import {
 } from './handlers'
 import { ApiService, DatabaseService, NicknameService } from './services'
 import { ServiceContainer } from './services/service-container'
+import { BindStatus } from './utils/bind-status'
 // 导入所有类型定义
 import type {
   Config as IConfig,
@@ -562,7 +563,7 @@ export function apply(ctx: Context, config: IConfig) {
       const existingBind = await services.database.getMcBindByQQId(normalizedUserId)
 
       // 如果用户已完成全部绑定，不需要提醒
-      if (existingBind && existingBind.mcUsername && existingBind.buidUid) {
+      if (BindStatus.hasCompletedAllBinds(existingBind)) {
         logger.info(`[新人绑定] 用户QQ(${normalizedUserId})已完成全部绑定，跳过提醒`)
         return
       }
@@ -573,7 +574,7 @@ export function apply(ctx: Context, config: IConfig) {
       // 发送欢迎消息
       let welcomeMessage = `🎉 欢迎新成员 ${h.at(session.userId)} 加入群聊！\n\n`
 
-      if (!existingBind || (!existingBind.mcUsername && !existingBind.buidUid)) {
+      if (!existingBind || (!BindStatus.hasValidMcBind(existingBind) && !BindStatus.hasValidBuidBind(existingBind))) {
         // 完全未绑定
         if (inMuteTime) {
           // 在禁言时间内，只发送欢迎消息和基本提醒
@@ -597,7 +598,7 @@ export function apply(ctx: Context, config: IConfig) {
           const bindingSession = getBindingSession(session.userId, session.channelId)
           bindingSession.state = 'waiting_buid'
         }
-      } else if (existingBind.mcUsername && !existingBind.mcUsername.startsWith('_temp_') && !existingBind.buidUid) {
+      } else if (BindStatus.hasValidMcBind(existingBind) && !existingBind.buidUid) {
         // 只绑定了MC（非临时用户名），未绑定B站
         const displayUsername = existingBind.mcUsername
         welcomeMessage += `🎮 已绑定MC: ${displayUsername}\n`
@@ -619,7 +620,7 @@ export function apply(ctx: Context, config: IConfig) {
           bindingSession.state = 'waiting_buid'
           bindingSession.mcUsername = existingBind.mcUsername
         }
-      } else if (!existingBind.mcUsername && existingBind.buidUid) {
+      } else if (!BindStatus.hasValidMcBind(existingBind) && BindStatus.hasValidBuidBind(existingBind)) {
         // 只绑定了B站，未绑定MC - 仅发送提醒
         welcomeMessage += '📋 检测到您已绑定B站账号，但尚未绑定MC账号\n'
         welcomeMessage += `🎮 可使用 ${formatCommand('mcid bind <MC用户名>')} 绑定MC账号`
@@ -627,8 +628,7 @@ export function apply(ctx: Context, config: IConfig) {
         await session.bot.sendMessage(session.channelId, welcomeMessage)
         logger.info(`[新人绑定] 新成员QQ(${normalizedUserId})已绑定B站但未绑定MC，已发送绑定提醒`)
       } else if (
-        existingBind.mcUsername &&
-        existingBind.mcUsername.startsWith('_temp_') &&
+        !BindStatus.hasValidMcBind(existingBind) &&
         existingBind.buidUid
       ) {
         // MC是临时用户名但已绑定B站 - 也按照"只绑定了B站"处理
@@ -807,6 +807,15 @@ export function apply(ctx: Context, config: IConfig) {
       usernameCheckFailCount: {
         type: 'integer',
         initial: 0
+      },
+      // 绑定状态标志字段
+      hasMcBind: {
+        type: 'boolean',
+        initial: false
+      },
+      hasBuidBind: {
+        type: 'boolean',
+        initial: false
       }
     },
     {
@@ -849,6 +858,7 @@ export function apply(ctx: Context, config: IConfig) {
       for (const record of records) {
         let needUpdate = false
         const updateData: any = {}
+        const qqId = record.qqId // 提前提取 qqId，避免类型推断问题
 
         // 检查并添加whitelist字段
         if (!record.whitelist) {
@@ -880,9 +890,38 @@ export function apply(ctx: Context, config: IConfig) {
           needUpdate = true
         }
 
+        // 检查并添加hasMcBind字段（数据迁移：根据 mcUsername 判断）
+        const currentHasMcBind = (record as any).hasMcBind
+        if (currentHasMcBind === undefined || currentHasMcBind === null) {
+          // 有有效的MC用户名（非空且不是_temp_开头）则认为已绑定
+          const mcUsername = (record as any).mcUsername
+          const hasValidMc = !!(mcUsername && !mcUsername.startsWith('_temp_'))
+          updateData.hasMcBind = hasValidMc
+
+          // 同时清空临时用户名，保持数据一致性
+          if (!hasValidMc && mcUsername && mcUsername.startsWith('_temp_')) {
+            updateData.mcUsername = ''
+            updateData.mcUuid = ''
+            updateData.whitelist = []
+            logger.info(`[数据迁移] 清理QQ(${qqId})的临时用户名: ${mcUsername}`)
+          }
+
+          needUpdate = true
+        }
+
+        // 检查并添加hasBuidBind字段（数据迁移：根据 buidUid 判断）
+        const currentHasBuidBind = (record as any).hasBuidBind
+        if (currentHasBuidBind === undefined || currentHasBuidBind === null) {
+          // 有有效的B站UID（非空）则认为已绑定
+          const buidUid = (record as any).buidUid
+          const hasValidBuid = !!(buidUid && buidUid.length > 0)
+          updateData.hasBuidBind = hasValidBuid
+          needUpdate = true
+        }
+
         // 如果需要更新，执行更新操作
         if (needUpdate) {
-          await mcidbindRepo.update(record.qqId, updateData)
+          await mcidbindRepo.update(qqId, updateData)
           updatedCount++
         }
       }
@@ -1562,21 +1601,22 @@ export function apply(ctx: Context, config: IConfig) {
       }
 
       // 情况1：完全未绑定
-      if (!bind || (!bind.mcUsername && !bind.buidUid)) {
+      if (!bind || (!BindStatus.hasValidMcBind(bind) && !BindStatus.hasValidBuidBind(bind))) {
         // 创建新记录或获取提醒次数
         let reminderCount = 0
         if (!bind) {
           // 创建新记录
-          const tempUsername = `_temp_${normalizedUserId}`
           await mcidbindRepo.create({
             qqId: normalizedUserId,
-            mcUsername: tempUsername,
+            mcUsername: '',
             mcUuid: '',
             lastModified: new Date(),
             isAdmin: false,
             whitelist: [],
             tags: [],
-            reminderCount: 1
+            reminderCount: 1,
+            hasMcBind: false,
+            hasBuidBind: false
           })
           reminderCount = 1
         } else {
@@ -1610,7 +1650,7 @@ export function apply(ctx: Context, config: IConfig) {
       if (
         bind.buidUid &&
         bind.buidUsername &&
-        (!bind.mcUsername || bind.mcUsername.startsWith('_temp_'))
+        !BindStatus.hasValidMcBind(bind)
       ) {
         const mcInfo = null
         const isNicknameCorrect = services.nickname.checkNicknameFormat(
@@ -1657,8 +1697,7 @@ export function apply(ctx: Context, config: IConfig) {
       if (
         bind.buidUid &&
         bind.buidUsername &&
-        bind.mcUsername &&
-        !bind.mcUsername.startsWith('_temp_')
+        BindStatus.hasValidMcBind(bind)
       ) {
         const isNicknameCorrect = services.nickname.checkNicknameFormat(
           currentNickname,
@@ -1925,27 +1964,23 @@ export function apply(ctx: Context, config: IConfig) {
         // 用户未绑定B站账号，需要完成B站绑定
         logger.info(`[交互绑定] QQ(${normalizedUserId})跳过了MC账号绑定，需要完成B站绑定`)
 
-        // 为跳过MC绑定的用户创建临时绑定记录
-        const timestamp = Date.now()
-        const tempMcUsername = `_temp_skip_${timestamp}`
-
-        // 创建临时MC绑定
+        // 创建绑定记录（不使用临时MC用户名）
         const tempBindResult = await services.database.createOrUpdateMcBind(
           session.userId,
-          tempMcUsername,
+          '',
           '',
           false
         )
         if (!tempBindResult) {
-          logger.error(`[交互绑定] QQ(${normalizedUserId})创建临时MC绑定失败`)
-          await sendMessage(session, [h.text('❌ 创建临时绑定失败，请稍后重试')])
+          logger.error(`[交互绑定] QQ(${normalizedUserId})创建MC绑定记录失败`)
+          await sendMessage(session, [h.text('❌ 创建绑定记录失败，请稍后重试')])
           return
         }
 
         // 跳转到B站绑定流程
         updateBindingSession(session.userId, session.channelId, {
           state: 'waiting_buid',
-          mcUsername: tempMcUsername,
+          mcUsername: '',
           mcUuid: ''
         })
 
@@ -1976,7 +2011,7 @@ export function apply(ctx: Context, config: IConfig) {
 
     // 检查用户是否已绑定MC账号
     const existingBind = await services.database.getMcBindByQQId(normalizedUserId)
-    if (existingBind && existingBind.mcUsername && !existingBind.mcUsername.startsWith('_temp_')) {
+    if (BindStatus.hasValidMcBind(existingBind)) {
       // 检查冷却时间
       if (!(await isAdmin(session.userId)) && !checkCooldown(existingBind.lastModified)) {
         const days = config.cooldownDays
@@ -1986,10 +2021,7 @@ export function apply(ctx: Context, config: IConfig) {
         const remainingDays = days - passedDays
 
         removeBindingSession(session.userId, session.channelId)
-        const displayUsername =
-          existingBind.mcUsername && !existingBind.mcUsername.startsWith('_temp_')
-            ? existingBind.mcUsername
-            : '未绑定'
+        const displayUsername = BindStatus.getDisplayMcUsername(existingBind, '未绑定')
         await sendMessage(session, [
           h.text(
             `❌ 您已绑定MC账号: ${displayUsername}\n\n如需修改，请在冷却期结束后(还需${remainingDays}天)使用 ${formatCommand('mcid change')} 命令或联系管理员`
@@ -2172,10 +2204,7 @@ export function apply(ctx: Context, config: IConfig) {
       removeBindingSession(session.userId, session.channelId)
 
       // 根据是否有MC绑定提供不同的提示
-      const displayMcName =
-        bindingSession.mcUsername && !bindingSession.mcUsername.startsWith('_temp_')
-          ? bindingSession.mcUsername
-          : null
+      const displayMcName = bindingSession.mcUsername || null
       const mcStatus = displayMcName ? `您的MC账号${displayMcName}已成功绑定\n` : ''
       await sendMessage(session, [
         h.text(
@@ -2192,11 +2221,8 @@ export function apply(ctx: Context, config: IConfig) {
 
     // 自动群昵称设置功能 - 使用新的autoSetGroupNickname函数
     try {
-      // 检查是否有有效的MC用户名（不是临时用户名）
-      const mcName =
-        bindingSession.mcUsername && !bindingSession.mcUsername.startsWith('_temp_')
-          ? bindingSession.mcUsername
-          : null
+      // 检查是否有有效的MC用户名
+      const mcName = bindingSession.mcUsername || null
       await services.nickname.autoSetGroupNickname(
         session,
         mcName,
@@ -2223,10 +2249,7 @@ export function apply(ctx: Context, config: IConfig) {
     }
 
     // 准备完成消息
-    const displayMcName =
-      bindingSession.mcUsername && !bindingSession.mcUsername.startsWith('_temp_')
-        ? bindingSession.mcUsername
-        : null
+    const displayMcName = bindingSession.mcUsername || null
     const mcInfo = displayMcName ? `MC: ${displayMcName}` : 'MC: 未绑定'
     let extraTip = ''
 
