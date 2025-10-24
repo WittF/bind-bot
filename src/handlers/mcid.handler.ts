@@ -1188,8 +1188,7 @@ export class McidCommandHandler extends BaseHandler {
           mcidBoundUsers++
         }
 
-        const hasBuid = bind.buidUid && bind.buidUid.trim() !== ''
-        if (hasBuid) {
+        if (BindStatus.hasValidBuidBind(bind)) {
           buidBoundUsers++
         }
       }
