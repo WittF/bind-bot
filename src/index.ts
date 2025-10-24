@@ -828,12 +828,6 @@ export function apply(ctx: Context, config: IConfig) {
     }
   )
 
-  // 在插件启动时执行数据迁移
-  ctx.on('ready', async () => {
-    logger.info('[初始化] 开始数据迁移和一致性检查...')
-    await addMissingFields()
-  })
-
   // 检查表结构是否包含旧字段
   const checkTableStructure = async (): Promise<boolean> => {
     try {
@@ -959,6 +953,12 @@ export function apply(ctx: Context, config: IConfig) {
       return false
     }
   }
+
+  // 在插件启动时执行数据迁移（放在函数定义之后）
+  ctx.on('ready', async () => {
+    logger.info('[初始化] 开始数据迁移和一致性检查...')
+    await addMissingFields()
+  })
 
   // 重建MCIDBIND表
   const rebuildMcidBindTable = async () => {
