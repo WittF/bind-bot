@@ -956,19 +956,20 @@ export class McidCommandHandler extends BaseHandler {
     }
 
     const oldUsername = BindStatus.getDisplayMcUsername(targetBind, '未绑定')
-    const oldBuidInfo = targetBind.buidUid
-      ? ` 和 B站账号: ${targetBind.buidUsername}(${targetBind.buidUid})`
+    const hasBuidBind = targetBind.buidUid && targetBind.buidUid.trim() !== ''
+    const buidKeepInfo = hasBuidBind
+      ? `\n✅ 该用户的B站绑定已保留: ${targetBind.buidUsername}(${targetBind.buidUid})`
       : ''
 
-    // 删除绑定记录
+    // 解绑MC账号
     await this.deps.databaseService.deleteMcBind(target)
 
     this.logger.info(
       '解绑',
-      `成功: 管理员QQ(${operatorId})为QQ(${normalizedTargetId})解绑MC账号: ${oldUsername}${oldBuidInfo}`
+      `成功: 管理员QQ(${operatorId})为QQ(${normalizedTargetId})解绑MC账号: ${oldUsername}`
     )
     return this.deps.sendMessage(session, [
-      h.text(`已成功为用户 ${normalizedTargetId} 解绑MC账号: ${oldUsername}${oldBuidInfo}`)
+      h.text(`已成功为用户 ${normalizedTargetId} 解绑MC账号: ${oldUsername}${buidKeepInfo}`)
     ])
   }
 
@@ -983,16 +984,17 @@ export class McidCommandHandler extends BaseHandler {
     }
 
     const oldUsername = BindStatus.getDisplayMcUsername(selfBind, '未绑定')
-    const oldBuidInfo = selfBind.buidUid
-      ? ` 和 B站账号: ${selfBind.buidUsername}(${selfBind.buidUid})`
+    const hasBuidBind = selfBind.buidUid && selfBind.buidUid.trim() !== ''
+    const buidKeepInfo = hasBuidBind
+      ? `\n✅ 您的B站绑定已保留: ${selfBind.buidUsername}(${selfBind.buidUid})`
       : ''
 
-    // 删除绑定记录
+    // 解绑MC账号
     await this.deps.databaseService.deleteMcBind(operatorId)
 
-    this.logger.info('解绑', `成功: QQ(${operatorId})解绑MC账号: ${oldUsername}${oldBuidInfo}`)
+    this.logger.info('解绑', `成功: QQ(${operatorId})解绑MC账号: ${oldUsername}`)
     return this.deps.sendMessage(session, [
-      h.text(`已成功解绑MC账号: ${oldUsername}${oldBuidInfo}`)
+      h.text(`已成功解绑MC账号: ${oldUsername}${buidKeepInfo}`)
     ])
   }
 

@@ -148,46 +148,73 @@ export class DatabaseService {
   }
 
   /**
-   * 删除 MC 绑定（同时解绑 MC 和 B 站账号）
+   * 解绑 MC 账号（只清空 MC 字段，保留 B 站绑定）
    */
   async deleteMcBind(userId: string): Promise<boolean> {
     try {
       // 验证输入参数
       if (!userId) {
-        this.logger.error('MCIDBIND', '删除绑定失败: 无效的用户ID')
+        this.logger.error('MCIDBIND', '解绑MC失败: 无效的用户ID')
         return false
       }
 
       const normalizedQQId = this.normalizeQQId(userId)
       if (!normalizedQQId) {
-        this.logger.error('MCIDBIND', '删除绑定失败: 无法提取有效的QQ号')
+        this.logger.error('MCIDBIND', '解绑MC失败: 无法提取有效的QQ号')
         return false
       }
 
       // 查询是否存在绑定记录
       const bind = await this.getMcBindByQQId(normalizedQQId)
 
-      if (bind) {
-        // 删除整个绑定记录，包括MC和B站账号
-        const removedCount = await this.mcidbindRepo.delete(normalizedQQId)
+      if (!bind) {
+        this.logger.warn('MCIDBIND', `解绑MC失败: QQ=${normalizedQQId}不存在绑定记录`)
+        return false
+      }
 
-        // 检查是否真正删除成功
+      // 如果没有MC绑定，返回失败
+      if (!BindStatus.hasValidMcBind(bind)) {
+        this.logger.warn('MCIDBIND', `解绑MC失败: QQ=${normalizedQQId}未绑定MC账号`)
+        return false
+      }
+
+      const oldUsername = bind.mcUsername
+
+      // 检查是否有B站绑定
+      const hasBuidBind = bind.buidUid && bind.buidUid.trim() !== ''
+
+      if (hasBuidBind) {
+        // 如果有B站绑定，只清空MC字段，保留记录
+        await this.mcidbindRepo.update(normalizedQQId, {
+          mcUsername: '',
+          mcUuid: '',
+          hasMcBind: false,
+          whitelist: [],
+          lastModified: new Date()
+        })
+        this.logger.info(
+          'MCIDBIND',
+          `解绑MC: QQ=${normalizedQQId}, MC用户名=${oldUsername}, 保留B站绑定`,
+          true
+        )
+      } else {
+        // 如果没有B站绑定，删除整条记录
+        const removedCount = await this.mcidbindRepo.delete(normalizedQQId)
         if (removedCount > 0) {
-          let logMessage = `删除绑定: QQ=${normalizedQQId}`
-          if (bind.mcUsername) logMessage += `, MC用户名=${bind.mcUsername}`
-          if (bind.buidUid) logMessage += `, B站UID=${bind.buidUid}(${bind.buidUsername})`
-          this.logger.info('MCIDBIND', logMessage, true)
-          return true
+          this.logger.info(
+            'MCIDBIND',
+            `解绑MC并删除记录: QQ=${normalizedQQId}, MC用户名=${oldUsername}`,
+            true
+          )
         } else {
-          this.logger.warn('MCIDBIND', `删除绑定异常: QQ=${normalizedQQId}, 可能未实际删除`)
+          this.logger.warn('MCIDBIND', `解绑MC异常: QQ=${normalizedQQId}, 可能未实际删除`)
           return false
         }
       }
 
-      this.logger.warn('MCIDBIND', `删除绑定失败: QQ=${normalizedQQId}不存在绑定记录`)
-      return false
+      return true
     } catch (error) {
-      this.logger.error('MCIDBIND', `删除绑定失败: 错误=${error.message}`)
+      this.logger.error('MCIDBIND', `解绑MC失败: 错误=${error.message}`)
       return false
     }
   }

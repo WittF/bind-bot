@@ -84,7 +84,7 @@ export class BindingHandler extends BaseHandler {
             const targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
 
             // 如果两个账号都已绑定，不需要进入绑定流程
-            if (targetBind && targetBind.mcUsername && targetBind.buidUid) {
+            if (BindStatus.hasCompletedAllBinds(targetBind)) {
               this.logger.info('交互绑定', `QQ(${normalizedTargetId})已完成全部绑定`, true)
 
               // 显示当前绑定信息
@@ -105,7 +105,7 @@ export class BindingHandler extends BaseHandler {
             this.deps.createBindingSession(target, channelId, 'waiting_buid')
 
             // 如果已绑定MC但未绑定B站，直接进入B站绑定流程
-            if (targetBind && targetBind.mcUsername && !targetBind.buidUid) {
+            if (BindStatus.hasValidMcBind(targetBind) && !BindStatus.hasValidBuidBind(targetBind)) {
               this.logger.info(
                 '交互绑定',
                 `QQ(${normalizedTargetId})已绑定MC，进入B站绑定流程`,

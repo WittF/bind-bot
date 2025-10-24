@@ -563,7 +563,7 @@ export function apply(ctx: Context, config: IConfig) {
       const existingBind = await services.database.getMcBindByQQId(normalizedUserId)
 
       // 如果用户已完成全部绑定，不需要提醒
-      if (existingBind && existingBind.mcUsername && existingBind.buidUid) {
+      if (BindStatus.hasCompletedAllBinds(existingBind)) {
         logger.info(`[新人绑定] 用户QQ(${normalizedUserId})已完成全部绑定，跳过提醒`)
         return
       }
@@ -574,7 +574,7 @@ export function apply(ctx: Context, config: IConfig) {
       // 发送欢迎消息
       let welcomeMessage = `🎉 欢迎新成员 ${h.at(session.userId)} 加入群聊！\n\n`
 
-      if (!existingBind || (!existingBind.mcUsername && !existingBind.buidUid)) {
+      if (!existingBind || (!BindStatus.hasValidMcBind(existingBind) && !BindStatus.hasValidBuidBind(existingBind))) {
         // 完全未绑定
         if (inMuteTime) {
           // 在禁言时间内，只发送欢迎消息和基本提醒
@@ -620,7 +620,7 @@ export function apply(ctx: Context, config: IConfig) {
           bindingSession.state = 'waiting_buid'
           bindingSession.mcUsername = existingBind.mcUsername
         }
-      } else if (!existingBind.mcUsername && existingBind.buidUid) {
+      } else if (!BindStatus.hasValidMcBind(existingBind) && BindStatus.hasValidBuidBind(existingBind)) {
         // 只绑定了B站，未绑定MC - 仅发送提醒
         welcomeMessage += '📋 检测到您已绑定B站账号，但尚未绑定MC账号\n'
         welcomeMessage += `🎮 可使用 ${formatCommand('mcid bind <MC用户名>')} 绑定MC账号`
@@ -858,6 +858,7 @@ export function apply(ctx: Context, config: IConfig) {
       for (const record of records) {
         let needUpdate = false
         const updateData: any = {}
+        const qqId = record.qqId // 提前提取 qqId，避免类型推断问题
 
         // 检查并添加whitelist字段
         if (!record.whitelist) {
@@ -895,6 +896,15 @@ export function apply(ctx: Context, config: IConfig) {
           const mcUsername = (record as any).mcUsername
           const hasValidMc = !!(mcUsername && !mcUsername.startsWith('_temp_'))
           updateData.hasMcBind = hasValidMc
+
+          // 同时清空临时用户名，保持数据一致性
+          if (!hasValidMc && mcUsername && mcUsername.startsWith('_temp_')) {
+            updateData.mcUsername = ''
+            updateData.mcUuid = ''
+            updateData.whitelist = []
+            logger.info(`[数据迁移] 清理QQ(${qqId})的临时用户名: ${mcUsername}`)
+          }
+
           needUpdate = true
         }
 
@@ -909,7 +919,7 @@ export function apply(ctx: Context, config: IConfig) {
 
         // 如果需要更新，执行更新操作
         if (needUpdate) {
-          await mcidbindRepo.update(record.qqId, updateData)
+          await mcidbindRepo.update(qqId, updateData)
           updatedCount++
         }
       }
@@ -1589,7 +1599,7 @@ export function apply(ctx: Context, config: IConfig) {
       }
 
       // 情况1：完全未绑定
-      if (!bind || (!bind.mcUsername && !bind.buidUid)) {
+      if (!bind || (!BindStatus.hasValidMcBind(bind) && !BindStatus.hasValidBuidBind(bind))) {
         // 创建新记录或获取提醒次数
         let reminderCount = 0
         if (!bind) {

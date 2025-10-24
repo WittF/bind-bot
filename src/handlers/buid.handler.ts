@@ -317,7 +317,14 @@ export class BuidHandler extends BaseHandler {
         return this.deps.sendMessage(session, [h.text('您尚未绑定B站账号')])
       }
 
-      // 更新绑定信息
+      // 如果没有MC绑定，直接删除整条记录
+      if (!BindStatus.hasValidMcBind(bind)) {
+        await this.repos.mcidbind.delete(normalizedUserId)
+        this.logger.info('解绑', `QQ(${normalizedUserId})成功解绑B站账号并删除空记录`)
+        return this.deps.sendMessage(session, [h.text('已成功解绑B站账号')])
+      }
+
+      // 有MC绑定，只清空B站字段
       const updateData = {
         buidUid: '',
         buidUsername: '',
