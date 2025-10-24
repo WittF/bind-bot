@@ -310,37 +310,16 @@ export class BuidHandler extends BaseHandler {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
       this.logger.info('解绑', `QQ(${normalizedUserId})尝试解绑B站账号`)
 
-      // 查询当前绑定
-      const bind = await this.repos.mcidbind.findByQQId(normalizedUserId)
-      if (!bind || !bind.buidUid) {
-        this.logger.warn('解绑', `QQ(${normalizedUserId})尝试解绑未绑定的B站账号`)
+      // 使用 DatabaseService 的解绑方法
+      const success = await this.deps.databaseService.deleteBuidBind(normalizedUserId)
+
+      if (success) {
+        this.logger.info('解绑', `QQ(${normalizedUserId})成功解绑B站账号`)
+        return this.deps.sendMessage(session, [h.text('已成功解绑B站账号')])
+      } else {
+        this.logger.warn('解绑', `QQ(${normalizedUserId})解绑B站账号失败`)
         return this.deps.sendMessage(session, [h.text('您尚未绑定B站账号')])
       }
-
-      // 如果没有MC绑定，直接删除整条记录
-      if (!BindStatus.hasValidMcBind(bind)) {
-        await this.repos.mcidbind.delete(normalizedUserId)
-        this.logger.info('解绑', `QQ(${normalizedUserId})成功解绑B站账号并删除空记录`)
-        return this.deps.sendMessage(session, [h.text('已成功解绑B站账号')])
-      }
-
-      // 有MC绑定，只清空B站字段
-      const updateData = {
-        buidUid: '',
-        buidUsername: '',
-        guardLevel: 0,
-        guardLevelText: '',
-        medalName: '',
-        medalLevel: 0,
-        wealthMedalLevel: 0,
-        lastActiveTime: null,
-        lastModified: new Date(),
-        hasBuidBind: false
-      }
-
-      await this.repos.mcidbind.update(normalizedUserId, updateData)
-      this.logger.info('解绑', `QQ(${normalizedUserId})成功解绑B站账号`)
-      return this.deps.sendMessage(session, [h.text('已成功解绑B站账号')])
     } catch (error) {
       this.logger.error('解绑', session.userId, error)
       return this.deps.sendMessage(session, [

@@ -434,6 +434,84 @@ export class DatabaseService {
     }
   }
 
+  /**
+   * 解绑 B 站账号（只清空 B 站字段，保留 MC 绑定）
+   */
+  async deleteBuidBind(userId: string): Promise<boolean> {
+    try {
+      // 验证输入参数
+      if (!userId) {
+        this.logger.error('B站账号解绑', '解绑失败: 无效的用户ID')
+        return false
+      }
+
+      const normalizedQQId = this.normalizeQQId(userId)
+      if (!normalizedQQId) {
+        this.logger.error('B站账号解绑', '解绑失败: 无法提取有效的QQ号')
+        return false
+      }
+
+      // 查询是否存在绑定记录
+      const bind = await this.getMcBindByQQId(normalizedQQId)
+
+      if (!bind) {
+        this.logger.warn('B站账号解绑', `解绑失败: QQ=${normalizedQQId}不存在绑定记录`)
+        return false
+      }
+
+      // 如果没有B站绑定，返回失败
+      if (!BindStatus.hasValidBuidBind(bind)) {
+        this.logger.warn('B站账号解绑', `解绑失败: QQ=${normalizedQQId}未绑定B站账号`)
+        return false
+      }
+
+      const oldBuidUid = bind.buidUid
+      const oldBuidUsername = bind.buidUsername
+
+      // 检查是否有MC绑定
+      if (BindStatus.hasValidMcBind(bind)) {
+        // 如果有MC绑定，只清空B站字段，保留记录
+        await this.mcidbindRepo.update(normalizedQQId, {
+          buidUid: '',
+          buidUsername: '',
+          guardLevel: 0,
+          guardLevelText: '',
+          maxGuardLevel: 0,
+          maxGuardLevelText: '',
+          medalName: '',
+          medalLevel: 0,
+          wealthMedalLevel: 0,
+          lastActiveTime: null,
+          hasBuidBind: false,
+          lastModified: new Date()
+        })
+        this.logger.info(
+          'B站账号解绑',
+          `解绑B站: QQ=${normalizedQQId}, B站UID=${oldBuidUid}, 用户名=${oldBuidUsername}, 保留MC绑定`,
+          true
+        )
+      } else {
+        // 如果没有MC绑定，删除整条记录
+        const removedCount = await this.mcidbindRepo.delete(normalizedQQId)
+        if (removedCount > 0) {
+          this.logger.info(
+            'B站账号解绑',
+            `解绑B站并删除记录: QQ=${normalizedQQId}, B站UID=${oldBuidUid}, 用户名=${oldBuidUsername}`,
+            true
+          )
+        } else {
+          this.logger.warn('B站账号解绑', `解绑B站异常: QQ=${normalizedQQId}, 可能未实际删除`)
+          return false
+        }
+      }
+
+      return true
+    } catch (error) {
+      this.logger.error('B站账号解绑', `解绑B站失败: 错误=${error.message}`)
+      return false
+    }
+  }
+
   // =========== 用户名更新检查 ===========
 
   /**

@@ -891,7 +891,8 @@ export function apply(ctx: Context, config: IConfig) {
         }
 
         // 检查并添加hasMcBind字段（数据迁移：根据 mcUsername 判断）
-        if (!('hasMcBind' in record)) {
+        const currentHasMcBind = (record as any).hasMcBind
+        if (currentHasMcBind === undefined || currentHasMcBind === null) {
           // 有有效的MC用户名（非空且不是_temp_开头）则认为已绑定
           const mcUsername = (record as any).mcUsername
           const hasValidMc = !!(mcUsername && !mcUsername.startsWith('_temp_'))
@@ -909,7 +910,8 @@ export function apply(ctx: Context, config: IConfig) {
         }
 
         // 检查并添加hasBuidBind字段（数据迁移：根据 buidUid 判断）
-        if (!('hasBuidBind' in record)) {
+        const currentHasBuidBind = (record as any).hasBuidBind
+        if (currentHasBuidBind === undefined || currentHasBuidBind === null) {
           // 有有效的B站UID（非空）则认为已绑定
           const buidUid = (record as any).buidUid
           const hasValidBuid = !!(buidUid && buidUid.length > 0)
