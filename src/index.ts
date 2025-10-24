@@ -828,6 +828,12 @@ export function apply(ctx: Context, config: IConfig) {
     }
   )
 
+  // 在插件启动时执行数据迁移
+  ctx.on('ready', async () => {
+    logger.info('[初始化] 开始数据迁移和一致性检查...')
+    await addMissingFields()
+  })
+
   // 检查表结构是否包含旧字段
   const checkTableStructure = async (): Promise<boolean> => {
     try {
@@ -890,33 +896,49 @@ export function apply(ctx: Context, config: IConfig) {
           needUpdate = true
         }
 
-        // 检查并添加hasMcBind字段（数据迁移：根据 mcUsername 判断）
+        // 检查并修复hasMcBind字段（数据迁移 + 数据一致性检查）
         const currentHasMcBind = (record as any).hasMcBind
+        const mcUsername = (record as any).mcUsername
+        const hasValidMc = !!(mcUsername && !mcUsername.startsWith('_temp_'))
+
+        // 情况1：字段不存在，需要添加
         if (currentHasMcBind === undefined || currentHasMcBind === null) {
-          // 有有效的MC用户名（非空且不是_temp_开头）则认为已绑定
-          const mcUsername = (record as any).mcUsername
-          const hasValidMc = !!(mcUsername && !mcUsername.startsWith('_temp_'))
           updateData.hasMcBind = hasValidMc
-
-          // 同时清空临时用户名，保持数据一致性
-          if (!hasValidMc && mcUsername && mcUsername.startsWith('_temp_')) {
-            updateData.mcUsername = ''
-            updateData.mcUuid = ''
-            updateData.whitelist = []
-            logger.info(`[数据迁移] 清理QQ(${qqId})的临时用户名: ${mcUsername}`)
-          }
-
           needUpdate = true
+          logger.debug(`[数据迁移] 添加hasMcBind字段 QQ(${qqId}): ${hasValidMc}`)
+        }
+        // 情况2：字段存在但值不正确，需要修复
+        else if (currentHasMcBind !== hasValidMc) {
+          updateData.hasMcBind = hasValidMc
+          needUpdate = true
+          logger.info(`[数据修复] 修正hasMcBind QQ(${qqId}): ${currentHasMcBind} -> ${hasValidMc}`)
         }
 
-        // 检查并添加hasBuidBind字段（数据迁移：根据 buidUid 判断）
+        // 清理临时用户名（无论hasMcBind字段是否存在）
+        if (!hasValidMc && mcUsername && mcUsername.startsWith('_temp_')) {
+          updateData.mcUsername = ''
+          updateData.mcUuid = ''
+          updateData.whitelist = []
+          needUpdate = true
+          logger.info(`[数据清理] 清理QQ(${qqId})的临时用户名: ${mcUsername}`)
+        }
+
+        // 检查并修复hasBuidBind字段（数据迁移 + 数据一致性检查）
         const currentHasBuidBind = (record as any).hasBuidBind
+        const buidUid = (record as any).buidUid
+        const hasValidBuid = !!(buidUid && buidUid.length > 0)
+
+        // 情况1：字段不存在，需要添加
         if (currentHasBuidBind === undefined || currentHasBuidBind === null) {
-          // 有有效的B站UID（非空）则认为已绑定
-          const buidUid = (record as any).buidUid
-          const hasValidBuid = !!(buidUid && buidUid.length > 0)
           updateData.hasBuidBind = hasValidBuid
           needUpdate = true
+          logger.debug(`[数据迁移] 添加hasBuidBind字段 QQ(${qqId}): ${hasValidBuid}`)
+        }
+        // 情况2：字段存在但值不正确，需要修复
+        else if (currentHasBuidBind !== hasValidBuid) {
+          updateData.hasBuidBind = hasValidBuid
+          needUpdate = true
+          logger.info(`[数据修复] 修正hasBuidBind QQ(${qqId}): ${currentHasBuidBind} -> ${hasValidBuid}`)
         }
 
         // 如果需要更新，执行更新操作
