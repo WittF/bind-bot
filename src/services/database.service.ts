@@ -470,8 +470,8 @@ export class DatabaseService {
       if (BindStatus.hasValidMcBind(bind)) {
         // 如果有MC绑定，只清空B站字段，保留记录
         await this.mcidbindRepo.update(normalizedQQId, {
-          buidUid: '',
-          buidUsername: '',
+          buidUid: null,
+          buidUsername: null,
           guardLevel: 0,
           guardLevelText: '',
           maxGuardLevel: 0,

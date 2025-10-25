@@ -673,12 +673,14 @@ export class GroupRequestReviewHandler extends BaseHandler {
       return answerMatch[1]
     }
 
-    // 格式3: UID:123456789（参考BuidHandler）
+    // 格式3: UID:123456789 或 UID:123456789 用户名（参考BuidHandler）
     if (input.toLowerCase().startsWith('uid:')) {
-      const uid = input.substring(4).trim()
-      if (/^\d+$/.test(uid)) {
-        this.logger.debug('入群审批', `parseUID: 从"UID:"前缀提取 -> ${uid}`)
-        return uid
+      const afterPrefix = input.substring(4).trim()
+      // 提取第一个连续的数字串（支持后面跟着其他内容）
+      const uidMatch = afterPrefix.match(/^(\d+)/)
+      if (uidMatch) {
+        this.logger.debug('入群审批', `parseUID: 从"UID:"前缀提取 -> ${uidMatch[1]}`)
+        return uidMatch[1]
       }
     }
 
@@ -703,10 +705,11 @@ export class GroupRequestReviewHandler extends BaseHandler {
       }
     }
 
-    // 格式5: 从文本中提取第一个长数字串（8-12位，B站UID的典型长度）
-    const numberMatch = input.match(/\b(\d{8,12})\b/)
+    // 格式5: 从文本中提取第一个数字串（4位及以上，避免误匹配过短的序号）
+    // 注：B站UID可以是1-2位，但在混合文本中用4位作为最小值可减少误匹配
+    const numberMatch = input.match(/\b(\d{4,})\b/)
     if (numberMatch) {
-      this.logger.debug('入群审批', `parseUID: 从文本提取长数字串 -> ${numberMatch[1]}`)
+      this.logger.debug('入群审批', `parseUID: 从文本提取数字串 -> ${numberMatch[1]}`)
       return numberMatch[1]
     }
 

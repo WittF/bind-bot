@@ -67,11 +67,11 @@ export interface MCIDBIND {
   tags: string[]
 
   // ========== BUID 绑定字段 ==========
-  /** B站UID */
-  buidUid: string
+  /** B站UID (NULL表示未绑定) */
+  buidUid: string | null
 
-  /** B站用户名 */
-  buidUsername: string
+  /** B站用户名 (NULL表示未绑定) */
+  buidUsername: string | null
 
   /** 当前舰长等级 (0=无, 1=总督, 2=提督, 3=舰长) */
   guardLevel: number

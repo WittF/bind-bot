@@ -1630,8 +1630,8 @@ export function apply(ctx: Context, config: IConfig) {
           // 创建新记录
           await mcidbindRepo.create({
             qqId: normalizedUserId,
-            mcUsername: '',
-            mcUuid: '',
+            mcUsername: null,
+            mcUuid: null,
             lastModified: new Date(),
             isAdmin: false,
             whitelist: [],

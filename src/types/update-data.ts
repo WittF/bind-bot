@@ -74,11 +74,11 @@ export interface UpdateMcBindData {
  * ```
  */
 export interface UpdateBuidBindData {
-  /** B站UID (数据库中存储为字符串) */
-  buidUid?: string
+  /** B站UID (数据库中存储为字符串, NULL表示未绑定) */
+  buidUid?: string | null
 
-  /** B站用户名 */
-  buidUsername?: string
+  /** B站用户名 (NULL表示未绑定) */
+  buidUsername?: string | null
 
   /** 当前舰长等级 */
   guardLevel?: number

@@ -1039,8 +1039,8 @@ export class McidCommandHandler extends BaseHandler {
         try {
           await this.repos.mcidbind.create({
             qqId: normalizedTargetId,
-            mcUsername: '',
-            mcUuid: '',
+            mcUsername: null,
+            mcUuid: null,
             lastModified: new Date(),
             isAdmin: true,
             hasMcBind: false,

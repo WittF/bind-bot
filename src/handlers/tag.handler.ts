@@ -96,8 +96,8 @@ export class TagHandler extends BaseHandler {
         if (!targetBind) {
           await this.repos.mcidbind.create({
             qqId: normalizedTargetId,
-            mcUsername: '',
-            mcUuid: '',
+            mcUsername: null,
+            mcUuid: null,
             lastModified: new Date(),
             isAdmin: false,
             whitelist: [],
@@ -144,8 +144,8 @@ export class TagHandler extends BaseHandler {
           if (!targetBind) {
             await this.repos.mcidbind.create({
               qqId: normalizedTargetId,
-              mcUsername: '',
-              mcUuid: '',
+              mcUsername: null,
+              mcUuid: null,
               lastModified: new Date(),
               isAdmin: false,
               whitelist: [],

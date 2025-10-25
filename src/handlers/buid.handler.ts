@@ -473,8 +473,8 @@ export class BuidHandler extends BaseHandler {
       } else {
         const newBind: any = {
           qqId: normalizedQQId,
-          mcUsername: '',
-          mcUuid: '',
+          mcUsername: null,
+          mcUuid: null,
           isAdmin: false,
           whitelist: [],
           tags: [],

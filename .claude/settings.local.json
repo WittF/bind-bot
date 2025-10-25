@@ -25,7 +25,8 @@
       "Read(//c/Users/WittF/.claude/**)",
       "WebSearch",
       "Bash(node --version)",
-      "Bash(npm --version:*)"
+      "Bash(npm --version:*)",
+      "Bash(git diff:*)"
     ],
     "deny": [],
     "ask": []
