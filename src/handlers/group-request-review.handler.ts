@@ -228,22 +228,37 @@ export class GroupRequestReviewHandler extends BaseHandler {
     if (parsedUid) {
       buidUid = parsedUid
 
-      // 并行查询官方API和ZMINFO API
-      const [officialInfo, zminfoData] = await Promise.all([
-        this.deps.apiService.getBilibiliOfficialUserInfo(parsedUid).catch(() => null),
-        this.deps.apiService.validateBUID(parsedUid).catch(() => null)
-      ])
+      // 尝试使用强制绑定模式获取完整信息（避免频率限制）
+      let zminfoData = null
 
-      // 用户名：优先使用官方API（最准确），降级到ZMINFO
-      if (officialInfo?.name) {
-        buidUsername = officialInfo.name
-        this.logger.debug('入群审批', `✅ 使用官方API用户名: ${buidUsername}`)
-      } else if (zminfoData?.username) {
-        buidUsername = zminfoData.username
-        this.logger.debug('入群审批', `⚠️ 官方API失败，使用ZMINFO用户名: ${buidUsername}`)
+      if (this.config.forceBindSessdata) {
+        try {
+          this.logger.debug('入群审批', '使用强制绑定模式获取用户信息...')
+          const enhancedUser = await this.deps.forceBinder.forceBindUser(parsedUid)
+          const standardUser = this.deps.forceBinder.convertToZminfoUser(enhancedUser)
+          buidUsername = standardUser.username
+          zminfoData = standardUser
+          this.logger.debug('入群审批', `✅ 强制绑定模式获取成功: ${buidUsername}`)
+        } catch (error) {
+          this.logger.warn('入群审批', `强制绑定获取用户信息失败: ${error.message}，降级到ZMINFO`)
+          // 降级：使用ZMINFO
+          zminfoData = await this.deps.apiService.validateBUID(parsedUid).catch(() => null)
+          if (zminfoData) {
+            buidUsername = zminfoData.username
+            this.logger.debug('入群审批', `⚠️ 降级到ZMINFO用户名: ${buidUsername}`)
+          }
+        }
+      } else {
+        // 未配置Cookie，直接使用ZMINFO
+        this.logger.debug('入群审批', '未配置强制绑定Cookie，使用ZMINFO获取用户信息...')
+        zminfoData = await this.deps.apiService.validateBUID(parsedUid).catch(() => null)
+        if (zminfoData) {
+          buidUsername = zminfoData.username
+          this.logger.debug('入群审批', `✅ ZMINFO用户名: ${buidUsername}`)
+        }
       }
 
-      // 粉丝牌信息：只能从ZMINFO获取（官方API不提供）
+      // 粉丝牌信息：从ZMINFO或强制绑定结果获取
       if (zminfoData) {
         const medalLevel = zminfoData.medal?.level || 0
         const medalName = zminfoData.medal?.name || ''
@@ -256,7 +271,7 @@ export class GroupRequestReviewHandler extends BaseHandler {
           medalInfo = `⚠️ 未获取到 "${this.config.forceBindTargetMedalName}" 粉丝牌`
         }
       } else {
-        this.logger.warn('入群审批', 'ZMINFO API查询失败，无法获取粉丝牌信息')
+        this.logger.warn('入群审批', 'B站用户信息查询失败，无法获取粉丝牌信息')
       }
 
       // 绑定状态：查询数据库
@@ -272,7 +287,7 @@ export class GroupRequestReviewHandler extends BaseHandler {
           bindStatus = '✅ UID 未被绑定'
         }
       } else {
-        bindStatus = '❌ UID 查询失败（官方API和ZMINFO均失败）'
+        bindStatus = '❌ UID 查询失败'
       }
     }
 
@@ -404,24 +419,7 @@ export class GroupRequestReviewHandler extends BaseHandler {
     session: Session
   ): Promise<void> {
     try {
-      // 1. 批准入群
-      await session.bot.handleGuildMemberRequest(pendingReq.requestFlag, true, '欢迎加入！')
-      this.logger.info('入群审批', `已批准入群 - QQ: ${pendingReq.applicantQQ}`, true)
-
-      // 2. 等待用户进群
-      const joined = await this.waitForUserJoin(pendingReq.applicantQQ, pendingReq.targetGroupId, 10000)
-
-      if (!joined) {
-        await this.notifyAdmin(
-          operatorId,
-          session,
-          `⚠️ 已批准 ${pendingReq.applicantQQ} 入群，但用户未在10秒内进群`
-        )
-        pendingReq.status = 'approved'
-        return
-      }
-
-      // 3. 解析UID
+      // 1. 解析UID（在批准入群前先检查）
       const uid = this.parseUID(pendingReq.answer)
       if (!uid) {
         await this.notifyAdmin(
@@ -435,10 +433,26 @@ export class GroupRequestReviewHandler extends BaseHandler {
 
       this.logger.info('入群审批', `开始自动绑定 - QQ: ${pendingReq.applicantQQ}, UID: ${uid}`)
 
-      // 4. 调用 BuidHandler 的绑定逻辑（需要从 handlers 获取）
-      // 注意：这里需要访问其他 handler，可能需要调整架构
-      // 暂时先记录日志，稍后实现具体绑定逻辑
+      // 2. 先执行绑定（在批准入群前）
       await this.performAutoBind(pendingReq.applicantQQ, uid, session.bot)
+      this.logger.info('入群审批', `预绑定完成 - QQ: ${pendingReq.applicantQQ}, UID: ${uid}`)
+
+      // 3. 批准入群
+      await session.bot.handleGuildMemberRequest(pendingReq.requestFlag, true, '欢迎加入！')
+      this.logger.info('入群审批', `已批准入群 - QQ: ${pendingReq.applicantQQ}`, true)
+
+      // 4. 等待用户进群
+      const joined = await this.waitForUserJoin(pendingReq.applicantQQ, pendingReq.targetGroupId, 10000)
+
+      if (!joined) {
+        await this.notifyAdmin(
+          operatorId,
+          session,
+          `⚠️ 已完成绑定并批准 ${pendingReq.applicantQQ} 入群，但用户未在10秒内进群`
+        )
+        pendingReq.status = 'approved'
+        return
+      }
 
       // 5. 通知管理员
       await this.notifyAdmin(
@@ -734,36 +748,19 @@ export class GroupRequestReviewHandler extends BaseHandler {
    */
   private async performAutoBind(qq: string, uid: string, bot: any): Promise<void> {
     try {
-      // 1. 使用双API数据源获取最新用户信息（优先B站官方API）
+      // 1. 使用强制绑定模式获取最新用户信息（避免频率限制）
       this.logger.debug('入群审批', `开始获取 B站 UID ${uid} 的信息`)
 
-      // 尝试获取B站官方API的用户信息（最权威）
-      let officialUsername: string | null = null
-      try {
-        this.logger.debug('入群审批', '正在查询B站官方API...')
-        const officialInfo = await this.deps.apiService.getBilibiliOfficialUserInfo(uid)
-        if (officialInfo && officialInfo.name) {
-          officialUsername = officialInfo.name
-          this.logger.info('入群审批', `[官方API] ✅ 获取到用户名: "${officialUsername}"`, true)
-        } else {
-          this.logger.warn('入群审批', '[官方API] ❌ 查询失败')
-        }
-      } catch (officialError) {
-        this.logger.warn('入群审批', `[官方API] ❌ 查询出错: ${officialError.message}`)
-      }
+      // 使用强制绑定模式获取完整信息（与 bind -f 保持一致）
+      this.logger.debug('入群审批', '正在使用强制绑定模式获取B站用户信息...')
+      const enhancedUser = await this.deps.forceBinder.forceBindUser(uid)
+      const zminfoUser = this.deps.forceBinder.convertToZminfoUser(enhancedUser)
 
-      // 获取ZMINFO API的完整用户信息（包含粉丝牌、大航海等数据）
-      this.logger.debug('入群审批', '正在查询ZMINFO API...')
-      const zminfoUser = await this.deps.apiService.validateBUID(uid)
       if (!zminfoUser) {
         throw new Error(`无法验证B站UID: ${uid}`)
       }
 
-      this.logger.debug('入群审批', `[ZMINFO] 获取到用户名: "${zminfoUser.username}"`)
-
-      // 使用官方API的用户名（如果可用），否则使用ZMINFO的
-      const finalUsername = officialUsername || zminfoUser.username
-      this.logger.info('入群审批', `🎯 最终采用用户名: "${finalUsername}"`, true)
+      this.logger.info('入群审批', `✅ 获取到用户名: "${zminfoUser.username}"`, true)
 
       // 2. 检查是否已被其他人绑定
       const existingBind = await this.repos.mcidbind.findByBuidUid(uid)
@@ -781,7 +778,7 @@ export class GroupRequestReviewHandler extends BaseHandler {
           mcUsername: null,
           mcUuid: null,
           buidUid: zminfoUser.uid,
-          buidUsername: finalUsername,
+          buidUsername: zminfoUser.username,
           guardLevel: zminfoUser.guard_level || 0,
           guardLevelText: zminfoUser.guard_level_text || '',
           maxGuardLevel: zminfoUser.guard_level || 0,
@@ -800,7 +797,7 @@ export class GroupRequestReviewHandler extends BaseHandler {
         // 更新现有绑定
         await this.repos.mcidbind.update(qq, {
           buidUid: zminfoUser.uid,
-          buidUsername: finalUsername,
+          buidUsername: zminfoUser.username,
           guardLevel: zminfoUser.guard_level || 0,
           guardLevelText: zminfoUser.guard_level_text || '',
           maxGuardLevel: Math.max(bind.maxGuardLevel || 0, zminfoUser.guard_level || 0),
@@ -823,7 +820,7 @@ export class GroupRequestReviewHandler extends BaseHandler {
       try {
         const groupId = this.reviewConfig.targetGroupId
         const mcInfo = BindStatus.getDisplayMcUsername(bind, '未绑定')
-        const nickname = `${finalUsername}（ID:${mcInfo}）`
+        const nickname = `${zminfoUser.username}（ID:${mcInfo}）`
 
         await bot.internal.setGroupCard(groupId, qq, nickname)
         this.logger.info('入群审批', `已更新群昵称 - QQ: ${qq}, 昵称: ${nickname}`)
@@ -832,7 +829,7 @@ export class GroupRequestReviewHandler extends BaseHandler {
         // 昵称更新失败不影响绑定
       }
 
-      this.logger.info('入群审批', `自动绑定完成 - QQ: ${qq}, UID: ${uid}, 用户名: ${finalUsername}`, true)
+      this.logger.info('入群审批', `自动绑定完成 - QQ: ${qq}, UID: ${uid}, 用户名: ${zminfoUser.username}`, true)
     } catch (error) {
       this.logger.error('入群审批', `自动绑定失败: ${error.message}`, error)
       throw error

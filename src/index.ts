@@ -562,6 +562,23 @@ export function apply(ctx: Context, config: IConfig) {
       // 检查用户是否已有绑定记录
       const existingBind = await services.database.getMcBindByQQId(normalizedUserId)
 
+      // 检查是否刚刚通过入群审批的自动绑定完成（lastModified 在最近 15 秒内且已绑定 B 站）
+      const isRecentAutoBind =
+        existingBind &&
+        existingBind.lastModified &&
+        Date.now() - new Date(existingBind.lastModified).getTime() < 15000 &&
+        BindStatus.hasValidBuidBind(existingBind)
+
+      if (isRecentAutoBind) {
+        // 刚刚完成自动绑定，只发送欢迎消息，不启动交互式绑定
+        logger.info(
+          `[新人绑定] 用户QQ(${normalizedUserId})刚刚通过入群审批完成自动绑定，仅发送欢迎消息`
+        )
+        const welcomeMessage = `🎉 欢迎 ${h.at(session.userId)} 加入群聊！\n\n✅ 您的B站账号已自动绑定完成\nB站: ${existingBind.buidUsername}\n\n💡 使用 ${formatCommand('mcid bind <用户名>')} 可绑定MC账号`
+        await session.bot.sendMessage(session.channelId, welcomeMessage)
+        return
+      }
+
       // 如果用户已完成全部绑定，不需要提醒
       if (BindStatus.hasCompletedAllBinds(existingBind)) {
         logger.info(`[新人绑定] 用户QQ(${normalizedUserId})已完成全部绑定，跳过提醒`)
