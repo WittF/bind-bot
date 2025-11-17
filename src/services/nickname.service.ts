@@ -78,7 +78,7 @@ export class NicknameService {
       this.logger.warn('群昵称设置', `[层2-ZMINFO] 查询出错: ${zminfoError.message}`)
     }
 
-    // 3. 根据优先级返回结果（简化逻辑：ZMINFO与数据库不一致时优先信任数据库）
+    // 3. 根据优先级返回结果
     if (officialUsername) {
       this.logger.info('群昵称设置', `🎯 采用官方API结果: "${officialUsername}"`, true)
       return {
@@ -87,27 +87,15 @@ export class NicknameService {
         zminfoData: zminfoUserData || undefined
       }
     } else if (zminfoUserData && zminfoUserData.username) {
-      // ZMINFO与数据库一致，说明数据稳定，可以使用
-      if (zminfoUserData.username === currentDbUsername) {
-        this.logger.info(
-          '群昵称设置',
-          `⚠️ 官方API不可用，降级使用ZMINFO: "${zminfoUserData.username}"`,
-          true
-        )
-        return {
-          username: zminfoUserData.username,
-          source: 'zminfo',
-          zminfoData: zminfoUserData
-        }
-      }
-      // ZMINFO与数据库不一致，说明缓存不稳定，优先信任数据库
-      this.logger.warn(
+      this.logger.info(
         '群昵称设置',
-        `⚠️ ZMINFO数据"${zminfoUserData.username}"与数据库"${currentDbUsername}"不一致，优先使用数据库值`
+        `⚠️ 官方API不可用，降级使用ZMINFO: "${zminfoUserData.username}"`,
+        true
       )
       return {
-        username: currentDbUsername,
-        source: 'database'
+        username: zminfoUserData.username,
+        source: 'zminfo',
+        zminfoData: zminfoUserData
       }
     } else {
       this.logger.warn(

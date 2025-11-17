@@ -73,9 +73,6 @@ export interface MCIDBIND {
   /** B站用户名 (NULL表示未绑定) */
   buidUsername: string | null
 
-  /** B站用户名上次检查时间 (用于防止频繁更新缓存) */
-  buidUsernameLastChecked?: Date
-
   /** 当前舰长等级 (0=无, 1=总督, 2=提督, 3=舰长) */
   guardLevel: number
 
