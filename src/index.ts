@@ -781,6 +781,10 @@ export function apply(ctx: Context, config: IConfig) {
         type: 'string',
         initial: ''
       },
+      buidUsernameLastChecked: {
+        type: 'timestamp',
+        initial: null
+      },
       guardLevel: {
         type: 'integer',
         initial: 0

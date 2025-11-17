@@ -37,20 +37,12 @@ export class BuidHandler extends BaseHandler {
         return this.handleFindUser(session, uid)
       })
 
-    // mcid 命令组中的 BUID 相关子命令
-    const mcidCmd = this.ctx.command('mcid')
-
-    // 绑定B站账号（mcid.bindbuid）
-    mcidCmd
-      .subcommand('.bindbuid <buid:string>', '绑定B站账号')
-      .action(async ({ session }, buid) => {
-        return this.handleBindBuid(session, buid)
+    // 解绑BUID
+    buidCmd
+      .subcommand('.unbind', '解绑B站账号')
+      .action(async ({ session }) => {
+        return this.handleUnbind(session)
       })
-
-    // 解绑B站账号（mcid.unbindbuid）
-    mcidCmd.subcommand('.unbindbuid', '解绑B站账号').action(async ({ session }) => {
-      return this.handleUnbindBuid(session)
-    })
   }
 
   /**
@@ -78,12 +70,17 @@ export class BuidHandler extends BaseHandler {
         ])
       }
 
-      // 每次查询都刷新B站数据
+      // 每次查询都必须从API获取最新数据
       const buidUser = await this.validateBUID(bind.buidUid)
-      if (buidUser) {
-        await this.updateBuidInfoOnly(bind.qqId, buidUser)
-        bind = await this.repos.mcidbind.findByQQId(bind.qqId)
+      if (!buidUser) {
+        return this.deps.sendMessage(session, [
+          h.text(`无法从API获取B站UID ${bind.buidUid} 的最新数据，该用户可能不存在或API服务暂时不可用`)
+        ])
       }
+
+      // 更新本地数据库中的信息
+      await this.updateBuidInfoOnly(bind.qqId, buidUser)
+      bind = await this.repos.mcidbind.findByQQId(bind.qqId)
 
       const userInfo = `${target ? `用户 ${bind.qqId} 的` : '您的'}B站账号信息：\nB站UID: ${bind.buidUid}\n用户名: ${bind.buidUsername}`
       let detailInfo = ''
@@ -231,81 +228,9 @@ export class BuidHandler extends BaseHandler {
   }
 
   /**
-   * 处理 mcid.bindbuid 命令
+   * 处理 buid.unbind 命令
    */
-  private async handleBindBuid(session: any, buid: string): Promise<void> {
-    try {
-      const normalizedUserId = this.deps.normalizeQQId(session.userId)
-      this.logger.info('绑定', `QQ(${normalizedUserId})尝试绑定B站UID(${buid})`)
-
-      // 验证格式
-      if (!buid || !/^\d+$/.test(buid)) {
-        this.logger.warn('绑定', `QQ(${normalizedUserId})尝试绑定无效的B站UID格式: ${buid}`)
-        return this.deps.sendMessage(session, [h.text('无效的B站UID格式，请输入正确的B站UID')])
-      }
-
-      // 检查是否已被他人绑定
-      const existingBind = await this.repos.mcidbind.findByBuidUid(buid)
-      if (existingBind) {
-        const existingQQId = existingBind.qqId
-        this.logger.warn(
-          '绑定',
-          `QQ(${normalizedUserId})尝试绑定已被QQ(${existingQQId})绑定的B站UID(${buid})`
-        )
-        return this.deps.sendMessage(session, [h.text('该B站UID已被其他用户绑定')])
-      }
-
-      // 验证B站UID
-      const buidUser = await this.validateBUID(buid)
-      if (!buidUser) {
-        this.logger.warn('绑定', `QQ(${normalizedUserId})尝试绑定不存在的B站UID(${buid})`)
-        return this.deps.sendMessage(session, [h.text('无法验证B站UID，请确认输入正确')])
-      }
-
-      // 创建或更新绑定
-      const success = await this.createOrUpdateBuidBind(normalizedUserId, buidUser)
-      if (success) {
-        this.logger.info('绑定', `QQ(${normalizedUserId})成功绑定B站UID(${buid})`)
-        return this.deps.sendMessage(
-          session,
-          [
-            h.text('成功绑定B站账号！\n'),
-            h.text(`B站UID: ${buidUser.uid}\n`),
-            h.text(`用户名: ${buidUser.username}\n`),
-            buidUser.guard_level > 0
-              ? h.text(`舰长等级: ${buidUser.guard_level_text} (${buidUser.guard_level})\n`)
-              : null,
-            buidUser.medal
-              ? h.text(`粉丝牌: ${buidUser.medal.name} Lv.${buidUser.medal.level}\n`)
-              : null,
-            buidUser.wealthMedalLevel > 0
-              ? h.text(`荣耀等级: ${buidUser.wealthMedalLevel}\n`)
-              : null,
-            ...(this.config?.showAvatar
-              ? [h.image(`https://workers.vrp.moe/bilibili/avatar/${buidUser.uid}?size=160`)]
-              : [])
-          ].filter(Boolean)
-        )
-      } else {
-        this.logger.error(
-          '绑定',
-          normalizedUserId,
-          `QQ(${normalizedUserId})绑定B站UID(${buid})失败`
-        )
-        return this.deps.sendMessage(session, [h.text('绑定失败，请稍后重试')])
-      }
-    } catch (error) {
-      this.logger.error('绑定', session.userId, error)
-      return this.deps.sendMessage(session, [
-        h.text(`绑定失败：${this.getFriendlyErrorMessage(error)}`)
-      ])
-    }
-  }
-
-  /**
-   * 处理 mcid.unbindbuid 命令
-   */
-  private async handleUnbindBuid(session: any): Promise<void> {
+  private async handleUnbind(session: any): Promise<void> {
     try {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
       this.logger.info('解绑', `QQ(${normalizedUserId})尝试解绑B站账号`)
