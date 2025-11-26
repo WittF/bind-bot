@@ -636,33 +636,20 @@ export class GroupRequestReviewHandler extends BaseHandler {
     groupId: string,
     bot: any
   ): Promise<boolean> {
-    // 检查是否是 masterId
-    if (userId === this.config.masterId) {
-      return true
-    }
-
-    // 先检查缓存
-    const cache = this.adminCache.get(groupId)
-    if (cache && Date.now() - cache.lastUpdate < 5 * 60 * 1000) {
-      return cache.admins.includes(userId)
-    }
-
-    // 调用 NapCat 扩展 API 获取群信息
     try {
-      const groupInfo = await bot.internal.getGroupInfoEx(groupId)
-      const admins = (groupInfo.admins || []).map(String)
+      const normalizedUserId = this.deps.normalizeQQId(userId)
 
-      // 更新缓存
-      this.adminCache.set(groupId, {
-        admins,
-        lastUpdate: Date.now()
-      })
+      // 检查是否是 masterId
+      if (this.config.masterId && normalizedUserId === this.config.masterId) {
+        return true
+      }
 
-      return admins.includes(userId)
+      // 检查数据库中的管理员标记（与其他功能保持一致）
+      const bind = await this.repos.mcidbind.findByQQId(normalizedUserId)
+      return bind?.isAdmin === true
     } catch (error) {
-      this.logger.error('入群审批', `获取管理员列表失败: ${error.message}`)
-      // 降级方案：只允许 masterId
-      return userId === this.config.masterId
+      this.logger.error('入群审批', `检查管理员权限失败: ${error.message}`)
+      return false
     }
   }
 

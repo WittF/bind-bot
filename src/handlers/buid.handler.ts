@@ -39,9 +39,9 @@ export class BuidHandler extends BaseHandler {
 
     // 解绑BUID
     buidCmd
-      .subcommand('.unbind', '解绑B站账号')
-      .action(async ({ session }) => {
-        return this.handleUnbind(session)
+      .subcommand('.unbind [target:string]', '解绑B站账号')
+      .action(async ({ session }, target) => {
+        return this.handleUnbind(session, target)
       })
   }
 
@@ -230,27 +230,110 @@ export class BuidHandler extends BaseHandler {
   /**
    * 处理 buid.unbind 命令
    */
-  private async handleUnbind(session: any): Promise<void> {
+  private async handleUnbind(session: any, target?: string): Promise<void> {
     try {
       const normalizedUserId = this.deps.normalizeQQId(session.userId)
-      this.logger.info('解绑', `QQ(${normalizedUserId})尝试解绑B站账号`)
 
-      // 使用 DatabaseService 的解绑方法
-      const success = await this.deps.databaseService.deleteBuidBind(normalizedUserId)
-
-      if (success) {
-        this.logger.info('解绑', `QQ(${normalizedUserId})成功解绑B站账号`)
-        return this.deps.sendMessage(session, [h.text('已成功解绑B站账号')])
-      } else {
-        this.logger.warn('解绑', `QQ(${normalizedUserId})解绑B站账号失败`)
-        return this.deps.sendMessage(session, [h.text('您尚未绑定B站账号')])
+      // 管理员为他人解绑
+      if (target) {
+        return this.handleUnbindForOther(session, target, normalizedUserId)
       }
+
+      // 为自己解绑
+      return this.handleUnbindForSelf(session, normalizedUserId)
     } catch (error) {
-      this.logger.error('解绑', session.userId, error)
+      const normalizedUserId = this.deps.normalizeQQId(session.userId)
+      const targetInfo = target ? `为QQ(${this.deps.normalizeQQId(target)})` : ''
+      this.logger.error(
+        '解绑',
+        `QQ(${normalizedUserId})${targetInfo}解绑B站账号失败: ${error.message}`
+      )
+      return this.deps.sendMessage(session, [h.text(this.deps.getFriendlyErrorMessage(error))])
+    }
+  }
+
+  /**
+   * 管理员为他人解绑B站账号
+   */
+  private async handleUnbindForOther(
+    session: any,
+    target: string,
+    operatorId: string
+  ): Promise<void> {
+    const normalizedTargetId = this.deps.normalizeQQId(target)
+
+    if (!normalizedTargetId) {
+      this.logger.warn('解绑', `QQ(${operatorId})提供的目标用户ID"${target}"无效`)
+      if (target.startsWith('@')) {
+        return this.deps.sendMessage(session, [
+          h.text('❌ 请使用真正的@功能，而不是手动输入@符号\n正确做法：点击或长按用户头像选择@功能')
+        ])
+      }
       return this.deps.sendMessage(session, [
-        h.text(`解绑失败：${this.getFriendlyErrorMessage(error)}`)
+        h.text('❌ 目标用户ID无效\n请提供有效的QQ号或使用@功能选择用户')
       ])
     }
+
+    this.logger.info('解绑', `QQ(${operatorId})尝试为QQ(${normalizedTargetId})解绑B站账号`)
+
+    // 检查权限
+    if (!(await this.deps.isAdmin(session.userId))) {
+      this.logger.warn('解绑', `权限不足: QQ(${operatorId})不是管理员`)
+      return this.deps.sendMessage(session, [h.text('只有管理员才能为其他用户解绑B站账号')])
+    }
+
+    // 获取目标用户信息
+    const targetBind = await this.deps.databaseService.getMcBindByQQId(normalizedTargetId)
+
+    if (!targetBind || !targetBind.buidUid) {
+      this.logger.warn('解绑', `QQ(${normalizedTargetId})尚未绑定B站账号`)
+      return this.deps.sendMessage(session, [h.text(`用户 ${normalizedTargetId} 尚未绑定B站账号`)])
+    }
+
+    const oldBuidUsername = targetBind.buidUsername || targetBind.buidUid
+    const hasMcBind = targetBind.mcUsername && targetBind.mcUsername.trim() !== ''
+    const mcKeepInfo = hasMcBind
+      ? `\n✅ 该用户的MC绑定已保留: ${targetBind.mcUsername}`
+      : ''
+
+    // 解绑B站账号
+    await this.deps.databaseService.deleteBuidBind(normalizedTargetId)
+
+    this.logger.info(
+      '解绑',
+      `成功: 管理员QQ(${operatorId})为QQ(${normalizedTargetId})解绑B站账号: ${oldBuidUsername}(${targetBind.buidUid})`
+    )
+    return this.deps.sendMessage(session, [
+      h.text(`已成功为用户 ${normalizedTargetId} 解绑B站账号: ${oldBuidUsername}(${targetBind.buidUid})${mcKeepInfo}`)
+    ])
+  }
+
+  /**
+   * 为自己解绑B站账号
+   */
+  private async handleUnbindForSelf(session: any, operatorId: string): Promise<void> {
+    this.logger.info('解绑', `QQ(${operatorId})尝试解绑自己的B站账号`)
+
+    const selfBind = await this.deps.databaseService.getMcBindByQQId(operatorId)
+
+    if (!selfBind || !selfBind.buidUid) {
+      this.logger.warn('解绑', `QQ(${operatorId})尚未绑定B站账号`)
+      return this.deps.sendMessage(session, [h.text('您尚未绑定B站账号')])
+    }
+
+    const oldBuidUsername = selfBind.buidUsername || selfBind.buidUid
+    const hasMcBind = selfBind.mcUsername && selfBind.mcUsername.trim() !== ''
+    const mcKeepInfo = hasMcBind
+      ? `\n✅ 您的MC绑定已保留: ${selfBind.mcUsername}`
+      : ''
+
+    // 解绑B站账号
+    await this.deps.databaseService.deleteBuidBind(operatorId)
+
+    this.logger.info('解绑', `成功: QQ(${operatorId})解绑B站账号: ${oldBuidUsername}`)
+    return this.deps.sendMessage(session, [
+      h.text(`已成功解绑B站账号: ${oldBuidUsername}${mcKeepInfo}`)
+    ])
   }
 
   // ========== 私有辅助方法 ==========
